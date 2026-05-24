@@ -1,0 +1,86 @@
+# Pinpoint containerised development stack.
+#
+# Brings up Postgres, runs all pending migrations to completion, then
+# starts the API server and Dashboard. Per design key decision #14
+# (Docker Compose & CI) and Requirement 29:
+#
+#   docker compose up
+#
+# starts the whole stack. The Dashboard is reachable at http://localhost:4173
+# and the API at http://localhost:3001.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-pinpoint}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` is the canonical readiness probe per Postgres docs.
+      # Pin user/db so it doesn't fall back to the image default `postgres`
+      # database, which may not exist.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-pinpoint}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  migrate:
+    # One-shot migration runner. Reuses the server image so we get the
+    # exact same node, knex, and migration files as the API.
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: pinpoint-server:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-pinpoint}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      NODE_ENV: development
+    command: ["npm", "run", "migrate"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: pinpoint-server:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-pinpoint}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      PORT: "3001"
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4173}
+      APP_URL: ${APP_URL:-http://localhost:4173}
+      NODE_ENV: development
+    ports:
+      - "3001:3001"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "4173:4173"
+
+volumes:
+  db_data:

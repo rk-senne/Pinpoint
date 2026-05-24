@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pinpoint — Options</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 640px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin-top: 2rem;
+        margin-bottom: 0.5rem;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-top: 1.25rem;
+        margin-bottom: 0.25rem;
+      }
+      .hint {
+        font-size: 0.8125rem;
+        color: #555;
+        margin-bottom: 0.5rem;
+      }
+      textarea {
+        width: 100%;
+        min-height: 8rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.875rem;
+        padding: 0.5rem;
+        box-sizing: border-box;
+      }
+      .status {
+        margin-top: 0.75rem;
+        font-size: 0.8125rem;
+        color: #1a7f37;
+        min-height: 1.25em;
+      }
+      .auth-section {
+        padding: 0.75rem 1rem;
+        border: 1px solid #e1e4e8;
+        border-radius: 6px;
+        background-color: #f6f8fa;
+      }
+      .auth-state {
+        font-size: 0.875rem;
+        margin: 0 0 0.5rem;
+      }
+      button#logout-button {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #ffffff;
+        background-color: #d1242f;
+        border: none;
+        border-radius: 4px;
+        padding: 0.4rem 0.875rem;
+        cursor: pointer;
+      }
+      button#logout-button:disabled {
+        background-color: #f0a6ab;
+        cursor: not-allowed;
+      }
+      button#logout-button[hidden] {
+        display: none;
+      }
+      .auth-status {
+        margin-top: 0.5rem;
+        font-size: 0.8125rem;
+        color: #1a7f37;
+        min-height: 1.25em;
+      }
+      .capture-section label.checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 500;
+        margin-top: 0.75rem;
+        margin-bottom: 0.25rem;
+      }
+      .capture-section input[type='checkbox'] {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Pinpoint Options</h1>
+
+    <h2>Account</h2>
+    <section class="auth-section" aria-label="Account">
+      <p id="auth-state" class="auth-state">Checking sign-in status…</p>
+      <button id="logout-button" type="button" hidden>Log out</button>
+      <div
+        id="auth-status"
+        class="auth-status"
+        role="status"
+        aria-live="polite"
+      ></div>
+    </section>
+
+    <h2>Host filters</h2>
+
+    <label for="allow-list">Allow-list (one host pattern per line)</label>
+    <p class="hint">
+      When non-empty, the extension only injects on hosts matching one of these
+      patterns. Supports exact hosts and wildcard prefixes like
+      <code>*.example.com</code>.
+    </p>
+    <textarea id="allow-list" spellcheck="false"></textarea>
+
+    <label for="block-list">Block-list (one host pattern per line)</label>
+    <p class="hint">
+      The extension never injects on hosts matching one of these patterns.
+      Block-list takes precedence over allow-list.
+    </p>
+    <textarea id="block-list" spellcheck="false"></textarea>
+
+    <h2>Capture</h2>
+    <section class="capture-section" aria-label="Capture toggles">
+      <p class="hint">
+        Disable these toggles to stop Pinpoint from collecting console
+        messages or network resource timing entries when you submit a bug
+        report. Both default to on.
+      </p>
+      <label class="checkbox-label" for="capture-console">
+        <input id="capture-console" type="checkbox" />
+        Capture console output
+      </label>
+      <label class="checkbox-label" for="capture-network">
+        <input id="capture-network" type="checkbox" />
+        Capture network requests
+      </label>
+    </section>
+
+    <h2>Performance per host</h2>
+    <label for="pin-positioner-opt-out"
+      >Skip layout-driven repositioning on these hosts (one per line, supports
+      <code>*.example.com</code>)</label
+    >
+    <p class="hint">
+      On hosts matching one of these patterns, Pinpoint places annotation
+      pins once on initial render and never repositions them in response to
+      DOM mutations, scroll, or resize events. Use when a busy host page
+      causes noticeable jank.
+    </p>
+    <textarea id="pin-positioner-opt-out" spellcheck="false"></textarea>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

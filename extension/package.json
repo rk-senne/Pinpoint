@@ -1,0 +1,23 @@
+{
+  "name": "@pinpoint/extension",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@pinpoint/shared": "*",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.4.0",
+    "@types/chrome": "^0.0.268",
+    "fast-check": "^4.1.1",
+    "vite": "^6.0.0"
+  }
+}

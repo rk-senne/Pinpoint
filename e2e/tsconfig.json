@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    // `composite: true` enables this project to be referenced from the root
+    // `tsconfig.json` so `tsc --build` walks it as part of the monorepo
+    // graph. Composite projects must emit declarations, so we land them in
+    // `dist-types/` (gitignored) — the `.spec.ts` files are run by
+    // Playwright, not bundled, so the emitted output is purely a type-check
+    // byproduct.
+    "composite": true,
+    "declaration": true,
+    "outDir": "dist-types",
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "dist-types"]
+}

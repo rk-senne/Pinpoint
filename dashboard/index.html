@@ -1,0 +1,1401 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pinpoint</title>
+    <!--
+      Shared theme — populated at boot from `themeCss()` in
+      `@pinpoint/shared` so the canonical Severity_Colors and
+      Status_Labels (single source of truth, Requirement 26.3) are exposed
+      as `--fl-severity-*` and `--fl-status-*` CSS Custom Properties for
+      every dashboard page. The body of this tag is filled in
+      `dashboard/src/main.ts` before any route mounts.
+    -->
+    <style id="fl-theme"></style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!--
+      Templates for the post-React Dashboard. Each `<template>` is cloned by a
+      page module via `cloneTemplate(id, slots?)` and inserted into the route
+      root. Pages own their own state through `signal<T>()` and toggle
+      visibility on `data-section` blocks rather than re-cloning the template.
+      Requirements: 31.1
+    -->
+
+    <!--
+      AppLayout shell (task 18.5). Mounted by `mountAppLayout`; the
+      caller-provided per-route content node is moved into the
+      `[data-slot="content"]` `<main>` while the sidebar slot is filled
+      by `mountProjectListSidebar`. Markup mirrors the test fixture in
+      `dashboard/src/components/AppLayout.test.ts`.
+    -->
+    <template id="app-layout">
+      <div class="fl-app-layout" style="display: flex; flex-direction: column; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <header style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; background: #fff;">
+          <a
+            data-route
+            data-action="goHome"
+            href="/"
+            class="fl-app-layout__logo"
+            style="font-weight: 600; color: inherit; text-decoration: none; font-size: 16px;"
+          >Pinpoint</a>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span data-slot="currentUser" style="font-size: 13px; color: #444;"></span>
+            <button
+              type="button"
+              data-action="logout"
+              style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+            >Logout</button>
+          </div>
+        </header>
+        <div class="fl-app-layout__body" style="display: flex; flex: 1; min-height: 0;">
+          <aside data-slot="sidebar" style="width: 260px; border-right: 1px solid #e5e7eb; background: #fafafa; overflow-y: auto;"></aside>
+          <main data-slot="content" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
+        </div>
+      </div>
+    </template>
+
+    <!--
+      Project list sidebar (task 18.6). Mounted by `mountProjectListSidebar`
+      into the `app-layout` sidebar slot. Markup mirrors the fixture in
+      `dashboard/src/components/ProjectListSidebar.test.ts`.
+    -->
+    <template id="tpl-project-list-sidebar">
+      <div data-role="root" style="display: flex; flex-direction: column; height: 100%; padding: 12px;">
+        <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+          <button
+            type="button"
+            data-action="selectActive"
+            data-role="tab-active"
+            style="flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px;"
+          >Active</button>
+          <button
+            type="button"
+            data-action="selectArchived"
+            data-role="tab-archived"
+            style="flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px;"
+          >Archived</button>
+        </div>
+        <input
+          type="text"
+          data-action="input:search"
+          data-role="search"
+          placeholder="Search projects"
+          style="width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px;"
+        />
+        <div data-role="list" style="flex: 1; overflow-y: auto;"></div>
+        <button
+          type="button"
+          data-action="openCreate"
+          data-role="create"
+          style="margin-top: 8px; padding: 8px 12px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+        >+ Create Project</button>
+      </div>
+    </template>
+
+    <!-- One row in the sidebar's project list. -->
+    <template id="tpl-project-list-item">
+      <div
+        data-role="row"
+        style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 4px; cursor: pointer;"
+      >
+        <div data-role="body" style="flex: 1; overflow: hidden;">
+          <div
+            data-slot="name"
+            data-role="name"
+            style="font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+          ></div>
+          <div
+            data-slot="url"
+            data-role="url"
+            style="font-size: 11px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+          ></div>
+        </div>
+        <button
+          type="button"
+          data-action="menu"
+          data-role="menu-button"
+          aria-label="Actions"
+          style="background: none; border: none; cursor: pointer; padding: 4px 6px; font-size: 14px; color: #666;"
+        >⋯</button>
+      </div>
+    </template>
+
+    <!-- Context menu shown by the sidebar after clicking the row's ⋯ button. -->
+    <template id="tpl-project-list-menu">
+      <div
+        data-role="menu"
+        style="position: fixed; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px 0; min-width: 180px; z-index: 10;"
+      >
+        <button type="button" data-action="rename" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Rename</button>
+        <button type="button" data-action="archive" data-slot="archiveLabel" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Archive</button>
+        <button type="button" data-action="delete" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px; color: #dc2626;">Delete</button>
+        <button type="button" data-action="delete-page" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Delete page</button>
+        <button type="button" data-action="details" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Project details</button>
+        <button type="button" data-action="copy-link" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Copy link</button>
+        <button type="button" data-action="open" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Open in app</button>
+        <button type="button" data-action="export" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Export project</button>
+      </div>
+    </template>
+
+    <!-- Modal dialog used by the sidebar to create a new project. -->
+    <template id="tpl-create-project-dialog">
+      <div
+        data-role="overlay"
+        data-action="closeOverlay"
+        style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 100;"
+      >
+        <div
+          data-role="panel"
+          style="background: #fff; padding: 24px; border-radius: 8px; width: 360px;"
+        >
+          <h2 style="margin: 0 0 16px; font-size: 16px;">Create Project</h2>
+          <form data-action="submit:submit" data-role="form">
+            <label style="display: block; font-size: 13px; margin-bottom: 12px;">
+              Name
+              <input
+                type="text"
+                data-role="name"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 13px;"
+              />
+            </label>
+            <label style="display: block; font-size: 13px; margin-bottom: 12px;">
+              URL
+              <input
+                type="text"
+                data-role="url"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 13px;"
+              />
+            </label>
+            <p data-role="error" hidden style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"></p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button
+                type="button"
+                data-action="cancel"
+                style="padding: 6px 12px; background: #fff; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+              >Cancel</button>
+              <button
+                type="submit"
+                data-role="submit"
+                style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+              >Create</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </template>
+
+    <!-- Modal dialog used by the sidebar to export a project. -->
+    <template id="tpl-export-project-dialog">
+      <div
+        data-role="overlay"
+        data-action="closeOverlay"
+        style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 100;"
+      >
+        <div
+          data-role="panel"
+          style="background: #fff; padding: 24px; border-radius: 8px; width: 360px;"
+        >
+          <h2 style="margin: 0 0 8px; font-size: 16px;">Export project</h2>
+          <p data-slot="projectName" data-role="project-name" style="color: #666; font-size: 13px; margin: 0 0 16px;"></p>
+          <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+            <button
+              type="button"
+              data-action="formatPdf"
+              data-role="format-pdf"
+              style="flex: 1; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: #fff; font-size: 13px;"
+            >PDF</button>
+            <button
+              type="button"
+              data-action="formatCsv"
+              data-role="format-csv"
+              style="flex: 1; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: #fff; font-size: 13px;"
+            >CSV</button>
+          </div>
+          <p data-role="error" hidden style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"></p>
+          <div data-role="download" hidden style="margin-bottom: 12px;">
+            <a data-role="download-link" style="color: #4f46e5; font-size: 13px;">Download</a>
+          </div>
+          <div style="display: flex; gap: 8px; justify-content: flex-end;">
+            <button
+              type="button"
+              data-action="close"
+              style="padding: 6px 12px; background: #fff; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+            >Close</button>
+            <button
+              type="button"
+              data-action="export"
+              data-role="export-button"
+              style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+            >Export</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Shared project view (Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6). -->
+    <template id="tpl-shared-project-view">
+      <div data-fl-shared-root style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <!-- Password prompt -->
+        <section
+          data-section="prompt"
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+        >
+          <div
+            style="background: #fff; border-radius: 8px; padding: 32px; width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); text-align: center;"
+          >
+            <div style="font-size: 32px; margin-bottom: 8px;">🔗</div>
+            <h2 style="margin: 0 0 4px; font-size: 18px;">Shared Project</h2>
+            <p style="color: #666; font-size: 13px; margin: 0 0 20px;">
+              Enter the password to view this project.
+            </p>
+            <form data-action="submit:verify" novalidate>
+              <input
+                data-slot="password-input"
+                type="password"
+                placeholder="Password"
+                autofocus
+                style="width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;"
+              />
+              <p
+                data-slot="prompt-error"
+                hidden
+                style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+              ></p>
+              <button
+                type="submit"
+                data-slot="submit-btn"
+                style="width: 100%; padding: 8px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
+              >
+                Unlock
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <!-- Lockout screen with countdown -->
+        <section
+          data-section="locked"
+          hidden
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+        >
+          <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🔒</div>
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Access Locked</h2>
+            <p data-slot="locked-message" style="color: #666; font-size: 14px;"></p>
+          </div>
+        </section>
+
+        <!-- Not-found screen (404 from server) -->
+        <section
+          data-section="not_found"
+          hidden
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+        >
+          <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🔗</div>
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Link Not Found</h2>
+            <p style="color: #666; font-size: 14px;">
+              This shared link does not exist or has been revoked.
+            </p>
+          </div>
+        </section>
+
+        <!-- Authenticated read-only project view -->
+        <section
+          data-section="authenticated"
+          hidden
+          style="max-width: 800px; margin: 0 auto; padding: 24px;"
+        >
+          <h1 style="font-size: 20px; margin: 0 0 4px;">Shared Project</h1>
+          <p style="color: #888; font-size: 13px; margin: 0 0 20px;">Read-only view</p>
+
+          <p
+            data-slot="empty-state"
+            hidden
+            style="color: #888;"
+          >No annotations in this project.</p>
+
+          <table
+            data-slot="annotations-table"
+            hidden
+            style="width: 100%; border-collapse: collapse; font-size: 13px;"
+          >
+            <thead>
+              <tr style="border-bottom: 2px solid #e0e0e0; text-align: left;">
+                <th style="padding: 8px 6px;">#</th>
+                <th style="padding: 8px 6px;">Type</th>
+                <th style="padding: 8px 6px;">Severity</th>
+                <th style="padding: 8px 6px;">Status</th>
+                <th style="padding: 8px 6px;">Body</th>
+              </tr>
+            </thead>
+            <tbody data-slot="annotations-tbody"></tbody>
+          </table>
+        </section>
+      </div>
+    </template>
+
+    <!-- One row of the shared-project annotation table. -->
+    <template id="tpl-shared-project-view-row">
+      <tr style="border-bottom: 1px solid #eee;">
+        <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
+        <td data-slot="type" style="padding: 8px 6px;"></td>
+        <td style="padding: 8px 6px;">
+          <span data-slot="severity" style="font-weight: 500;"></span>
+        </td>
+        <td data-slot="status" style="padding: 8px 6px;"></td>
+        <td
+          data-slot="body"
+          style="padding: 8px 6px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+        ></td>
+      </tr>
+    </template>
+
+    <!--
+      AuthPage shell (Requirement 31.1, task 18.4).
+      Login + register form with a single mode-switch link. Filled and wired
+      in `dashboard/src/pages/AuthPage.ts`. Inputs are referenced by
+      `name=` attributes; the rest of the chrome is keyed via `data-slot`
+      and `data-action`.
+    -->
+    <template id="tpl-auth-page">
+      <div
+        class="fl-auth-page"
+        style="
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          background: #f5f5f5;
+        "
+      >
+        <form
+          class="fl-auth-page__form"
+          data-action="submit:submit"
+          novalidate
+          style="
+            background: #fff;
+            padding: 32px;
+            border-radius: 8px;
+            width: 360px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          "
+        >
+          <h1
+            data-slot="title"
+            class="fl-auth-page__title"
+            style="margin: 0 0 24px; font-size: 24px; text-align: center;"
+          ></h1>
+
+          <div
+            data-slot="error"
+            class="fl-auth-page__error"
+            role="alert"
+            hidden
+            style="
+              background: #fdecea;
+              color: #b71c1c;
+              padding: 8px 12px;
+              border-radius: 4px;
+              margin-bottom: 16px;
+              font-size: 14px;
+            "
+          ></div>
+
+          <div
+            data-slot="nameField"
+            class="fl-auth-page__field"
+            hidden
+            style="margin-bottom: 16px;"
+          >
+            <label
+              for="fl-auth-name"
+              style="display: block; margin-bottom: 4px; font-size: 14px;"
+            >Name</label>
+            <input
+              id="fl-auth-name"
+              name="name"
+              type="text"
+              autocomplete="name"
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 4px;
+                border: 1px solid #ccc;
+                box-sizing: border-box;
+              "
+            />
+          </div>
+
+          <div class="fl-auth-page__field" style="margin-bottom: 16px;">
+            <label
+              for="fl-auth-email"
+              style="display: block; margin-bottom: 4px; font-size: 14px;"
+            >Email</label>
+            <input
+              id="fl-auth-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              required
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 4px;
+                border: 1px solid #ccc;
+                box-sizing: border-box;
+              "
+            />
+          </div>
+
+          <div class="fl-auth-page__field" style="margin-bottom: 24px;">
+            <label
+              for="fl-auth-password"
+              style="display: block; margin-bottom: 4px; font-size: 14px;"
+            >Password</label>
+            <input
+              id="fl-auth-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 4px;
+                border: 1px solid #ccc;
+                box-sizing: border-box;
+              "
+            />
+          </div>
+
+          <button
+            type="submit"
+            data-slot="submitBtn"
+            class="fl-auth-page__submit"
+            style="
+              width: 100%;
+              padding: 10px;
+              border-radius: 4px;
+              border: none;
+              background: #1976d2;
+              color: #fff;
+              font-size: 16px;
+              cursor: pointer;
+            "
+          ></button>
+
+          <p
+            class="fl-auth-page__switch"
+            style="text-align: center; margin-top: 16px; font-size: 14px;"
+          >
+            <span data-slot="switchPrompt"></span>
+            <button
+              type="button"
+              data-slot="switchBtn"
+              data-action="toggleMode"
+              class="fl-auth-page__switch-btn"
+              style="
+                background: none;
+                border: none;
+                color: #1976d2;
+                cursor: pointer;
+                padding: 0;
+                font-size: 14px;
+              "
+            ></button>
+          </p>
+        </form>
+      </div>
+    </template>
+
+    <!--
+      Verify-email page (task 6.5 / 18.12, Requirements 20.2, 20.3).
+      Mounted by `dashboard/src/pages/VerifyEmailPage.ts` at
+      `/verify-email/:token`. Three sections (`verifying`, `success`,
+      `error`) are toggled via `hidden`; only one is visible at a time.
+    -->
+    <template id="verify-email-page">
+      <div
+        class="fl-verify-email"
+        style="
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+          background: #f5f5f5;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        "
+      >
+        <div
+          style="
+            background: #fff;
+            padding: 32px;
+            border-radius: 8px;
+            width: 360px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            text-align: center;
+          "
+        >
+          <section data-section="verifying" aria-live="polite">
+            <h1 style="margin: 0 0 12px; font-size: 20px;">Verifying your email…</h1>
+            <p style="color: #666; font-size: 14px; margin: 0;">
+              Hang tight while we confirm your address.
+            </p>
+          </section>
+
+          <section data-section="success" hidden>
+            <div style="font-size: 32px; margin-bottom: 8px;">✅</div>
+            <h1 style="margin: 0 0 12px; font-size: 20px;">
+              Email verified — you can now sign in
+            </h1>
+            <p style="margin: 0;">
+              <a
+                href="/login"
+                data-route
+                data-action="goLogin"
+                style="color: #1976d2; text-decoration: none; font-size: 14px; font-weight: 500;"
+              >Go to login</a>
+            </p>
+          </section>
+
+          <section data-section="error" hidden>
+            <div style="font-size: 32px; margin-bottom: 8px;">⚠️</div>
+            <h1 style="margin: 0 0 8px; font-size: 20px;">Verification failed</h1>
+            <p
+              data-slot="message"
+              style="color: #b71c1c; font-size: 14px; margin: 0 0 16px;"
+            ></p>
+
+            <form
+              data-action="submit:resend"
+              data-form="resend"
+              novalidate
+              style="display: flex; flex-direction: column; gap: 8px; text-align: left;"
+            >
+              <label style="font-size: 13px; color: #333;">
+                Email address
+                <input
+                  type="email"
+                  data-input="email"
+                  autocomplete="email"
+                  required
+                  style="
+                    width: 100%;
+                    padding: 8px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    box-sizing: border-box;
+                    margin-top: 4px;
+                    font-size: 14px;
+                  "
+                />
+              </label>
+              <button
+                type="submit"
+                style="
+                  padding: 8px 12px;
+                  background: #1976d2;
+                  color: #fff;
+                  border: none;
+                  border-radius: 4px;
+                  cursor: pointer;
+                  font-size: 14px;
+                  font-weight: 500;
+                "
+              >Resend verification</button>
+            </form>
+
+            <p
+              data-slot="resendStatus"
+              role="status"
+              aria-live="polite"
+              style="color: #555; font-size: 13px; margin: 12px 0 0;"
+            ></p>
+          </section>
+        </div>
+      </div>
+    </template>
+
+    <!--
+      Team management UI (task 18.10, Requirements 9.1, 9.2, 9.3, 9.5).
+      Mounted by `dashboard/src/components/TeamManagement.ts`. Renders the list
+      of teams the user belongs to, the create-team form, and per-team member
+      lists with role and remove controls.
+    -->
+    <template id="tpl-team-management">
+      <div data-role="root" style="max-width: 600px;">
+        <p
+          data-role="error"
+          hidden
+          style="color: #dc2626; font-size: 13px; margin: 0 0 8px;"
+        ></p>
+
+        <p
+          data-role="loading"
+          style="color: #888; font-size: 13px;"
+        >Loading…</p>
+
+        <section data-role="content" hidden>
+          <form
+            data-action="submit:createTeam"
+            data-role="create-form"
+            style="display: flex; gap: 8px; margin-bottom: 24px;"
+          >
+            <input
+              data-role="new-team-name"
+              type="text"
+              placeholder="New team name"
+              style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;"
+            />
+            <button
+              type="submit"
+              data-role="create-submit"
+              style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+            >Create Team</button>
+          </form>
+
+          <p
+            data-role="empty"
+            hidden
+            style="color: #888; font-size: 13px;"
+          >No teams yet.</p>
+
+          <div data-role="list"></div>
+        </section>
+      </div>
+    </template>
+
+    <!-- One team card with header, member list, and (when permitted) invite row. -->
+    <template id="tpl-team-management-team">
+      <article
+        data-role="team"
+        style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin-bottom: 12px;"
+      >
+        <header
+          style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;"
+        >
+          <h3 data-slot="team-name" style="margin: 0; font-size: 15px;"></h3>
+          <span
+            data-role="my-role"
+            data-slot="my-role-label"
+            style="font-size: 11px; padding: 2px 6px; border-radius: 3px; font-weight: 500; text-transform: capitalize;"
+          ></span>
+        </header>
+
+        <div data-role="members"></div>
+
+        <form
+          data-role="invite"
+          data-action="submit:invite"
+          hidden
+          style="display: flex; gap: 8px; margin-top: 12px;"
+        >
+          <input
+            data-role="invite-email"
+            type="email"
+            placeholder="Invite by email"
+            style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;"
+          />
+          <button
+            type="submit"
+            data-role="invite-submit"
+            style="padding: 6px 14px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+          >Invite</button>
+        </form>
+      </article>
+    </template>
+
+    <!-- One member row inside a team card. -->
+    <template id="tpl-team-management-member">
+      <div
+        data-role="member"
+        style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px;"
+      >
+        <div>
+          <span data-slot="display-name" style="font-weight: 500;"></span>
+          <span
+            data-role="email"
+            data-slot="email"
+            style="color: #888; margin-left: 6px;"
+          ></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span
+            data-role="role-badge"
+            data-slot="role-label"
+            style="font-size: 11px; padding: 2px 6px; border-radius: 3px; font-weight: 500; text-transform: capitalize;"
+          ></span>
+          <select
+            data-role="role-select"
+            hidden
+            style="font-size: 12px; padding: 2px 4px; border-radius: 3px; border: 1px solid #d1d5db;"
+          >
+            <option value="owner">Owner</option>
+            <option value="admin">Admin</option>
+            <option value="viewer">Viewer</option>
+          </select>
+          <button
+            type="button"
+            data-role="remove"
+            data-action="remove"
+            hidden
+            style="background: none; border: none; color: #dc2626; cursor: pointer; font-size: 12px;"
+          >Remove</button>
+        </div>
+      </div>
+    </template>
+
+    <!--
+      Dashboard home (task 18.7, Requirement 31.1).
+      Mounted by `dashboard/src/pages/DashboardHome.ts` at `/`. The single
+      template carries both the empty-state CTA and the recent-project list;
+      the page toggles `hidden` on the two `data-section` blocks based on
+      whether `projectsStore.active` has any rows.
+    -->
+    <template id="tpl-dashboard-home">
+      <div
+        data-role="root"
+        style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;"
+      >
+        <h1 style="margin: 0 0 4px; font-size: 22px;">Dashboard</h1>
+        <p style="color: #666; font-size: 14px; margin: 0 0 24px;">
+          Pick a project from the sidebar to start reviewing feedback.
+        </p>
+
+        <!-- Empty-state CTA. Visible when the user has no active projects. -->
+        <section
+          data-section="empty"
+          hidden
+          style="border: 1px dashed #d1d5db; border-radius: 8px; padding: 32px; text-align: center; background: #fafafa;"
+        >
+          <div style="font-size: 32px; margin-bottom: 8px;">📋</div>
+          <h2 style="margin: 0 0 8px; font-size: 16px;">No projects yet</h2>
+          <p style="color: #666; font-size: 13px; margin: 0 0 16px;">
+            Create your first project to start collecting feedback on a page.
+          </p>
+          <button
+            type="button"
+            data-action="createProject"
+            data-role="empty-cta"
+            style="padding: 8px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
+          >+ Create Project</button>
+        </section>
+
+        <!-- Recent active projects. Visible when at least one exists. -->
+        <section data-section="recent" hidden>
+          <h2 style="margin: 0 0 8px; font-size: 14px; color: #444; text-transform: uppercase; letter-spacing: 0.04em;">
+            Recent projects
+          </h2>
+          <ul
+            data-role="recent-list"
+            style="list-style: none; padding: 0; margin: 0; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;"
+          ></ul>
+        </section>
+      </div>
+    </template>
+
+    <!-- One row in the recent-projects list. -->
+    <template id="tpl-dashboard-home-recent-item">
+      <li
+        data-role="recent-item"
+        style="border-bottom: 1px solid #f0f0f0;"
+      >
+        <a
+          data-route
+          data-action="openProject"
+          data-role="recent-link"
+          style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; text-decoration: none; color: inherit;"
+        >
+          <span data-slot="name" style="font-weight: 500; font-size: 14px;"></span>
+          <span data-slot="url" style="color: #888; font-size: 12px; margin-left: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;"></span>
+        </a>
+      </li>
+    </template>
+
+    <!--
+      Project view (task 18.8, Requirements 16.1, 16.2, 16.3, 16.4, 16.5,
+      22.6, 8.4). Mounted by `dashboard/src/pages/ProjectView.ts` at
+      `/projects/:id`. The single template carries the reconnecting banner,
+      header with the list/kanban toggle, the four-card analytics panel
+      (severity, type, status, byBrowser), the list and kanban subviews,
+      and the annotation detail panel. The page toggles `hidden` on the
+      `data-section` blocks; only one of `loading`, `error`, or `content`
+      is visible at a time, and within `content` only one of `list`,
+      `kanban`, or `detail` is visible at a time.
+    -->
+    <template id="tpl-project-view">
+      <div data-fl-project-root style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <!-- Reconnecting banner. Visible only while the socket is
+             attempting to reconnect (Requirement 6.7). -->
+        <div
+          data-section="reconnecting"
+          hidden
+          style="background: #fefcbf; color: #744210; padding: 8px 16px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;"
+        >
+          <span>⟳</span>
+          <span>Reconnecting to real-time updates…</span>
+        </div>
+
+        <!-- Loading state. -->
+        <div data-section="loading" style="padding: 24px;">Loading…</div>
+
+        <!-- Error state. -->
+        <div data-section="error" hidden style="padding: 24px; color: #e53e3e;">
+          Error: <span data-slot="error-message"></span>
+        </div>
+
+        <!-- Main content surface. Only visible after the initial fetch
+             resolves. Within this section the list / kanban / detail
+             subviews are mutually exclusive. -->
+        <div data-section="content" hidden>
+          <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h1 data-slot="project-title" style="margin: 0; font-size: 20px;"></h1>
+            <div data-role="view-toggle" style="display: flex;">
+              <button
+                type="button"
+                data-action="select-list"
+                data-role="toggle-list"
+                style="padding: 6px 14px; border: 1px solid #ccc; cursor: pointer; font-size: 13px; border-radius: 4px 0 0 4px;"
+              >List</button>
+              <button
+                type="button"
+                data-action="select-kanban"
+                data-role="toggle-kanban"
+                style="padding: 6px 14px; border: 1px solid #ccc; cursor: pointer; font-size: 13px; border-radius: 0 4px 4px 0; border-left: none;"
+              >Kanban</button>
+            </div>
+          </header>
+
+          <!-- Analytics panel (severity, type, status, byBrowser). One
+               container element per dimension; rows inside each are
+               populated programmatically so the component can show the
+               severity color swatch and the by-browser counts. -->
+          <div
+            data-role="analytics"
+            hidden
+            style="display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;"
+          >
+            <div data-role="analytics-card" data-dim="bySeverity" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+              <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Severity</div>
+              <div data-role="rows"></div>
+            </div>
+            <div data-role="analytics-card" data-dim="byType" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+              <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Type</div>
+              <div data-role="rows"></div>
+            </div>
+            <div data-role="analytics-card" data-dim="byStatus" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+              <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Status</div>
+              <div data-role="rows"></div>
+            </div>
+            <div data-role="analytics-card" data-dim="byBrowser" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+              <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Browser</div>
+              <div data-role="rows"></div>
+            </div>
+          </div>
+
+          <!-- List subview. -->
+          <section data-section="list" hidden>
+            <p data-role="list-empty" hidden style="color: #888; padding: 16px;">
+              No annotations yet.
+            </p>
+            <table
+              data-role="list-table"
+              hidden
+              style="width: 100%; border-collapse: collapse; font-size: 13px;"
+            >
+              <thead>
+                <tr style="border-bottom: 2px solid #e0e0e0; text-align: left;">
+                  <th style="padding: 8px 6px;">#</th>
+                  <th style="padding: 8px 6px;">Type</th>
+                  <th style="padding: 8px 6px;">Severity</th>
+                  <th style="padding: 8px 6px;">Status</th>
+                  <th style="padding: 8px 6px;">Body</th>
+                </tr>
+              </thead>
+              <tbody data-role="list-body"></tbody>
+            </table>
+          </section>
+
+          <!-- Kanban subview. Three columns hard-coded for the three
+               annotation statuses; each column owns its own card list. -->
+          <section data-section="kanban" hidden style="display: flex; gap: 12px;">
+            <div
+              data-role="kanban-column"
+              data-status="active"
+              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+            >
+              <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
+              <div data-role="kanban-cards"></div>
+            </div>
+            <div
+              data-role="kanban-column"
+              data-status="in_progress"
+              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+            >
+              <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
+              <div data-role="kanban-cards"></div>
+            </div>
+            <div
+              data-role="kanban-column"
+              data-status="resolved"
+              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+            >
+              <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
+              <div data-role="kanban-cards"></div>
+            </div>
+          </section>
+
+          <!-- Detail subview. Inline rather than a separate template
+               because every field is bound from a single annotation row;
+               the page toggles visibility on the bug-report badge and the
+               environment / assignment subpanels. -->
+          <section data-section="detail" hidden>
+            <button
+              type="button"
+              data-action="back"
+              style="background: none; border: none; cursor: pointer; color: #3182ce; font-size: 13px; margin-bottom: 12px; padding: 0;"
+            >← Back to list</button>
+
+            <div style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 12px; align-items: flex-start; gap: 12px;">
+                <h2 style="margin: 0; font-size: 16px;">
+                  #<span data-slot="detail-pin"></span> — <span data-slot="detail-type"></span>
+                  <span
+                    data-role="bug-badge"
+                    hidden
+                    style="margin-left: 8px; background: #e53e3e; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 11px;"
+                  >Bug Report</span>
+                </h2>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <div
+                    data-role="co-viewers"
+                    role="group"
+                    aria-label="Co-viewers"
+                    data-co-viewers
+                    style="display: flex; align-items: center; gap: 4px;"
+                  ></div>
+                  <span data-slot="detail-severity" style="font-weight: 600;"></span>
+                </div>
+              </div>
+
+              <div data-slot="detail-body" style="font-size: 13px; margin-bottom: 12px;"></div>
+
+              <!--
+                Screenshot + Markup_Document overlay (Reqs 34.4, 35.2).
+                The bitmap loads from `/api/v1/annotations/:id/screenshot`
+                and the persisted Markup_Document is fetched best-effort
+                from `/api/v1/annotations/:id/markup`. The SVG layer is
+                composited absolutely over the `<img>` so it scales with
+                the host's CSS layout while keeping the original pixel
+                coordinates via `viewBox`.
+              -->
+              <div
+                data-role="screenshot-panel"
+                hidden
+                style="position: relative; display: inline-block; max-width: 100%; margin-bottom: 12px;"
+              >
+                <img
+                  data-role="screenshot-img"
+                  alt="Annotation screenshot"
+                  style="display: block; max-width: 100%; height: auto; border: 1px solid #e0e0e0; border-radius: 6px; background: #f5f5f5;"
+                />
+                <div
+                  data-role="screenshot-overlay"
+                  aria-hidden="true"
+                  style="position: absolute; inset: 0; pointer-events: none;"
+                ></div>
+              </div>
+
+              <div style="font-size: 12px; color: #888; margin-bottom: 12px;">
+                Status: <span data-slot="detail-status"></span>
+                · Page: <span data-slot="detail-page-url"></span>
+              </div>
+
+              <!--
+                Environment metadata (Reqs 8.3, 17.3, 17.4). The summary
+                line ("Reported on Chrome 124 on macOS 14.5") is rendered
+                outside the toggle so it is always visible, mirroring the
+                popover surface in the Extension. The toggle expands the
+                full per-field breakdown (browser, OS, device, viewport,
+                DPR) and a separately collapsible raw User-Agent string.
+              -->
+              <div data-role="env-panel" hidden style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px;">
+                <div
+                  data-role="env-summary"
+                  data-slot="env-summary"
+                  style="font-size: 12px; color: #555; margin-bottom: 6px;"
+                ></div>
+                <button
+                  type="button"
+                  data-action="toggle-env"
+                  data-role="env-toggle"
+                  aria-expanded="false"
+                  style="background: none; border: none; cursor: pointer; font-size: 13px; color: #3182ce; padding: 0; font-weight: 500;"
+                ><span data-slot="env-arrow">▸</span> Environment details</button>
+                <div
+                  data-role="env-details"
+                  hidden
+                  style="margin-top: 8px; font-size: 12px; color: #555; line-height: 1.8;"
+                >
+                  <div><span style="font-weight: 500;">Browser:</span> <span data-slot="env-browser"></span></div>
+                  <div><span style="font-weight: 500;">OS:</span> <span data-slot="env-os"></span></div>
+                  <div><span style="font-weight: 500;">Device:</span> <span data-slot="env-device"></span></div>
+                  <div data-role="env-viewport-row" hidden>
+                    <span style="font-weight: 500;">Viewport:</span>
+                    <span data-slot="env-viewport"></span>
+                  </div>
+                  <div data-role="env-dpr-row" hidden>
+                    <span style="font-weight: 500;">Device Pixel Ratio:</span>
+                    <span data-slot="env-dpr"></span>
+                  </div>
+                  <div data-role="env-ua-row">
+                    <button
+                      type="button"
+                      data-action="toggle-ua"
+                      data-role="env-ua-toggle"
+                      aria-expanded="false"
+                      style="background: none; border: none; cursor: pointer; font-size: 12px; color: #3182ce; padding: 0; font-weight: 500;"
+                    ><span data-slot="env-ua-arrow">▸</span> User Agent</button>
+                    <div
+                      data-role="env-ua-value"
+                      hidden
+                      style="margin-top: 4px; font-size: 11px; color: #555; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #f7fafc; border: 1px solid #edf2f7; border-radius: 3px; padding: 4px 6px;"
+                      data-slot="env-ua"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Captured Console + Network sections (Req 36.3, task 27.4).
+                   Each is a native `<details>` populated by `renderDetail()`
+                   from `annotation.capturedConsole` / `annotation.capturedNetwork`.
+                   Hidden when the buffer is null/empty. -->
+              <details
+                data-role="console-panel"
+                hidden
+                style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; font-size: 12px; color: #555;"
+              >
+                <summary style="cursor: pointer; font-weight: 500;">
+                  Console (<span data-slot="console-count">0</span>)
+                </summary>
+                <ul
+                  data-role="console-list"
+                  style="list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.4;"
+                ></ul>
+              </details>
+
+              <details
+                data-role="network-panel"
+                hidden
+                style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; font-size: 12px; color: #555;"
+              >
+                <summary style="cursor: pointer; font-weight: 500;">
+                  Network (<span data-slot="network-count">0</span>)
+                </summary>
+                <ul
+                  data-role="network-list"
+                  style="list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.4;"
+                ></ul>
+              </details>
+
+              <!-- Assignment subpanel for bug-report annotations
+                   (Reqs 8.4, 22.6). -->
+              <div
+                data-role="assignment-panel"
+                hidden
+                style="border-top: 1px solid #eee; padding-top: 12px; margin-top: 12px;"
+              >
+                <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">Assignment</div>
+                <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+                  <div>
+                    <label style="font-size: 12px; color: #555; display: block; margin-bottom: 4px;">Assignee</label>
+                    <select
+                      data-role="assignee-select"
+                      style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 240px; background: #fff;"
+                    >
+                      <option value="">Unassigned</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="font-size: 12px; color: #555; display: block; margin-bottom: 4px;">Due Date</label>
+                    <input
+                      type="date"
+                      data-role="due-date"
+                      style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    data-action="save-assignment"
+                    style="padding: 6px 16px; background: #3182ce; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                  >Save</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </template>
+
+    <!-- One row of the project-view annotation list. -->
+    <template id="tpl-project-view-list-row">
+      <tr style="border-bottom: 1px solid #eee; cursor: pointer;">
+        <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
+        <td data-slot="type" style="padding: 8px 6px;"></td>
+        <td style="padding: 8px 6px;">
+          <span data-slot="severity" style="font-weight: 500;"></span>
+        </td>
+        <td data-slot="status" style="padding: 8px 6px;"></td>
+        <td
+          data-slot="body"
+          style="padding: 8px 6px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+        ></td>
+      </tr>
+    </template>
+
+    <!-- One card on the kanban board. -->
+    <template id="tpl-project-view-kanban-card">
+      <div
+        draggable="true"
+        style="background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 8px; margin-bottom: 6px; cursor: grab; font-size: 13px;"
+      >
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span style="font-weight: 600;">#<span data-slot="pin-number"></span></span>
+          <span data-slot="severity" style="font-size: 11px; font-weight: 500;"></span>
+        </div>
+        <div data-slot="type" style="color: #555; margin-bottom: 4px;"></div>
+        <div data-slot="body" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+      </div>
+    </template>
+
+    <!--
+      Settings page (task 18.9, Requirement 31.1).
+      Mounted by `dashboard/src/pages/SettingsPage.ts` at `/settings`. The
+      template carries the tab strip plus all three panels (profile,
+      notifications, guidelines); the page toggles `hidden` on
+      `data-section` blocks so only the active tab is visible.
+    -->
+    <template id="tpl-settings-page">
+      <div
+        data-role="root"
+        style="max-width: 720px; margin: 0 auto; padding: 24px;"
+      >
+        <h1 style="margin: 0 0 16px; font-size: 20px;">Settings</h1>
+
+        <div
+          data-role="tabs"
+          style="display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 20px;"
+        >
+          <button
+            type="button"
+            data-action="selectProfile"
+            data-role="tab-profile"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+          >Profile</button>
+          <button
+            type="button"
+            data-action="selectNotifications"
+            data-role="tab-notifications"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+          >Notifications</button>
+          <button
+            type="button"
+            data-action="selectGuidelines"
+            data-role="tab-guidelines"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+          >Guidelines</button>
+          <button
+            type="button"
+            data-action="selectTeams"
+            data-role="tab-teams"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+          >Teams</button>
+        </div>
+
+        <!-- Profile tab. -->
+        <section data-section="profile" hidden>
+          <p
+            data-role="profile-loading"
+            style="color: #888; font-size: 13px;"
+          >Loading…</p>
+          <form
+            data-action="submit:saveProfile"
+            data-role="profile-form"
+            hidden
+            style="max-width: 400px;"
+          >
+            <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+              Name
+              <input
+                type="text"
+                data-role="profile-name"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+              />
+            </label>
+            <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+              Email
+              <input
+                type="email"
+                data-role="profile-email"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+              />
+            </label>
+            <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+              Avatar URL
+              <input
+                type="text"
+                data-role="profile-avatar"
+                placeholder="https://…"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+              />
+            </label>
+            <p
+              data-role="profile-message"
+              hidden
+              style="font-size: 13px; margin: 0 0 12px;"
+            ></p>
+            <button
+              type="submit"
+              data-role="profile-submit"
+              style="padding: 8px 20px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+            >Save</button>
+          </form>
+        </section>
+
+        <!-- Notifications tab. -->
+        <section data-section="notifications" hidden>
+          <p
+            data-role="notifications-loading"
+            style="color: #888; font-size: 13px;"
+          >Loading…</p>
+          <p
+            data-role="notifications-error"
+            hidden
+            style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+          ></p>
+          <div data-role="notifications-content" hidden style="max-width: 400px;">
+            <p style="font-size: 13px; color: #666; margin-bottom: 16px;">
+              Toggle email notifications for each event type.
+            </p>
+            <div data-role="notifications-list"></div>
+          </div>
+        </section>
+
+        <!-- Guidelines tab. -->
+        <section data-section="guidelines" hidden>
+          <p
+            data-role="guidelines-loading"
+            style="color: #888; font-size: 13px;"
+          >Loading…</p>
+          <p
+            data-role="guidelines-error"
+            hidden
+            style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+          ></p>
+          <div
+            data-role="guidelines-content"
+            hidden
+            style="max-width: 600px;"
+          >
+            <h3 style="font-size: 14px; margin: 0 0 12px;">All Guidelines</h3>
+            <p
+              data-role="guidelines-empty"
+              hidden
+              style="color: #888; font-size: 13px;"
+            >No guidelines found.</p>
+            <div data-role="guidelines-list" style="margin-bottom: 24px;"></div>
+
+            <h3 style="font-size: 14px; margin: 0 0 12px;">Create Custom Guideline</h3>
+            <form
+              data-action="submit:createGuideline"
+              data-role="guideline-form"
+            >
+              <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+                Name
+                <input
+                  type="text"
+                  data-role="guideline-name"
+                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+                />
+              </label>
+              <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+                Description
+                <textarea
+                  data-role="guideline-desc"
+                  rows="3"
+                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box; resize: vertical;"
+                ></textarea>
+              </label>
+              <button
+                type="submit"
+                data-role="guideline-submit"
+                disabled
+                style="padding: 8px 20px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: not-allowed; font-size: 13px; font-weight: 500; opacity: 0.6;"
+              >Create Guideline</button>
+            </form>
+          </div>
+        </section>
+
+        <!-- Teams tab. Container for the team-management UI; the
+             SettingsPage mounts `mountTeamManagement` into this section
+             on first activation. -->
+        <section data-section="teams" hidden>
+          <div data-role="teams-container"></div>
+        </section>
+      </div>
+    </template>
+
+    <!-- One row in the notifications-preferences list. -->
+    <template id="tpl-settings-notification-row">
+      <div
+        data-role="notification-row"
+        style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f0f0f0;"
+      >
+        <span data-slot="label" style="font-size: 13px;"></span>
+        <button
+          type="button"
+          data-action="toggle"
+          data-role="notification-toggle"
+          role="switch"
+          aria-checked="false"
+          style="width: 40px; height: 22px; border-radius: 11px; border: none; background: #d1d5db; position: relative; cursor: pointer; transition: background 0.2s;"
+        >
+          <span
+            data-role="notification-knob"
+            style="position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"
+          ></span>
+        </button>
+      </div>
+    </template>
+
+    <!-- One row in the guidelines list. -->
+    <template id="tpl-settings-guideline-row">
+      <div
+        data-role="guideline-row"
+        style="padding: 8px 12px; border: 1px solid #e0e0e0; border-radius: 4px; margin-bottom: 6px; font-size: 13px;"
+      >
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span data-slot="name" style="font-weight: 500;"></span>
+          <span
+            data-role="default-badge"
+            hidden
+            style="font-size: 11px; background: #e0e7ff; color: #4338ca; padding: 2px 6px; border-radius: 3px;"
+          >Default</span>
+        </div>
+        <div
+          data-role="description"
+          data-slot="description"
+          hidden
+          style="color: #666; margin-top: 4px;"
+        ></div>
+      </div>
+    </template>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

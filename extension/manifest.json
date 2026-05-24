@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "Pinpoint",
+  "version": "0.1.0",
+  "description": "Collaborative website feedback tool — annotate live websites with your team.",
+  "permissions": ["activeTab", "storage", "tabs", "webNavigation"],
+  "_host_permissions_comment": "Development defaults only. The production build pipeline replaces host_permissions (and content_scripts.matches) with the deployment allow-list configured per Requirement 32.3.",
+  "host_permissions": [
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
+  ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*"
+      ],
+      "js": ["src/content.ts"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_page": "options/options.html",
+  "action": {
+    "default_title": "Toggle Pinpoint",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+F",
+        "mac": "Alt+Shift+F"
+      },
+      "description": "Toggle the Pinpoint overlay"
+    },
+    "toggle-sidebar": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Open or close the Pinpoint sidebar"
+    },
+    "next-pin": {
+      "suggested_key": {
+        "default": "Alt+]",
+        "mac": "Alt+]"
+      },
+      "description": "Jump to the next annotation pin"
+    },
+    "prev-pin": {
+      "suggested_key": {
+        "default": "Alt+[",
+        "mac": "Alt+["
+      },
+      "description": "Jump to the previous annotation pin"
+    }
+  }
+}

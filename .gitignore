@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Python virtual environment
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Test coverage
+coverage/
+
+# Vite
+.vite/
+.vite-temp/
+
+# Docker
+*.log

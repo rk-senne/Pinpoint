@@ -78,6 +78,7 @@ export interface NewAnnotation {
   target: DOMTarget;
   environment: EnvironmentMetadata;
   pinNumber: number;
+  orgId?: string;
   guidelineId?: string;
   assigneeId?: string;
   dueDate?: string;

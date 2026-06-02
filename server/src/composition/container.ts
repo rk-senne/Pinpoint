@@ -121,6 +121,7 @@ import {
 import { PgAnalyticsRepo } from '../adapters/outbound/postgres/PgAnalyticsRepo.js';
 import { PgAnnotationRepo } from '../adapters/outbound/postgres/PgAnnotationRepo.js';
 import { PgAuthTokenRepo } from '../adapters/outbound/postgres/PgAuthTokenRepo.js';
+import { PgMembershipRepo } from '../adapters/outbound/postgres/PgMembershipRepo.js';
 import { PgCommentRepo } from '../adapters/outbound/postgres/PgCommentRepo.js';
 import { PgGuidelineRepo } from '../adapters/outbound/postgres/PgGuidelineRepo.js';
 import { PgNotificationQueue } from '../adapters/outbound/postgres/PgNotificationQueue.js';
@@ -337,6 +338,7 @@ export function buildContainer(config: Config): Container {
   const sharedLinkRepo = new PgSharedLinkRepo(db);
   const analyticsRepo = new PgAnalyticsRepo(db);
   const authTokenRepo = new PgAuthTokenRepo(db);
+  const membershipRepo = new PgMembershipRepo(db);
   const notificationQueue = new PgNotificationQueue(db);
   const pinSequence = new PgProjectPinSequence(db);
 
@@ -401,7 +403,7 @@ export function buildContainer(config: Config): Container {
   };
 
   // ---- Use cases ------------------------------------------------------
-  const login = new Login({ userRepo, passwordHasher, tokenIssuer });
+  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo });
   const registerUser = new RegisterUser({
     userRepo,
     authTokenRepo,

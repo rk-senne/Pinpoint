@@ -34,6 +34,7 @@ export interface CreateCommentInput {
   authorUserId: string;
   annotationId: string;
   body: string;
+  orgId?: string;
   /** Optional explicit mentions (merged with mentions parsed from the body). */
   mentions?: string[];
   /** UUID for offline-replay idempotency (Req 44.3). */
@@ -107,6 +108,7 @@ export class CreateComment {
       authorId: input.authorUserId,
       body: trimmed,
       mentions: allMentions,
+      orgId: input.orgId,
     };
     if (input.clientRequestId !== undefined) {
       newComment.clientRequestId = input.clientRequestId;

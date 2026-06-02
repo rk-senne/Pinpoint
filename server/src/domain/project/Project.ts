@@ -19,6 +19,7 @@ export interface NewProject {
   urls: string[];
   ownerId: string;
   teamId?: string;
+  orgId?: string;
 }
 
 export interface ProjectPatch {

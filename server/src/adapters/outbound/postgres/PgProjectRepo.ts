@@ -47,6 +47,7 @@ export class PgProjectRepo implements ProjectRepo {
       status: 'active',
       owner_id: input.ownerId,
     };
+    if (input.orgId) row.org_id = input.orgId;
     if (input.teamId) row.team_id = input.teamId;
 
     const [created] = await this.db<ProjectRow>('projects')

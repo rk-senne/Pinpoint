@@ -83,12 +83,15 @@ export class JwtTokenIssuer implements TokenIssuer {
 
     const userId = typeof decoded.userId === 'string' ? decoded.userId : null;
     const email = typeof decoded.email === 'string' ? decoded.email : null;
+    const orgId = typeof decoded.orgId === 'string' ? decoded.orgId : null;
+    const role = typeof decoded.role === 'string' ? decoded.role : null;
+    const tokenVersion = typeof decoded.tokenVersion === 'number' ? decoded.tokenVersion : null;
     const exp = typeof decoded.exp === 'number' ? decoded.exp : null;
 
-    if (userId === null || email === null || exp === null) {
+    if (userId === null || email === null || orgId === null || role === null || tokenVersion === null || exp === null) {
       throw new jwt.JsonWebTokenError('Token payload is missing required claims.');
     }
 
-    return { userId, email, exp };
+    return { userId, email, orgId, role, tokenVersion, exp };
   }
 }

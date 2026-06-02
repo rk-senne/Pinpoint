@@ -17,5 +17,6 @@ export interface NewComment {
   authorId: string;
   body: string;
   mentions: string[];
+  orgId?: string;
   clientRequestId?: string;
 }

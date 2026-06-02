@@ -11,6 +11,7 @@ import type { NewUser, User, UserPatch } from '../User.js';
 export interface UserWithSecret extends User {
   passwordHash: string;
   verified: boolean;
+  tokenVersion?: number;
 }
 
 export interface UserRepo {
@@ -23,4 +24,6 @@ export interface UserRepo {
   update(id: string, patch: UserPatch): Promise<User>;
   /** Mark a user as verified after a successful email-verification token redemption. */
   markVerified(id: string): Promise<void>;
+  /** Increment token version to invalidate all existing sessions. */
+  incrementTokenVersion(id: string): Promise<void>;
 }

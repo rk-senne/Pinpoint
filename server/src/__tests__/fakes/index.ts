@@ -16,6 +16,7 @@ export { FakeGuidelineRepo } from './FakeGuidelineRepo.js';
 export { FakeLogger } from './FakeLogger.js';
 export type { FakeLogLevel, FakeLogRecord } from './FakeLogger.js';
 export { FakeMailer } from './FakeMailer.js';
+export { FakeMembershipRepo } from './FakeMembershipRepo.js';
 export { FakeNotificationQueue } from './FakeNotificationQueue.js';
 export { FakePageRepo } from './FakePageRepo.js';
 export { FakePasswordHasher } from './FakePasswordHasher.js';

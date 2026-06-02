@@ -118,6 +118,10 @@ export class PgUserRepo implements UserRepo {
     await this.db('users').where({ id }).update({ verified: true });
   }
 
+  async incrementTokenVersion(id: string): Promise<void> {
+    await this.db('users').where({ id }).increment('token_version', 1);
+  }
+
   private mapRow(row: BaseUserRow): User {
     const user: User = {
       id: row.id,

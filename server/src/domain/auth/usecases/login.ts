@@ -19,6 +19,7 @@ import { Unauthorized, Validation, err, ok } from '../../shared/DomainError.js';
 import type { DomainError, Result } from '../../shared/DomainError.js';
 import type { PasswordHasher } from '../ports/PasswordHasher.js';
 import type { TokenIssuer } from '../ports/TokenIssuer.js';
+import type { MembershipRepo } from '../ports/MembershipRepo.js';
 import type { UserRepo } from '../../user/ports/UserRepo.js';
 import type { User } from '../../user/User.js';
 
@@ -39,6 +40,7 @@ export interface LoginDeps {
   userRepo: UserRepo;
   passwordHasher: PasswordHasher;
   tokenIssuer: TokenIssuer;
+  membershipRepo: MembershipRepo;
 }
 
 export class Login {
@@ -47,7 +49,7 @@ export class Login {
   async execute(
     input: LoginInput,
   ): Promise<Result<LoginOutput, DomainError>> {
-    const { userRepo, passwordHasher, tokenIssuer } = this.deps;
+    const { userRepo, passwordHasher, tokenIssuer, membershipRepo } = this.deps;
 
     if (
       typeof input.email !== 'string' ||
@@ -81,9 +83,17 @@ export class Login {
       );
     }
 
+    const membership = await membershipRepo.findDefaultForUser(record.id);
+    if (!membership) {
+      return err(new Unauthorized('No organization membership found.'));
+    }
+
     const token = tokenIssuer.sign({
       userId: record.id,
       email: record.email,
+      orgId: membership.orgId,
+      role: membership.role,
+      tokenVersion: record.tokenVersion ?? 0,
     });
     const csrfToken = randomBytes(32).toString('hex');
 

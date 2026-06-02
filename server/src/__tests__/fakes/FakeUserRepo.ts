@@ -103,6 +103,12 @@ export class FakeUserRepo implements UserRepo {
     this.users.set(id, { ...row, verified: true });
   }
 
+  async incrementTokenVersion(id: string): Promise<void> {
+    const row = this.users.get(id);
+    if (!row) return;
+    this.users.set(id, { ...row, tokenVersion: ((row as any).tokenVersion ?? 0) + 1 });
+  }
+
   private findByEmailRaw(email: string): StoredUser | null {
     const normalized = email.toLowerCase();
     for (const row of this.users.values()) {

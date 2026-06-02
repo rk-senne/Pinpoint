@@ -24,6 +24,7 @@ export class PgCommentRepo implements CommentRepo {
       body: input.body,
       mentions: input.mentions,
     };
+    if (input.orgId) row.org_id = input.orgId;
     if (input.clientRequestId !== undefined) row.client_request_id = input.clientRequestId;
 
     const [created] = await this.db<CommentRow>('comments').insert(row).returning('*');

@@ -55,7 +55,7 @@ export function createAuthMiddleware(
 
     try {
       const payload = tokenIssuer.verify(token);
-      req.user = { userId: payload.userId, email: payload.email };
+      req.user = { userId: payload.userId, email: payload.email, orgId: payload.orgId, role: payload.role };
       next();
     } catch {
       res.status(401).json({

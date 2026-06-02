@@ -254,7 +254,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
     app.use('/api/v1/projects/:id/annotations', projectAnnotationsRouter);
     app.use('/api/v1/annotations', annotationRouter);
 
-    const token = tokenIssuer.sign({ userId, email: userEmail });
+    const token = tokenIssuer.sign({ userId, email: userEmail, orgId: 'org-test', role: 'owner', tokenVersion: 0 });
     const authHeader = `Bearer ${token}`;
 
     // ----------------------------------------------------------------

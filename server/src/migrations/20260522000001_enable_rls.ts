@@ -26,13 +26,10 @@ export async function up(knex: Knex): Promise<void> {
       USING (org_id = current_setting('app.current_org_id', true)::uuid)
   `);
 
-  // Policy: comments visible via annotation's org
+  // Policy: comments visible by direct org_id
   await knex.raw(`
     CREATE POLICY tenant_isolation_comments ON comments
-      USING (annotation_id IN (
-        SELECT id FROM annotations
-        WHERE org_id = current_setting('app.current_org_id', true)::uuid
-      ))
+      USING (org_id = current_setting('app.current_org_id', true)::uuid)
   `);
 
   // Policy: shared_links visible via project's org

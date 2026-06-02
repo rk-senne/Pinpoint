@@ -37,6 +37,7 @@ export interface CreateProjectInput {
   name: string;
   urls: string[];
   teamId?: string;
+  orgId?: string;
 }
 
 export interface CreateProjectOutput {
@@ -76,6 +77,7 @@ export class CreateProject {
       name: trimmedName,
       urls: uniqueUrls,
       ownerId: input.ownerUserId,
+      orgId: input.orgId,
     };
     if (input.teamId) {
       newProject.teamId = input.teamId;

@@ -84,6 +84,9 @@ export class RefreshToken {
     const token = tokenIssuer.sign({
       userId: payload.userId,
       email: payload.email,
+      orgId: payload.orgId,
+      role: payload.role,
+      tokenVersion: payload.tokenVersion,
     });
     const csrfToken = randomBytes(32).toString('hex');
 

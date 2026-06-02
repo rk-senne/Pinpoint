@@ -54,6 +54,7 @@ export interface CreateAnnotationInput {
   body: string;
   target: NewAnnotation['target'];
   environment: NewAnnotation['environment'];
+  orgId?: string;
   guidelineId?: string;
   capturedConsole?: NewAnnotation['capturedConsole'];
   capturedNetwork?: NewAnnotation['capturedNetwork'];
@@ -157,6 +158,7 @@ export class CreateAnnotation {
         target: input.target,
         environment: input.environment,
         pinNumber,
+        orgId: input.orgId,
         guidelineId: input.guidelineId,
         capturedConsole: input.capturedConsole,
         capturedNetwork: input.capturedNetwork,

@@ -14,10 +14,10 @@ Check off each quest as you complete it. Each phase builds on the last.
 - [x] Deep health check (DB connectivity)
 - [x] Enhanced DB pool config
 - [x] CHANGELOG.md
-- [ ] Initialize git repo
-- [ ] Remove committed dist/ folders from tracking
-- [ ] Add LICENSE file
-- [ ] Add stricter rate limit on auth endpoints (5/min)
+- [x] Initialize git repo
+- [x] Remove committed dist/ folders from tracking
+- [x] Add LICENSE file
+- [x] Add stricter rate limit on auth endpoints (5/min)
 
 💡 *Tip: `git init && git add . && git commit -m "feat: initial commit"` — history starts now.*
 
@@ -25,21 +25,21 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 1 — Multi-Tenancy (Weeks 1-3)
 
-- [ ] Create `organizations` table migration
-- [ ] Create `memberships` table migration (user ↔ org, with role)
-- [ ] Create `invitations` table migration
-- [ ] Add `org_id` column to `projects` table
-- [ ] Add `org_id` column to `feedback` table
-- [ ] Add `org_id` column to `comments` table
-- [ ] Add `org_id` column to `screenshots` table
-- [ ] Backfill script: create default org, assign existing user as owner
-- [ ] Enable RLS on all tenant tables
-- [ ] Create RLS policies (tenant isolation)
-- [ ] Create `withTenant()` transaction helper
-- [ ] Add tenant middleware (extract org_id from JWT, set on DB connection)
-- [ ] Extend JWT claims with `org_id` and `role`
-- [ ] Update all existing queries to be tenant-aware
-- [ ] Integration test: verify cross-tenant data isolation
+- [x] Create `organizations` table migration
+- [x] Create `memberships` table migration (user ↔ org, with role)
+- [x] Create `invitations` table migration
+- [x] Add `org_id` column to `projects` table
+- [x] Add `org_id` column to `feedback` table
+- [x] Add `org_id` column to `comments` table
+- [x] Add `org_id` column to `screenshots` table
+- [x] Backfill script: create default org, assign existing user as owner
+- [x] Enable RLS on all tenant tables
+- [x] Create RLS policies (tenant isolation)
+- [x] Create `withTenant()` transaction helper
+- [x] Add tenant middleware (extract org_id from JWT, set on DB connection)
+- [x] Extend JWT claims with `org_id` and `role`
+- [x] Update all existing queries to be tenant-aware
+- [x] Integration test: verify cross-tenant data isolation
 
 💡 *Tip: Do expand-contract migrations — add columns as nullable, backfill, then add NOT NULL constraint. Never break existing queries.*
 
@@ -49,16 +49,16 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 - [ ] Add OAuth 2.0 login (Google)
 - [ ] Add OAuth 2.0 login (GitHub)
-- [ ] Implement invitation flow (email → token → accept)
-- [ ] Invitation email template (with branded link)
-- [ ] Org switching (user can belong to multiple orgs)
-- [ ] RBAC middleware: `requireRole('owner', 'admin')`
-- [ ] Permission checks on all existing routes
-- [ ] Team members list endpoint
-- [ ] Remove member endpoint
-- [ ] Change member role endpoint
-- [ ] Org settings endpoint (name, slug)
-- [ ] Session revocation (logout from all devices)
+- [x] Implement invitation flow (email → token → accept)
+- [x] Invitation email template (with branded link)
+- [x] Org switching (user can belong to multiple orgs)
+- [x] RBAC middleware: `requireRole('owner', 'admin')`
+- [x] Permission checks on all existing routes
+- [x] Team members list endpoint
+- [x] Remove member endpoint
+- [x] Change member role endpoint
+- [x] Org settings endpoint (name, slug)
+- [x] Session revocation (logout from all devices)
 
 💡 *Tip: Deploy RBAC in shadow mode first — log denials but don't block. Flip to enforcing after a week of clean logs.*
 
@@ -106,19 +106,19 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 5 — Public API & Hardening (Weeks 11-12)
 
-- [ ] `api_keys` table (org-scoped, hashed, with scopes)
-- [ ] API key creation/revocation endpoints
-- [ ] API key auth middleware (Bearer token)
-- [ ] Public API: GET /api/v1/feedback (paginated, filterable)
-- [ ] Public API: POST /api/v1/feedback
-- [ ] Public API: PATCH /api/v1/feedback/:id
-- [ ] Public API: DELETE /api/v1/feedback/:id
+- [x] `api_keys` table (org-scoped, hashed, with scopes)
+- [x] API key creation/revocation endpoints
+- [x] API key auth middleware (Bearer token)
+- [x] Public API: GET /api/v1/feedback (paginated, filterable)
+- [x] Public API: POST /api/v1/feedback
+- [x] Public API: PATCH /api/v1/feedback/:id
+- [x] Public API: DELETE /api/v1/feedback/:id
 - [ ] Public API: webhooks registration
 - [ ] Per-tenant rate limiting (Redis-backed)
 - [ ] API documentation (auto-generated from Zod schemas)
-- [ ] CSRF protection (double-submit cookie)
+- [x] CSRF protection (double-submit cookie)
 - [ ] Security audit (OWASP ZAP scan)
-- [ ] Audit log table (sensitive actions)
+- [x] Audit log table (sensitive actions)
 - [ ] Load test with k6 (target: p95 <200ms at 500 concurrent)
 
 💡 *Tip: Auto-generate API docs from your Zod schemas — they're already the source of truth for validation.*

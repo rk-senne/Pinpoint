@@ -53,7 +53,7 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
   const clients: ClientSocket[] = [];
 
   function makeToken(userId: string, email = 'test@test.com'): string {
-    return tokenIssuer.sign({ userId, email });
+    return tokenIssuer.sign({ userId, email, orgId: 'org-test', role: 'owner', tokenVersion: 0 });
   }
 
   function connectClient(token: string): Promise<ClientSocket> {

@@ -70,6 +70,9 @@ export class FakeTokenIssuer implements TokenIssuer {
       typeof parsed !== 'object' ||
       typeof (parsed as { userId?: unknown }).userId !== 'string' ||
       typeof (parsed as { email?: unknown }).email !== 'string' ||
+      typeof (parsed as { orgId?: unknown }).orgId !== 'string' ||
+      typeof (parsed as { role?: unknown }).role !== 'string' ||
+      typeof (parsed as { tokenVersion?: unknown }).tokenVersion !== 'number' ||
       typeof (parsed as { exp?: unknown }).exp !== 'number'
     ) {
       throw new Error('FakeTokenIssuer: missing required claims');
@@ -78,6 +81,9 @@ export class FakeTokenIssuer implements TokenIssuer {
     return {
       userId: claims.userId,
       email: claims.email,
+      orgId: claims.orgId,
+      role: claims.role,
+      tokenVersion: claims.tokenVersion,
       exp: claims.exp,
     };
   }

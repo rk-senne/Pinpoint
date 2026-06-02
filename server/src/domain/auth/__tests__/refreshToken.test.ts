@@ -28,6 +28,9 @@ describe('refreshToken use case', () => {
     const token = tokenIssuer.sign({
       userId: 'user-1',
       email: 'alice@example.com',
+      orgId: 'org-1',
+      role: 'owner',
+      tokenVersion: 0,
     });
 
     const result = await usecase.execute({ token });
@@ -43,6 +46,9 @@ describe('refreshToken use case', () => {
     const token = tokenIssuer.sign({
       userId: 'user-1',
       email: 'alice@example.com',
+      orgId: 'org-1',
+      role: 'owner',
+      tokenVersion: 0,
     });
 
     // Advance past `exp` but well inside the 7-day grace window.
@@ -58,6 +64,9 @@ describe('refreshToken use case', () => {
     const token = tokenIssuer.sign({
       userId: 'user-1',
       email: 'alice@example.com',
+      orgId: 'org-1',
+      role: 'owner',
+      tokenVersion: 0,
     });
 
     clock.advance((ACCESS_TTL_SECONDS + GRACE_WINDOW_SECONDS + 60) * 1000);

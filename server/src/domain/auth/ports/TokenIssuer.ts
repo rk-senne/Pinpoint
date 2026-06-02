@@ -6,6 +6,9 @@
 export interface TokenPayload {
   userId: string;
   email: string;
+  orgId: string;
+  role: string;
+  tokenVersion: number;
 }
 
 /** Decoded payload as returned by `verify` / `decodeIgnoreExpiration`. */

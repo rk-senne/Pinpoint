@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   FakeClock,
+  FakeMembershipRepo,
   FakePasswordHasher,
   FakeTokenIssuer,
   FakeUserRepo,
@@ -15,6 +16,7 @@ async function buildSut(opts: { verified: boolean }) {
   const userRepo = new FakeUserRepo(clock);
   const passwordHasher = new FakePasswordHasher();
   const tokenIssuer = new FakeTokenIssuer(clock);
+  const membershipRepo = new FakeMembershipRepo();
 
   const passwordHash = await passwordHasher.hash('correcthorsebatterystaple');
   const user = await userRepo.insert({
@@ -24,7 +26,9 @@ async function buildSut(opts: { verified: boolean }) {
     verified: opts.verified,
   });
 
-  const usecase = new Login({ userRepo, passwordHasher, tokenIssuer });
+  membershipRepo.seed({ orgId: 'org-1', userId: user.id, role: 'owner' });
+
+  const usecase = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo });
   return { usecase, user, tokenIssuer };
 }
 

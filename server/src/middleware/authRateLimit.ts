@@ -5,7 +5,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
  * Strict per-IP+email rate limiter for authentication-sensitive endpoints
  * (Task 8.2 / Requirements 19.1, 19.2, 19.3).
  *
- * **Window**: 10 requests per 15 minutes per `(req.ip, body.email)` key.
+ * **Window**: 5 requests per 1 minute per `(req.ip, body.email)` key.
  *
  * **Why this key shape (design.md §"Rate limiting")**: keying on `req.ip`
  * alone lets an attacker rotate IPs to brute-force a single account; keying
@@ -15,7 +15,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
  *
  * **Why stricter than the general limiter (Req 19.3)**: the general limiter
  * in `index.ts` is 100 req / 15 min for authenticated traffic; this strict
- * limiter is 10 req / 15 min for the auth surface (`/auth/login`,
+ * limiter is 5 req / 1 min for the auth surface (`/auth/login`,
  * `/auth/register`, `/auth/reset-password`, `/auth/resend-verification`,
  * `/shared/:linkId/verify`).
  *
@@ -33,8 +33,8 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
  * validation error.
  */
 export const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes (Req 19.1)
-  limit: 10, // 10 requests per window per (IP, email) pair (Req 19.1)
+  windowMs: 60 * 1000, // 1 minute (Req 19.1)
+  limit: 5, // 5 requests per minute per (IP, email) pair (Req 19.1)
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req: Request): string => {

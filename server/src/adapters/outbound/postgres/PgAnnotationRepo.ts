@@ -67,6 +67,7 @@ export class PgAnnotationRepo implements AnnotationRepo {
       environment: JSON.stringify(input.environment),
       pin_number: input.pinNumber,
     };
+    if (input.orgId) row.org_id = input.orgId;
 
     if (input.guidelineId !== undefined) row.guideline_id = input.guidelineId;
     if (input.assigneeId !== undefined) row.assignee_id = input.assigneeId;

@@ -99,7 +99,7 @@ async function loadBackgroundWith(
   chromeStub = buildChromeStub(captureVisibleTab, tabsSendMessage);
   vi.stubGlobal('chrome', chromeStub);
   vi.resetModules();
-  await import('./background');
+  await import('./background.js');
 }
 
 describe('background service worker — CAPTURE_VISIBLE_TAB handler', () => {
@@ -136,7 +136,7 @@ describe('background service worker — CAPTURE_VISIBLE_TAB handler', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(capture).toHaveBeenCalledTimes(1);
-    expect(capture).toHaveBeenCalledWith(undefined, { format: 'png' });
+    expect(capture).toHaveBeenCalledWith({ format: 'png' });
     expect(sendResponse).toHaveBeenCalledTimes(1);
     expect(sendResponse).toHaveBeenCalledWith({ dataUrl });
   });

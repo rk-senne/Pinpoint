@@ -389,7 +389,7 @@ describe('content script bootstrap guard — task 38.2 / Req 46.2', () => {
     const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     installChromeStub({ block: ['localhost'] });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     expect(shadowHost()).toBeNull();
@@ -414,7 +414,7 @@ describe('content script bootstrap guard — task 38.2 / Req 46.2', () => {
     // (suffix === host) so wildcard support is exercised end-to-end.
     installChromeStub({ block: ['*.localhost'] });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     expect(shadowHost()).toBeNull();
@@ -433,7 +433,7 @@ describe('content script bootstrap guard — task 38.2 / Req 46.2', () => {
     lookupProjectMock.mockResolvedValue(null);
     installChromeStub({ block: ['some.other.host'] });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     const host = shadowHost();
@@ -453,7 +453,7 @@ describe('content script bootstrap guard — task 38.2 / Req 46.2', () => {
     // disappears just because storage is flaky.
     installChromeStub({ rejectSyncGet: true });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     expect(shadowHost()).not.toBeNull();
@@ -467,7 +467,7 @@ describe('content script bootstrap guard — task 38.2 / Req 46.2', () => {
     // empty list pair; the decision falls through to "inject".
     installChromeStub({ omitSync: true });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     expect(shadowHost()).not.toBeNull();
@@ -561,7 +561,7 @@ describe('content script bootstrap guard — task 38.3 / Req 46.3', () => {
     // `<fl-overlay-host>` inside its open Shadow Root.
     installChromeStub({});
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     const host = shadowHost();
@@ -576,7 +576,7 @@ describe('content script bootstrap guard — task 38.3 / Req 46.3', () => {
     // current host outside the allow-list and the guard must bail.
     installChromeStub({ allow: ['example.com', '*.acme.test'] });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     expect(shadowHost()).toBeNull();
@@ -598,7 +598,7 @@ describe('content script bootstrap guard — task 38.3 / Req 46.3', () => {
     // `bootstrap()` even though the list is non-empty.
     installChromeStub({ allow: ['localhost', 'example.com'] });
 
-    await import('./content');
+    await import('./content.js');
     await flushAsync();
 
     const host = shadowHost();

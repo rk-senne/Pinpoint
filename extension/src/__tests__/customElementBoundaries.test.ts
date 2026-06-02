@@ -117,9 +117,9 @@ describe('Custom Element error boundaries (Req 50.1)', () => {
     // assert that the wrapped prototype methods are no longer the
     // identity functions originally defined on the class — the
     // wrapper renames its function to `wrappedByBoundary`.
-    const { FlOverlayHost } = await import('../components/OverlayHost');
-    const { FlPopover } = await import('../components/Popover');
-    const { FlSidebarPanel } = await import('../components/SidebarPanel');
+    const { FlOverlayHost } = await import('../components/OverlayHost.js');
+    const { FlPopover } = await import('../components/Popover.js');
+    const { FlSidebarPanel } = await import('../components/SidebarPanel.js');
 
     const tagged = (proto: object, key: string): boolean => {
       const fn = (proto as Record<string, unknown>)[key];

@@ -855,7 +855,7 @@ async function runGuardThenBootstrap(): Promise<void> {
  * than the bytes it could save.
  */
 if (typeof window !== 'undefined' && window.top !== window.self) {
-  void import('./content/subFrameRelay').then(({ installSubFrameRelay }) => {
+  void import('./content/subFrameRelay.js').then(({ installSubFrameRelay }) => {
     installSubFrameRelay();
   });
 } else {

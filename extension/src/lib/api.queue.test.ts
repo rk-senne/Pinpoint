@@ -81,9 +81,9 @@ function makeTarget(): DOMTarget {
 
 function makeEnvironment(): EnvironmentMetadata {
   return {
-    browserFamily: 'chrome',
+    browserFamily: 'Chrome',
     browserVersion: '124',
-    osFamily: 'macos',
+    osFamily: 'macOS',
     osVersion: '14.5',
     deviceType: 'desktop',
     userAgentRaw: 'Mozilla/5.0 (Macintosh; …)',

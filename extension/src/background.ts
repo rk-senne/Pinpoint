@@ -97,7 +97,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'CAPTURE_VISIBLE_TAB') {
     chrome.tabs
-      .captureVisibleTab(undefined, { format: 'png' })
+      .captureVisibleTab({ format: 'png' })
       .then((dataUrl) => sendResponse({ dataUrl }))
       .catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : String(error);

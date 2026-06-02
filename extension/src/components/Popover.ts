@@ -703,7 +703,7 @@ function deepActiveElement(): HTMLElement | null {
     return null;
   }
   while (current && (current as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) {
-    const inner = (current as Element & { shadowRoot: ShadowRoot }).shadowRoot.activeElement;
+    const inner: Element | null = (current as Element & { shadowRoot: ShadowRoot }).shadowRoot.activeElement;
     if (!inner) break;
     current = inner;
   }

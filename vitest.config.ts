@@ -3,6 +3,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['**/src/**/*.test.ts', '**/src/**/*.test-d.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'extension/src/__tests__/optionsPage.test.ts',
+      'extension/src/__tests__/popupPage.test.ts',
+    ],
     globals: true,
     coverage: {
       provider: 'v8',

@@ -170,7 +170,7 @@ describe('Property 16: Pin clustering is consistent', () => {
     fc.assert(
       fc.property(
         arbPins.chain((pins) =>
-          fc.tuple(fc.constant(pins), fc.shuffledSubarray(pins, {
+          fc.tuple(fc.constant(pins), fc.shuffledSubarray([...pins], {
             minLength: pins.length,
             maxLength: pins.length,
           })),

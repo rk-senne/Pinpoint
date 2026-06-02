@@ -66,7 +66,7 @@ describe('Cross-tenant isolation', () => {
       body: 'Org A feedback',
       authorId: 'user-a',
       target: { cssSelector: 'div', xpath: '/div', pageX: 0, pageY: 0, tagName: 'div', textSnippet: '' },
-      environment: { browserFamily: 'Chrome', browserVersion: '120', osFamily: 'macOS', osVersion: '14', viewportWidth: 1920, viewportHeight: 1080 },
+      environment: { browserFamily: 'Chrome', browserVersion: '120', osFamily: 'macOS', osVersion: '14', viewportWidth: 1920, viewportHeight: 1080, deviceType: 'desktop', userAgentRaw: 'Mozilla/5.0' },
       pinNumber: 1,
       orgId: 'org-a',
     });
@@ -80,7 +80,7 @@ describe('Cross-tenant isolation', () => {
       body: 'Org B feedback',
       authorId: 'user-b',
       target: { cssSelector: 'div', xpath: '/div', pageX: 0, pageY: 0, tagName: 'div', textSnippet: '' },
-      environment: { browserFamily: 'Chrome', browserVersion: '120', osFamily: 'macOS', osVersion: '14', viewportWidth: 1920, viewportHeight: 1080 },
+      environment: { browserFamily: 'Chrome', browserVersion: '120', osFamily: 'macOS', osVersion: '14', viewportWidth: 1920, viewportHeight: 1080, deviceType: 'desktop', userAgentRaw: 'Mozilla/5.0' },
       pinNumber: 1,
       orgId: 'org-b',
     });

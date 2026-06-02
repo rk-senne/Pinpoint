@@ -25,8 +25,6 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
 
     const filter: ListAnnotationsFilter = {};
     if (req.query.status) filter.status = req.query.status as AnnotationStatus;
-    if (req.query.severity) filter.severity = req.query.severity as any;
-    if (req.query.type) filter.type = req.query.type as any;
 
     const annotations = await annotationRepo.listByProject(projectId, filter);
     const total = annotations.length;
@@ -65,13 +63,14 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
 
   // PATCH /api/v1/feedback/:id — update feedback
   router.patch('/:id', authMiddleware, async (req: Request, res: Response) => {
-    const existing = await annotationRepo.findById(req.params.id);
+    const id = req.params.id as string;
+    const existing = await annotationRepo.findById(id);
     if (!existing) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
     }
 
     const { body, severity, status, assigneeId, dueDate } = req.body;
-    const annotation = await annotationRepo.update(req.params.id, {
+    const annotation = await annotationRepo.update(id, {
       body, severity, status, assigneeId, dueDate,
     });
 
@@ -80,11 +79,12 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
 
   // DELETE /api/v1/feedback/:id — delete feedback
   router.delete('/:id', authMiddleware, async (req: Request, res: Response) => {
-    const existing = await annotationRepo.findById(req.params.id);
+    const id = req.params.id as string;
+    const existing = await annotationRepo.findById(id);
     if (!existing) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
     }
-    await annotationRepo.delete(req.params.id);
+    await annotationRepo.delete(id);
     res.status(204).end();
   });
 

@@ -28,6 +28,7 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
 interface StoredUser extends User {
   passwordHash: string;
   verified: boolean;
+  tokenVersion: number;
 }
 
 export class FakeUserRepo implements UserRepo {
@@ -46,6 +47,7 @@ export class FakeUserRepo implements UserRepo {
       createdAt: this.clock.now().toISOString(),
       passwordHash: input.passwordHash,
       verified: input.verified ?? false,
+      tokenVersion: 0,
     };
     this.users.set(id, stored);
     return this.toUser(stored);
@@ -106,7 +108,7 @@ export class FakeUserRepo implements UserRepo {
   async incrementTokenVersion(id: string): Promise<void> {
     const row = this.users.get(id);
     if (!row) return;
-    this.users.set(id, { ...row, tokenVersion: ((row as any).tokenVersion ?? 0) + 1 });
+    this.users.set(id, { ...row, tokenVersion: row.tokenVersion + 1 });
   }
 
   private findByEmailRaw(email: string): StoredUser | null {

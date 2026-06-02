@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
-import type { ApiKeyRepo } from '../../../domain/org/ports/ApiKeyRepo.js';
+import type { ApiKeyRepo } from '../domain/org/ports/ApiKeyRepo.js';
 
 export interface ApiKeyMiddlewareDeps {
   apiKeyRepo: ApiKeyRepo;

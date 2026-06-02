@@ -50,7 +50,7 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
     if (req.user!.role !== 'owner' && req.user!.role !== 'admin') {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
-    await apiKeyRepo.revoke(req.params.id);
+    await apiKeyRepo.revoke(req.params.id as string);
     res.status(204).end();
   });
 

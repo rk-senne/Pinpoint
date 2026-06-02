@@ -55,10 +55,11 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     if (req.user!.role !== 'owner' && req.user!.role !== 'admin') {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
-    if (req.params.userId === req.user!.userId) {
+    const userId = req.params.userId as string;
+    if (userId === req.user!.userId) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Cannot remove yourself.' } });
     }
-    await membershipRepo.removeByOrgAndUser(req.user!.orgId, req.params.userId);
+    await membershipRepo.removeByOrgAndUser(req.user!.orgId, userId);
     res.status(204).end();
   });
 
@@ -71,8 +72,9 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     if (!role || !['owner', 'admin', 'member', 'viewer'].includes(role)) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Invalid role.' } });
     }
-    await membershipRepo.updateRole(req.user!.orgId, req.params.userId, role);
-    res.json({ userId: req.params.userId, role });
+    const userId = req.params.userId as string;
+    await membershipRepo.updateRole(req.user!.orgId, userId, role);
+    res.json({ userId, role });
   });
 
   // POST /api/v1/org/invitations — send invitation

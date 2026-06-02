@@ -1,6 +1,12 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@pinpoint/shared': path.resolve(__dirname, 'shared/src/index.ts'),
+    },
+  },
   test: {
     include: ['**/src/**/*.test.ts', '**/src/**/*.test-d.ts'],
     exclude: [
@@ -10,9 +16,6 @@ export default defineConfig({
       'extension/src/__tests__/popupPage.test.ts',
     ],
     globals: true,
-    deps: {
-      inline: ['@pinpoint/shared'],
-    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

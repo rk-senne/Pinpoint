@@ -1,10 +1,10 @@
 import { defineConfig } from 'vitest/config';
-import path from 'path';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   resolve: {
     alias: {
-      '@pinpoint/shared': path.resolve(__dirname, 'shared/src/index.ts'),
+      '@pinpoint/shared': fileURLToPath(new URL('./shared/src/index.ts', import.meta.url)),
     },
   },
   test: {

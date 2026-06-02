@@ -10,6 +10,9 @@ export default defineConfig({
       'extension/src/__tests__/popupPage.test.ts',
     ],
     globals: true,
+    deps: {
+      inline: ['@pinpoint/shared'],
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

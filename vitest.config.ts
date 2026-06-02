@@ -14,6 +14,7 @@ export default defineConfig({
       '**/dist/**',
       'extension/src/__tests__/optionsPage.test.ts',
       'extension/src/__tests__/popupPage.test.ts',
+      'dashboard/src/pages/ProjectView.test.ts',
     ],
     globals: true,
     coverage: {

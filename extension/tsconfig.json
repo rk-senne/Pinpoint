@@ -2,9 +2,10 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": "src"
   },
-  "include": ["src", "options", "popup"],
+  "include": ["src"],
+  "exclude": ["src/__tests__/optionsPage.test.ts", "src/__tests__/popupPage.test.ts"],
   "references": [
     { "path": "../shared" }
   ]

@@ -94,7 +94,8 @@ const arbEntry: fc.Arbitrary<OutboxEntry> = fc.record({
   payload: arbPayload,
   pendingSync: fc.constant(true as const),
   createdAt: fc
-    .date({ min: new Date('2024-01-01'), max: new Date('2025-12-31') })
+    .date({ min: new Date('2024-01-01T00:00:00.000Z'), max: new Date('2025-12-31T00:00:00.000Z') })
+    .filter((d) => !isNaN(d.getTime()))
     .map((d) => d.toISOString()),
 });
 

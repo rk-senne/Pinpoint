@@ -150,6 +150,9 @@ export function installCollabGateway(
       return;
     }
 
+    // Auto-join the user's personal room for notification delivery.
+    socket.join(`user:${user.userId}`);
+
     // Track annotations this socket has opened so we can clean them up
     // on disconnect.
     const openAnnotations = new Set<string>();

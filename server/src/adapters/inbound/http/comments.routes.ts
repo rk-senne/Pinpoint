@@ -9,12 +9,14 @@ import { z } from 'zod';
 
 import type { CreateComment } from '../../../domain/comment/usecases/createComment.js';
 import type { ListComments } from '../../../domain/comment/usecases/listComments.js';
+import type { CreateUserNotification } from '../../../domain/notification/usecases/userNotifications.js';
 import type { Comment } from '../../../domain/comment/Comment.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
 
 export interface CommentsRouteDeps {
   createComment: CreateComment;
   listComments: ListComments;
+  createUserNotification?: CreateUserNotification;
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
 }
 
@@ -37,7 +39,7 @@ function formatComment(c: Comment): Record<string, unknown> {
 }
 
 export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
-  const { createComment, listComments, authMiddleware } = deps;
+  const { createComment, listComments, createUserNotification, authMiddleware } = deps;
 
   const router = Router({ mergeParams: true });
   router.use(authMiddleware);
@@ -68,6 +70,31 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
       return;
     }
     res.status(201).json({ comment: formatComment(result.value.comment) });
+
+    // Fire-and-forget: notify mentioned users + annotation author
+    if (createUserNotification) {
+      const comment = result.value.comment;
+      const authorId = req.user!.userId;
+      const orgId = req.user!.orgId;
+      const recipients = new Set<string>(comment.mentions ?? []);
+      // Notify annotation author if someone else commented
+      if (result.value.annotationAuthorId !== authorId) {
+        recipients.add(result.value.annotationAuthorId);
+      }
+      // Don't notify the comment author themselves
+      recipients.delete(authorId);
+      for (const userId of recipients) {
+        const isMention = (comment.mentions ?? []).includes(userId);
+        createUserNotification.execute({
+          userId,
+          orgId,
+          type: isMention ? 'mention' : 'comment_on_own',
+          title: isMention ? 'You were mentioned in a comment' : 'New comment on your annotation',
+          body: comment.body.slice(0, 200),
+          metadata: { annotationId: comment.annotationId, commentId: comment.id },
+        }).catch(() => {}); // swallow — notifications are best-effort
+      }
+    }
   });
 
   router.get('/', async (req: Request, res: Response) => {

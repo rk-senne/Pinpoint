@@ -101,8 +101,26 @@ export class PgAnnotationRepo implements AnnotationRepo {
     if (filter?.status) {
       query = query.andWhere('status', filter.status as AnnotationStatus);
     }
+    if (filter?.limit != null) {
+      query = query.limit(filter.limit);
+    }
+    if (filter?.offset != null) {
+      query = query.offset(filter.offset);
+    }
     const rows = await query.orderBy('pin_number', 'asc');
     return rows.map((r) => this.mapRow(r));
+  }
+
+  async countByProject(
+    projectId: string,
+    filter?: Pick<ListAnnotationsFilter, 'status'>,
+  ): Promise<number> {
+    let query = this.db('annotations').where({ project_id: projectId });
+    if (filter?.status) {
+      query = query.andWhere('status', filter.status);
+    }
+    const [{ count }] = await query.count('* as count');
+    return Number(count);
   }
 
   async update(id: string, patch: AnnotationPatch): Promise<Annotation> {

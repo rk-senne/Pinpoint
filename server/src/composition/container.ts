@@ -166,7 +166,7 @@ import {
 } from '../domain/billing/usecases/billing.js';
 import { StripeBillingProvider } from '../adapters/outbound/stripe/StripeBillingProvider.js';
 import { createPlanLimitsMiddleware } from '../middleware/planLimits.js';
-import { tenantRateLimit } from '../middleware/tenantRateLimit.js';
+import { tenantRateLimit, type RedisRateLimitClient } from '../middleware/tenantRateLimit.js';
 import {
   S3ScreenshotStore,
   type S3ScreenshotStoreConfig,
@@ -211,6 +211,8 @@ import { legacyApiCatchAll } from '../middleware/legacyApi.js';
 import { securityHeaders } from '../middleware/securityHeaders.js';
 import { inputSanitizer } from '../middleware/inputSanitizer.js';
 import { requestId } from '../middleware/requestId.js';
+import { compress } from '../middleware/compress.js';
+import { cacheMiddleware } from '../middleware/cache.js';
 
 // --- screenshot redaction helper (used as `applyRedactionBlur`) ---------
 import { applyRedactionBlur as applyRedactionBlurImpl } from '../services/screenshotRedaction.js';
@@ -279,6 +281,8 @@ export interface Config {
     webhookSecret: string;
     proPriceId: string;
   };
+  /** Optional Redis URL for multi-instance rate limiting + Socket.IO adapter. */
+  redisUrl?: string;
 }
 
 /**
@@ -349,6 +353,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config 
           proPriceId: env.STRIPE_PRO_PRICE_ID || '',
         }
       : undefined,
+    redisUrl: env.REDIS_URL || undefined,
   };
 }
 
@@ -464,6 +469,9 @@ export function buildContainer(config: Config): Container {
   const io = new SocketIoServer(httpServer, {
     cors: { origin: config.corsOrigin, credentials: true },
   });
+  // TODO: When REDIS_URL is set and the `@socket.io/redis-adapter` package is
+  // installed, call `io.adapter(createAdapter(pubClient, subClient))` here to
+  // enable multi-instance WebSocket broadcasting.
   const eventBus = new SocketIoEventBus(io);
 
   // ---- Helper closures ------------------------------------------------
@@ -714,6 +722,7 @@ export function buildContainer(config: Config): Container {
   );
   app.use(express.json());
   app.use(cookieParser());
+  app.use(compress(1024));
   app.use(requestId);
   app.use(securityHeaders);
   app.use(inputSanitizer);
@@ -735,7 +744,16 @@ export function buildContainer(config: Config): Container {
   app.use('/api/v1', csrfMiddleware);
 
   // Per-tenant rate limiting (after auth middleware resolves the org).
-  app.use('/api/v1', tenantRateLimit());
+  // When REDIS_URL is set and a Redis client package (e.g. ioredis) is
+  // installed, create a RedisRateLimitClient adapter here and pass it as
+  // the second argument for multi-instance consistency.
+  const redisRateLimitClient: RedisRateLimitClient | undefined = undefined;
+  app.use('/api/v1', tenantRateLimit({}, redisRateLimitClient));
+
+  // Response caching on hot read-only endpoints (Enhancement 3).
+  app.use('/api/v1/projects/:id/analytics', cacheMiddleware(60_000));
+  app.use('/api/v1/guidelines', cacheMiddleware(300_000));
+  app.use('/api/v1/docs.json', cacheMiddleware(3_600_000));
 
   // Strict per-IP+email limiter for auth-sensitive endpoints (Req 19.1).
   app.post('/api/v1/auth/login', authRateLimiter);

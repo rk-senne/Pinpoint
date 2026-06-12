@@ -40,13 +40,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
 
   // GET /api/v1/org/members — list org members
   router.get('/members', authMiddleware, async (req: Request, res: Response) => {
-    const memberships = await membershipRepo.listByOrg(req.user!.orgId);
-    const members = await Promise.all(
-      memberships.map(async (m) => {
-        const user = await userRepo.findById(m.userId);
-        return { userId: m.userId, role: m.role, email: user?.email, name: user?.name };
-      }),
-    );
+    const members = await membershipRepo.listByOrgWithUsers(req.user!.orgId);
     res.json({ members });
   });
 

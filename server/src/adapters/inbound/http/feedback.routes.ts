@@ -25,13 +25,16 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
 
     const filter: ListAnnotationsFilter = {};
     if (req.query.status) filter.status = req.query.status as AnnotationStatus;
+    filter.limit = limit;
+    filter.offset = offset;
 
-    const annotations = await annotationRepo.listByProject(projectId, filter);
-    const total = annotations.length;
-    const paginated = annotations.slice(offset, offset + limit);
+    const [annotations, total] = await Promise.all([
+      annotationRepo.listByProject(projectId, filter),
+      annotationRepo.countByProject(projectId, { status: filter.status }),
+    ]);
 
     res.json({
-      data: paginated,
+      data: annotations,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   });

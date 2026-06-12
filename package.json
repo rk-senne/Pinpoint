@@ -7,7 +7,8 @@
     "server",
     "dashboard",
     "extension",
-    "e2e"
+    "e2e",
+    "mobile-sdk"
   ],
   "engines": {
     "node": ">=20"
@@ -17,10 +18,18 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
+    "test:e2e": "npm test --workspace e2e",
+    "test:load": "k6 run k6/load-test.js",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "lint": "npm run lint --workspaces --if-present",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "migrate": "npx knex migrate:latest --knexfile server/knexfile.ts",
+    "migrate:rollback": "npx knex migrate:rollback --knexfile server/knexfile.ts",
+    "dev": "docker compose up",
+    "dev:dashboard": "npm run dev --workspace dashboard",
+    "dev:api": "npm run build --workspace shared && npm run build --workspace server && npm start --workspace server",
+    "build:widget": "npm run build:widget --workspace extension"
   },
   "devDependencies": {
     "fast-check": "^4.1.1",

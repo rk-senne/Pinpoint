@@ -13,7 +13,7 @@
  */
 
 import { navigate } from '../lib/router';
-import { apiClient } from '../lib/api';
+import { apiFetch } from '../lib/api';
 
 const ONBOARDING_COMPLETE_KEY = 'pinpoint_onboarding_complete';
 
@@ -52,9 +52,9 @@ const steps: WizardStep[] = [
         const urlInput = ctx.container.querySelector<HTMLInputElement>('#onboarding-project-url');
         if (!input?.value.trim() || !urlInput?.value.trim()) return;
         try {
-          await apiClient('/api/v1/projects', {
+          await apiFetch('/projects', {
             method: 'POST',
-            body: JSON.stringify({ name: input.value.trim(), url: urlInput.value.trim() }),
+            body: JSON.stringify({ name: input.value.trim(), urls: [urlInput.value.trim()] }),
           });
           ctx.next();
         } catch { /* validation errors handled by API */ }

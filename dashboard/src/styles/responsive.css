@@ -1,0 +1,176 @@
+/* Responsive overrides for the Pinpoint Dashboard. */
+
+/* --- Tablet (max-width: 1024px) --- */
+@media (max-width: 1024px) {
+  .fl-app-layout__body [data-slot="sidebar"] {
+    width: 200px;
+  }
+
+  [data-role="analytics"] {
+    flex-wrap: wrap;
+  }
+
+  [data-role="analytics-card"] {
+    min-width: 140px !important;
+  }
+}
+
+/* --- Mobile (max-width: 768px) --- */
+@media (max-width: 768px) {
+  /* Sidebar: collapse by default, show via hamburger toggle */
+  .fl-app-layout__body {
+    flex-direction: column !important;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"] {
+    width: 100% !important;
+    height: auto;
+    max-height: 0;
+    overflow: hidden;
+    border-right: none !important;
+    border-bottom: 1px solid #e5e7eb;
+    transition: max-height 0.3s ease;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"].open {
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  /* Hamburger toggle (injected by JS) */
+  .fl-hamburger {
+    display: block !important;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 8px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Content area full width */
+  .fl-app-layout__body [data-slot="content"] {
+    padding: 12px !important;
+  }
+
+  /* Project list single column */
+  [data-role="recent-list"] {
+    width: 100%;
+  }
+
+  [data-role="recent-link"] {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 4px;
+  }
+
+  [data-role="recent-link"] [data-slot="url"] {
+    margin-left: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Analytics cards stack vertically */
+  [data-role="analytics"] {
+    flex-direction: column !important;
+  }
+
+  [data-role="analytics-card"] {
+    min-width: 100% !important;
+  }
+
+  /* Kanban board scrolls horizontally */
+  [data-section="kanban"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [data-section="kanban"] [data-role="kanban-column"] {
+    min-width: 260px !important;
+    flex-shrink: 0;
+  }
+
+  /* Forms and tables full-width */
+  form,
+  table {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Notification dropdown full-width */
+  [data-role="dropdown"] {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: none;
+  }
+
+  /* Touch targets — min 44px on interactive elements */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="switch"] {
+    min-height: 44px;
+  }
+
+  button,
+  a {
+    min-width: 44px;
+  }
+
+  /* Settings tabs scroll horizontally */
+  [data-role="tabs"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+  }
+
+  /* Dialog panels full-width */
+  [data-role="panel"] {
+    width: calc(100vw - 32px) !important;
+    max-width: 100%;
+  }
+}
+
+/* --- Print styles --- */
+@media print {
+  /* Hide navigation, sidebar, toolbar */
+  header,
+  [data-slot="sidebar"],
+  [data-role="notification-bell"],
+  [data-action="logout"],
+  [data-role="view-toggle"],
+  .fl-hamburger {
+    display: none !important;
+  }
+
+  /* Show content full-width */
+  .fl-app-layout__body {
+    display: block !important;
+  }
+
+  [data-slot="content"] {
+    padding: 0 !important;
+  }
+
+  /* Avoid page breaks inside cards */
+  [data-role="analytics-card"],
+  [data-role="kanban-column"] {
+    break-inside: avoid;
+  }
+
+  /* Reset colours for print */
+  body {
+    color: #000;
+    background: #fff;
+  }
+}

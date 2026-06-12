@@ -10,6 +10,7 @@ export interface SocketEvents {
   'annotation:viewers': (data: { id: string; userIds: string[] }) => void;
   'comment:created': (comment: Comment) => void;
   'presence:update': (data: { userId: string; online: boolean }) => void;
+  'notification.created': (notification: { id: string; title: string; body: string; read: boolean; createdAt: string }) => void;
 }
 
 let socket: Socket | null = null;

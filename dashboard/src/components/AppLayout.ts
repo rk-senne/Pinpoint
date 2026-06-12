@@ -23,6 +23,7 @@ import { authStore, resetStores } from '../lib/stores';
 import { apiFetch } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { mountProjectListSidebar } from './ProjectListSidebar';
+import { mountNotificationBell } from './NotificationBell';
 
 /**
  * Mount the AppLayout shell into `rootEl` and place `contentNode` in the
@@ -51,6 +52,21 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
     sidebarHandle = mountProjectListSidebar(sidebarSlot, {
       navigate: (path) => navigate(path),
     });
+
+    // Mobile hamburger toggle for the sidebar.
+    const header = layoutRoot.querySelector('header');
+    if (header) {
+      const hamburger = document.createElement('button');
+      hamburger.type = 'button';
+      hamburger.className = 'fl-hamburger';
+      hamburger.setAttribute('aria-label', 'Toggle navigation');
+      hamburger.textContent = '☰';
+      hamburger.style.display = 'none'; // shown via responsive.css
+      hamburger.addEventListener('click', () => {
+        sidebarSlot.classList.toggle('open');
+      });
+      header.insertBefore(hamburger, header.firstChild);
+    }
   }
 
   // Content slot — caller-provided node moved into place.
@@ -59,6 +75,13 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
     throw new Error('mountAppLayout: template is missing the content slot');
   }
   contentSlot.replaceChildren(contentNode);
+
+  // Notification bell — mount into the header notification slot.
+  const notificationsSlot = layoutRoot.querySelector<HTMLElement>('[data-slot="notifications"]');
+  let bellDispose: (() => void) | null = null;
+  if (notificationsSlot) {
+    bellDispose = mountNotificationBell(notificationsSlot);
+  }
 
   // Bind the top-bar current-user label to the auth store. The label shows
   // the user's name when present, falls back to the email, and renders
@@ -89,6 +112,7 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
   mount(rootEl, fragment);
 
   return () => {
+    bellDispose?.();
     sidebarHandle?.dispose();
     unbindUser();
     cleanupEvents();

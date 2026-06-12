@@ -158,6 +158,12 @@ export interface Annotation {
    * locally on each replay.
    */
   targetStale?: boolean;
+  /**
+   * Session replay events captured by the extension recorder (last N
+   * seconds before annotation creation). Used for playback in the
+   * dashboard's ReplayPlayer component.
+   */
+  sessionReplay?: ReplayEvent[] | null;
 }
 
 export interface Comment {
@@ -236,7 +242,10 @@ export type NotificationPayload = {
   kind:
     | 'annotation_created'
     | 'comment_created'
+    | 'comment_on_own'
     | 'mention'
+    | 'status_change'
+    | 'daily_digest'
     | 'promoted_to_owner'
     | 'project_deleted'
     | 'verify_email';
@@ -341,4 +350,12 @@ export interface ApiErrorEnvelope {
     message: string;
     details?: object;
   };
+}
+
+// --- Session Replay ---
+
+export interface ReplayEvent {
+  type: 'mousemove' | 'click' | 'scroll' | 'input' | 'mutation' | 'resize';
+  timestamp: number;
+  data: unknown;
 }

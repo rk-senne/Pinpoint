@@ -27,6 +27,8 @@ import {
   SeveritySchema,
 } from '@pinpoint/shared';
 
+import type { Knex } from 'knex';
+
 import type { CreateAnnotation } from '../../../domain/annotation/usecases/createAnnotation.js';
 import type { UpdateAnnotation } from '../../../domain/annotation/usecases/updateAnnotation.js';
 import type { ChangeAnnotationStatus } from '../../../domain/annotation/usecases/changeAnnotationStatus.js';
@@ -35,6 +37,8 @@ import type { AttachScreenshot } from '../../../domain/annotation/usecases/attac
 import type { AnnotationRepo } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { AnnotationPatch } from '../../../domain/annotation/Annotation.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
+import { createTriageService } from '../../../services/triage.js';
+import { getSuggestions } from '../../../services/smartSuggestions.js';
 
 export interface AnnotationRouteDeps {
   createAnnotation: CreateAnnotation;
@@ -67,6 +71,8 @@ export interface AnnotationRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   /** Maximum allowed screenshot size in bytes. Defaults to 10 MB. */
   screenshotMaxBytes?: number;
+  /** Knex instance for premium feature queries (triage + suggestions). */
+  db?: Knex;
 }
 
 const SCREENSHOT_MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
@@ -185,6 +191,7 @@ export function createAnnotationRoutes(
     applyRedactionBlur,
     authMiddleware,
     screenshotMaxBytes = SCREENSHOT_MAX_BYTES_DEFAULT,
+    db,
   } = deps;
 
   const screenshotUpload = multer({
@@ -435,6 +442,27 @@ export function createAnnotationRoutes(
       });
     },
   );
+
+  // --- Suggestions endpoint (premium feature: triage + smart suggestions) ---
+  annotationRouter.get('/:id/suggestions', async (req: Request, res: Response) => {
+    if (!db) {
+      res.status(501).json({ error: 'Suggestions not available.' });
+      return;
+    }
+    const annotationId = paramString(req.params.id);
+    const annotation = await annotationRepo.findById(annotationId);
+    if (!annotation) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    const orgId = req.user!.orgId;
+    const triageService = createTriageService(db);
+    const [triageResult, suggestions] = await Promise.all([
+      triageService.triage(orgId, annotation.body, annotation.target as unknown as Record<string, unknown>),
+      getSuggestions(db, orgId, annotationId),
+    ]);
+    res.json({ triage: triageResult, suggestions });
+  });
 
   return { projectAnnotationsRouter, annotationRouter };
 }

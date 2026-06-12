@@ -17,7 +17,8 @@
     { "path": "server" },
     { "path": "dashboard" },
     { "path": "extension" },
-    { "path": "e2e" }
+    { "path": "e2e" },
+    { "path": "mobile-sdk" }
   ],
   "files": []
 }

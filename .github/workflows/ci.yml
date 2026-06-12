@@ -1,179 +1,42 @@
 name: CI
 
-# Requirement 30 — Continuous Integration
-# Design key decision #14 — GitHub Actions workflow: on: pull_request to the
-# default branch, matrix on Node 20, jobs `lint`, `typecheck`, `unit`,
-# `property`. The `unit` and `property` jobs use a Postgres service container
-# so the integration suites have a real DB.
-
 on:
-  pull_request:
-    branches:
-      - main
-      - master
-  # Also run on push to the default branch so post-merge regressions are
-  # caught immediately rather than on the next PR.
   push:
-    branches:
-      - main
-      - master
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-# Cancel superseded runs on the same PR to keep CI snappy.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  NODE_VERSION: '20'
 
 jobs:
-  lint:
-    name: lint
+  lint-typecheck:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
 
-      - name: Install dependencies
-        run: npm ci
-
-      # Shared package emits to dist/ which the other workspaces consume via
-      # the `@pinpoint/shared` import. Build it first so subsequent steps
-      # see fresh declaration files.
-      - name: Build shared package
-        run: npm run build --workspace @pinpoint/shared
-
-      # The current `npm run typecheck` script type-checks the workspace
-      # via `tsc --noEmit` (formerly the root `lint` script), which catches
-      # the most common breakage. The separate `lint` step below covers
-      # task 4.5.3 / Req 54.8 (hexagonal-architecture boundary rules) by
-      # fanning out to each workspace's `lint` script — today only `server`
-      # has one, running eslint with `eslint-plugin-import`'s
-      # `no-restricted-paths` rule that forbids `server/src/domain/**` from
-      # importing `server/src/adapters/**` or any restricted infrastructure
-      # package (express, socket.io, knex, pg, bcrypt, nodemailer,
-      # @aws-sdk/*, pino, pino-http).
-      - name: Run typecheck
-        run: npm run typecheck
-
-      # Workspace-level lint fans out via `npm run lint --workspaces
-      # --if-present`. A boundary violation fails the build.
-      - name: Run lint
-        run: npm run lint
-
-  typecheck:
-    name: typecheck
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Composite project graph: shared -> server, dashboard, extension.
-      # `tsc --build` typechecks the entire monorepo via project references.
-      - name: Type-check all workspaces
-        run: npx tsc --build
-
-  unit:
-    name: unit
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20]
-
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16
         env:
+          POSTGRES_DB: pinpoint_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pinpoint_test
-        ports:
-          - 5432:5432
-        # `pg_isready` blocks the job until Postgres is accepting connections,
-        # which is what the integration suites assume.
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres -d pinpoint_test"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 10
-
-    env:
-      # Match the names used in server/.env and server/knexfile.ts so the
-      # integration suites pick up the service container automatically.
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_NAME: pinpoint_test
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      JWT_SECRET: ci-test-secret
-      NODE_ENV: test
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build all workspaces
-        run: npm run build --workspaces --if-present
-
-      # Run every `*.test.ts` except the property suites. Integration tests
-      # under server/src/__tests__/integration/ are included here and exercise
-      # the Postgres service container.
-      - name: Run unit and integration tests
-        run: npx vitest --run --exclude '**/*.property.test.ts'
-
-  property:
-    name: property
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20]
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pinpoint_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d pinpoint_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
+          --health-retries 5
     env:
       DB_HOST: localhost
       DB_PORT: 5432
@@ -182,31 +45,71 @@ jobs:
       DB_PASSWORD: postgres
       JWT_SECRET: ci-test-secret
       NODE_ENV: test
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - run: npm ci
+      - run: npm run build --workspace shared
+      - run: npx knex migrate:latest --knexfile server/knexfile.ts
+      - run: npm test -- --coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
 
-      - name: Install dependencies
-        run: npm ci
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [lint-typecheck, test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: pinpoint-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Build all workspaces
-        run: npm run build --workspaces --if-present
-
-      # Property suites all live in `*.property.test.ts` files across the
-      # shared, server, and extension packages. Use the explicit
-      # `.property.test.ts` suffix as the positional filter — Vitest's
-      # positional argument is matched as a substring against test file
-      # paths, so anchoring on the full file-name suffix avoids any
-      # accidental match against unrelated files that happen to contain
-      # `property.test` in their name. (Vitest does not expose `--include`
-      # on the CLI; the substring positional filter is the documented
-      # mechanism — see vitest-dev/vitest#4861.)
-      - name: Run property-based tests
-        run: npx vitest --run '.property.test.ts'
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-docker]
+    if: github.ref == 'refs/heads/main'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/pinpoint-api:${{ github.sha }},${{ steps.ecr.outputs.registry }}/pinpoint-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service \
+            --cluster pinpoint-staging \
+            --service pinpoint-staging-api \
+            --force-new-deployment
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster pinpoint-staging \
+            --services pinpoint-staging-api
+      - name: Health check
+        run: |
+          sleep 10
+          curl -f https://staging.pinpoint.app/health || exit 1

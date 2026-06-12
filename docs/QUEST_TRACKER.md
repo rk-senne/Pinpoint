@@ -47,8 +47,8 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 2 — Auth & Teams (Weeks 4-5)
 
-- [ ] Add OAuth 2.0 login (Google)
-- [ ] Add OAuth 2.0 login (GitHub)
+- [x] Add OAuth 2.0 login (Google)
+- [x] Add OAuth 2.0 login (GitHub)
 - [x] Implement invitation flow (email → token → accept)
 - [x] Invitation email template (with branded link)
 - [x] Org switching (user can belong to multiple orgs)
@@ -67,17 +67,17 @@ Check off each quest as you complete it. Each phase builds on the last.
 ## Phase 3 — Billing (Weeks 6-7)
 
 - [ ] Create Stripe account + configure products/prices
-- [ ] `stripe_customer_id` on organizations table
-- [ ] Create Stripe customer on org creation
-- [ ] Checkout session endpoint (subscribe to plan)
-- [ ] Stripe webhook handler (subscription events)
-- [ ] Plan limits enforcement middleware
-- [ ] Usage metering (annotations/month count)
-- [ ] Billing portal redirect endpoint (Stripe Customer Portal)
-- [ ] Upgrade/downgrade flow
-- [ ] Grace period on payment failure (3 days)
-- [ ] Invoice history endpoint
-- [ ] Free tier limits: 2 seats, 50 annotations/mo, 2 projects
+- [x] `stripe_customer_id` on organizations table
+- [x] Create Stripe customer on org creation
+- [x] Checkout session endpoint (subscribe to plan)
+- [x] Stripe webhook handler (subscription events)
+- [x] Plan limits enforcement middleware
+- [x] Usage metering (annotations/month count)
+- [x] Billing portal redirect endpoint (Stripe Customer Portal)
+- [x] Upgrade/downgrade flow
+- [x] Grace period on payment failure (3 days)
+- [x] Invoice history endpoint
+- [x] Free tier limits: 2 seats, 50 annotations/mo, 2 projects
 
 💡 *Tip: Use Stripe Test Mode + CLI (`stripe listen --forward-to`) for local webhook testing. Never test with real cards.*
 
@@ -85,20 +85,20 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 4 — Integrations (Weeks 8-10)
 
-- [ ] `integrations` table (org_id, provider, tokens, config)
+- [x] `integrations` table (org_id, provider, tokens, config)
 - [ ] OAuth flow: Slack (post feedback to channel)
 - [ ] OAuth flow: Jira (create issues from feedback)
 - [ ] OAuth flow: Linear (create issues, sync status)
 - [ ] OAuth flow: GitHub (create issues, link PRs)
-- [ ] Token refresh logic (auto-refresh before expiry)
-- [ ] Webhook signature verification per provider
-- [ ] Integration settings UI in dashboard
-- [ ] Notification system: `notifications` table
-- [ ] In-app notifications (Socket.IO push)
-- [ ] Email notifications (AWS SES or Resend)
-- [ ] Notification preferences per user
-- [ ] @mention detection in comments → trigger notification
-- [ ] Email digest (daily summary of activity)
+- [x] Token refresh logic (auto-refresh before expiry)
+- [x] Webhook signature verification per provider
+- [x] Integration settings UI in dashboard
+- [x] Notification system: `notifications` table
+- [x] In-app notifications (Socket.IO push)
+- [x] Email notifications (AWS SES or Resend)
+- [x] Notification preferences per user
+- [x] @mention detection in comments → trigger notification
+- [x] Email digest (daily summary of activity)
 
 💡 *Tip: Build Slack first — it's the simplest OAuth flow and gives immediate visible value to teams.*
 
@@ -113,13 +113,13 @@ Check off each quest as you complete it. Each phase builds on the last.
 - [x] Public API: POST /api/v1/feedback
 - [x] Public API: PATCH /api/v1/feedback/:id
 - [x] Public API: DELETE /api/v1/feedback/:id
-- [ ] Public API: webhooks registration
-- [ ] Per-tenant rate limiting (Redis-backed)
-- [ ] API documentation (auto-generated from Zod schemas)
+- [x] Public API: webhooks registration
+- [x] Per-tenant rate limiting (Redis-backed)
+- [x] API documentation (auto-generated from Zod schemas)
 - [x] CSRF protection (double-submit cookie)
 - [ ] Security audit (OWASP ZAP scan)
 - [x] Audit log table (sensitive actions)
-- [ ] Load test with k6 (target: p95 <200ms at 500 concurrent)
+- [x] Load test with k6 (target: p95 <200ms at 500 concurrent)
 
 💡 *Tip: Auto-generate API docs from your Zod schemas — they're already the source of truth for validation.*
 
@@ -127,19 +127,19 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 6 — Infrastructure & Launch (Weeks 13-14)
 
-- [ ] Terraform: VPC + subnets
-- [ ] Terraform: RDS PostgreSQL (Multi-AZ)
-- [ ] Terraform: ElastiCache Redis
-- [ ] Terraform: ECS Fargate service (API)
-- [ ] Terraform: ALB + target groups
-- [ ] Terraform: S3 + CloudFront (screenshots)
-- [ ] CI/CD: GitHub Actions → ECR → ECS deploy
+- [x] Terraform: VPC + subnets
+- [x] Terraform: RDS PostgreSQL (Multi-AZ)
+- [x] Terraform: ElastiCache Redis
+- [x] Terraform: ECS Fargate service (API)
+- [x] Terraform: ALB + target groups
+- [x] Terraform: S3 + CloudFront (screenshots)
+- [x] CI/CD: GitHub Actions → ECR → ECS deploy
 - [ ] Staging environment deployed
 - [ ] Production environment deployed
 - [ ] Custom domain + SSL
-- [ ] Monitoring: CloudWatch + alerts
-- [ ] Error tracking: Sentry
-- [ ] E2E smoke tests on staging
+- [x] Monitoring: CloudWatch + alerts
+- [x] Error tracking: Sentry
+- [x] E2E smoke tests on staging
 - [ ] 🚀 **GA Launch**
 
 💡 *Tip: Deploy staging first and run it for a week before touching production. Real infra reveals real problems.*
@@ -148,16 +148,16 @@ Check off each quest as you complete it. Each phase builds on the last.
 
 ## Phase 7 — Growth Features (Post-Launch)
 
-- [ ] Dashboard redesign (project cards, feedback list, detail view)
-- [ ] Kanban board view
-- [ ] Client portal (branded, guest access)
+- [x] Dashboard redesign (project cards, feedback list, detail view)
+- [x] Kanban board view
+- [x] Client portal (branded, guest access)
 - [ ] Video/screen recording
-- [ ] Workflow automation (auto-assign rules, SLA tracking)
-- [ ] Reporting widgets (resolution time, volume, team activity)
-- [ ] Mobile responsive dashboard
-- [ ] Extension: offline queue (IndexedDB)
-- [ ] Extension: keyboard shortcut capture
-- [ ] Onboarding wizard (guided first annotation)
+- [x] Workflow automation (auto-assign rules, SLA tracking)
+- [x] Reporting widgets (resolution time, volume, team activity)
+- [x] Mobile responsive dashboard
+- [x] Extension: offline queue (IndexedDB)
+- [x] Extension: keyboard shortcut capture
+- [x] Onboarding wizard (guided first annotation)
 
 💡 *Tip: Ship the dashboard redesign as the first post-launch priority. It's what paying users see every day.*
 

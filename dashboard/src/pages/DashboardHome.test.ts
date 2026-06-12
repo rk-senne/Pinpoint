@@ -38,6 +38,10 @@ const TEMPLATES: Record<string, string> = {
   'tpl-dashboard-home': `
     <div data-role="root">
       <h1>Dashboard</h1>
+      <div data-role="view-toggle">
+        <button data-action="selectList">List</button>
+        <button data-action="selectCards">Cards</button>
+      </div>
       <section data-section="empty" hidden>
         <h2>No projects yet</h2>
         <button type="button" data-action="createProject" data-role="empty-cta">+ Create Project</button>
@@ -46,6 +50,7 @@ const TEMPLATES: Record<string, string> = {
         <h2>Recent projects</h2>
         <ul data-role="recent-list"></ul>
       </section>
+      <div data-role="cards-grid" hidden></div>
     </div>
   `,
   'tpl-dashboard-home-recent-item': `

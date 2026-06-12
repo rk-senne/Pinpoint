@@ -222,6 +222,23 @@ export function installCollabGateway(
       broadcastAnnotationViewers(annotationId);
     });
 
+    // --- cursor:move event (live cursor relay) ---
+    socket.on('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
+      if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
+      // Broadcast to all project rooms this socket is in (excluding sender)
+      for (const room of socket.rooms) {
+        if (room.startsWith('project:')) {
+          socket.to(room).emit('cursor:move', {
+            userId: user.userId,
+            email: user.email,
+            x: data.x,
+            y: data.y,
+            pageUrl: data.pageUrl ?? '',
+          });
+        }
+      }
+    });
+
     // --- annotation:close event (co-viewer presence) ---
     socket.on('annotation:close', (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
@@ -247,6 +264,13 @@ export function installCollabGateway(
 
     // --- disconnect event ---
     socket.on('disconnect', () => {
+      // Broadcast cursor:leave to all project rooms this socket was in.
+      for (const room of socket.rooms) {
+        if (room.startsWith('project:')) {
+          socket.to(room).emit('cursor:leave', { userId: user.userId });
+        }
+      }
+
       // Clean up co-viewer presence for any annotations this socket had
       // open.
       for (const annotationId of openAnnotations) {

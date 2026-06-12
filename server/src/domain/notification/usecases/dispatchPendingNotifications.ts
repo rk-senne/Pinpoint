@@ -104,54 +104,132 @@ export class DispatchPendingNotifications {
 
 /**
  * Pure: pick the email subject + body for a payload kind.
+ * Produces inline-styled HTML emails with brand header, message, CTA, and
+ * unsubscribe footer.
  */
 export function renderTemplate(payload: NotificationPayload): {
   subject: string;
   body: string;
 } {
+  const appUrl = process.env.APP_URL || 'http://localhost:5173';
+
   switch (payload.kind) {
     case 'annotation_created': {
       const projectName = String(payload.projectName ?? 'Unknown');
+      const projectId = String(payload.projectId ?? '');
       return {
         subject: `New annotation on project: ${projectName}`,
-        body: `A new annotation was created on project "${projectName}".`,
+        body: emailLayout(
+          `A new annotation was created on project "${projectName}".`,
+          `${appUrl}/projects/${projectId}`,
+          'View Project',
+        ),
       };
     }
     case 'comment_created': {
       const annotationId = String(payload.annotationId ?? 'Unknown');
+      const projectId = String(payload.projectId ?? '');
       return {
-        subject: `New comment on annotation: ${annotationId}`,
-        body: `A new comment was added to annotation "${annotationId}".`,
+        subject: `New comment on annotation #${payload.pinNumber ?? annotationId}`,
+        body: emailLayout(
+          `A new comment was added to annotation #${payload.pinNumber ?? annotationId}.`,
+          `${appUrl}/projects/${projectId}`,
+          'View Annotation',
+        ),
+      };
+    }
+    case 'comment_on_own': {
+      const name = String(payload.actorName ?? 'Someone');
+      const pinNumber = String(payload.pinNumber ?? '?');
+      const projectId = String(payload.projectId ?? '');
+      return {
+        subject: `${name} commented on your annotation #${pinNumber}`,
+        body: emailLayout(
+          `${name} commented on your annotation #${pinNumber}.`,
+          `${appUrl}/projects/${projectId}`,
+          'View Annotation',
+        ),
       };
     }
     case 'mention': {
-      const annotationId = String(payload.annotationId ?? 'Unknown');
+      const name = String(payload.actorName ?? 'Someone');
+      const pinNumber = String(payload.pinNumber ?? '?');
+      const projectId = String(payload.projectId ?? '');
       return {
-        subject: `You were mentioned in a comment`,
-        body: `You were mentioned in a comment on annotation "${annotationId}".`,
+        subject: `@${name} mentioned you in a comment`,
+        body: emailLayout(
+          `@${name} mentioned you in a comment on annotation #${pinNumber}.`,
+          `${appUrl}/projects/${projectId}`,
+          'View Comment',
+        ),
+      };
+    }
+    case 'status_change': {
+      const name = String(payload.actorName ?? 'Someone');
+      const pinNumber = String(payload.pinNumber ?? '?');
+      const status = String(payload.newStatus ?? 'unknown');
+      const projectId = String(payload.projectId ?? '');
+      return {
+        subject: `Annotation #${pinNumber} marked as ${status}`,
+        body: emailLayout(
+          `Annotation #${pinNumber} was marked as ${status} by ${name}.`,
+          `${appUrl}/projects/${projectId}`,
+          'View Annotation',
+        ),
+      };
+    }
+    case 'daily_digest': {
+      const newAnnotations = Number(payload.newAnnotations ?? 0);
+      const resolved = Number(payload.resolved ?? 0);
+      const insight = String(payload.insight ?? '');
+      const projectId = String(payload.projectId ?? '');
+      const metricsHtml = `
+        <div style="background:#f7f7fa;border-radius:6px;padding:12px 16px;margin:12px 0;">
+          <div style="font-size:14px;margin-bottom:4px;"><strong>${newAnnotations}</strong> new annotations</div>
+          <div style="font-size:14px;margin-bottom:4px;"><strong>${resolved}</strong> resolved</div>
+          ${insight ? `<div style="font-size:13px;color:#555;margin-top:8px;font-style:italic;">${insight}</div>` : ''}
+        </div>`;
+      return {
+        subject: `Daily digest: ${newAnnotations} new, ${resolved} resolved`,
+        body: emailLayout(
+          `Here's your daily activity summary.${metricsHtml}`,
+          projectId ? `${appUrl}/projects/${projectId}` : appUrl,
+          'Open Dashboard',
+        ),
       };
     }
     case 'promoted_to_owner': {
       const projectName = String(payload.projectName ?? 'Unknown');
+      const projectId = String(payload.projectId ?? '');
       return {
         subject: `You've been promoted to project owner`,
-        body: `You have been promoted to owner of project "${projectName}".`,
+        body: emailLayout(
+          `You have been promoted to owner of project "${projectName}".`,
+          `${appUrl}/projects/${projectId}`,
+          'View Project',
+        ),
       };
     }
     case 'project_deleted': {
       const projectName = String(payload.projectName ?? 'Unknown');
       return {
         subject: `Project deleted: ${projectName}`,
-        body: `The project "${projectName}" has been deleted.`,
+        body: emailLayout(
+          `The project "${projectName}" has been deleted.`,
+          appUrl,
+          'Open Dashboard',
+        ),
       };
     }
     case 'verify_email': {
       const link = String(payload.link ?? '');
       return {
         subject: `Verify your email`,
-        body: link
-          ? `Please verify your email by visiting: ${link}`
-          : `Please verify your email.`,
+        body: emailLayout(
+          'Please verify your email address to complete your registration.',
+          link || appUrl,
+          'Verify Email',
+        ),
       };
     }
     default: {
@@ -161,6 +239,33 @@ export function renderTemplate(payload: NotificationPayload): {
       );
     }
   }
+}
+
+/** Minimal inline-styled HTML email layout with brand header, message, CTA, and footer. */
+function emailLayout(message: string, ctaUrl: string, ctaLabel: string): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;padding:32px;max-width:560px;">
+<tr><td style="padding-bottom:20px;border-bottom:1px solid #eee;">
+  <span style="font-size:20px;font-weight:700;color:#4f46e5;">Pinpoint</span>
+</td></tr>
+<tr><td style="padding:20px 0;font-size:14px;color:#333;line-height:1.6;">
+  ${message}
+</td></tr>
+<tr><td style="padding:12px 0;">
+  <a href="${ctaUrl}" style="display:inline-block;padding:10px 24px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:4px;font-size:14px;font-weight:500;">${ctaLabel}</a>
+</td></tr>
+<tr><td style="padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.5;">
+  You're receiving this because of your Pinpoint notification settings.<br>
+  To unsubscribe, visit your <a href="${ctaUrl.split('/projects')[0]}/settings" style="color:#4f46e5;">notification settings</a>.
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
 }
 
 // Helper kept private to clarify renderTemplate's payload type is exported

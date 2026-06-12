@@ -42,6 +42,8 @@ import type {
 import { SEVERITY_COLORS, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
+import { mountReplayPlayer } from '../components/ReplayPlayer';
+import { mountHeatmapOverlay } from '../components/HeatmapOverlay';
 import { apiFetch as defaultApiFetch } from '../lib/api';
 import {
   attr,
@@ -189,6 +191,7 @@ export function mountProjectView(
   // rows can be GC'd; otherwise the closures capturing each row would keep
   // the detached DOM alive for the page's lifetime.
   let rowCleanups: Array<() => void> = [];
+  let replayTeardown: (() => void) | null = null;
 
   // --- Page-level event wiring ------------------------------------------
   const cleanupEvents = bindEvents(contentRoot, {
@@ -217,6 +220,18 @@ export function mountProjectView(
         ? new Date(dueInput.value).toISOString()
         : null;
       void saveAssignment(id, assigneeId, dueDate);
+    },
+    'toggle-heatmap': () => {
+      const heatmapContainer = contentRoot.querySelector<HTMLElement>('[data-role="heatmap-container"]');
+      if (!heatmapContainer) return;
+      const isHidden = heatmapContainer.hasAttribute('hidden');
+      if (isHidden) {
+        heatmapContainer.removeAttribute('hidden');
+        mountHeatmapOverlay(heatmapContainer, projectId);
+      } else {
+        heatmapContainer.setAttribute('hidden', '');
+        heatmapContainer.replaceChildren();
+      }
     },
   });
 
@@ -460,6 +475,7 @@ export function mountProjectView(
     for (const u of unsubs) u();
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
+    if (replayTeardown) { replayTeardown(); replayTeardown = null; }
     cleanupEvents();
     teardownLayout();
     contentRoot.remove();
@@ -871,6 +887,7 @@ export function mountProjectView(
 
     renderCaptureBuffers(annotation);
     renderScreenshot(annotation);
+    renderReplayButton(annotation);
     renderCoViewers();
   }
 
@@ -1021,6 +1038,40 @@ export function mountProjectView(
       .catch(() => {
         /* No markup or fetch failed — leave the bitmap alone (Req 35.2 best-effort). */
       });
+  }
+
+  /** Show a "View Replay" button if the annotation has session replay data. */
+  function renderReplayButton(annotation: Annotation): void {
+    // Clean up any previous replay player
+    if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+    // Remove previous button/container
+    detailSection.querySelector('[data-role="replay-btn"]')?.remove();
+    detailSection.querySelector('[data-role="replay-container"]')?.remove();
+
+    if (!annotation.sessionReplay || annotation.sessionReplay.length === 0) return;
+
+    const btn = document.createElement('button');
+    btn.setAttribute('data-role', 'replay-btn');
+    btn.textContent = '▶ View Replay';
+    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:#4f46e5;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
+    const replayContainer = document.createElement('div');
+    replayContainer.setAttribute('data-role', 'replay-container');
+
+    const envPanel = detailSection.querySelector<HTMLElement>('[data-role="env-panel"]');
+    const insertBefore = envPanel ?? detailSection.querySelector('[data-role="assignment-panel"]');
+    if (insertBefore) {
+      insertBefore.parentElement!.insertBefore(replayContainer, insertBefore);
+      insertBefore.parentElement!.insertBefore(btn, replayContainer);
+    } else {
+      detailSection.appendChild(btn);
+      detailSection.appendChild(replayContainer);
+    }
+
+    btn.addEventListener('click', () => {
+      if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+      btn.hidden = true;
+      replayTeardown = mountReplayPlayer(replayContainer, annotation.sessionReplay!);
+    });
   }
 
   function renderEnvironment(env: EnvironmentMetadata): void {

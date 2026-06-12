@@ -10,6 +10,7 @@ import type {
 import type { AnnotationRepo } from '../ports/AnnotationRepo.js';
 import type { ProjectRepo } from '../../project/ports/ProjectRepo.js';
 import type { TeamMemberRepo } from '../../team/ports/TeamMemberRepo.js';
+import type { NotificationTriggers } from '../../notification/usecases/notificationTriggers.js';
 import { hasProjectAccess } from '../../shared/projectAccess.js';
 import {
   Forbidden,
@@ -24,6 +25,7 @@ export interface ChangeAnnotationStatusInput {
   annotationId: string;
   actorUserId: string;
   status: AnnotationStatus;
+  orgId?: string;
 }
 
 export interface ChangeAnnotationStatusOutput {
@@ -34,6 +36,7 @@ export interface ChangeAnnotationStatusDeps {
   annotationRepo: AnnotationRepo;
   projectRepo: ProjectRepo;
   teamMemberRepo: TeamMemberRepo;
+  notificationTriggers?: NotificationTriggers;
 }
 
 export class ChangeAnnotationStatus {
@@ -69,6 +72,13 @@ export class ChangeAnnotationStatus {
     const updated = await annotationRepo.update(input.annotationId, {
       status: input.status,
     });
+
+    // Fire-and-forget: notify annotation author of status change
+    if (this.deps.notificationTriggers && annotation.authorId !== input.actorUserId && input.orgId) {
+      this.deps.notificationTriggers
+        .triggerStatusChangeNotification(annotation.authorId, input.actorUserId, input.annotationId, input.status, input.orgId)
+        .catch(() => {}); // best-effort
+    }
 
     return ok({ annotation: updated });
   }

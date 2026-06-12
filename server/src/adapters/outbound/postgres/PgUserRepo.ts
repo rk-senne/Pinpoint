@@ -45,7 +45,7 @@ export class PgUserRepo implements UserRepo {
     const row: Record<string, unknown> = {
       email: input.email.toLowerCase(),
       name: input.name,
-      password_hash: input.passwordHash,
+      password_hash: input.passwordHash || null,
       verified: input.verified ?? false,
     };
 

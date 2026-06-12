@@ -15,6 +15,7 @@ import type { Comment, NewComment } from '../Comment.js';
 import type { CommentRepo } from '../ports/CommentRepo.js';
 import type { AnnotationRepo } from '../../annotation/ports/AnnotationRepo.js';
 import type { EventBus } from '../../shared/ports/EventBus.js';
+import type { NotificationTriggers } from '../../notification/usecases/notificationTriggers.js';
 import {
   NotFound,
   Validation,
@@ -58,6 +59,7 @@ export interface CreateCommentDeps {
   commentRepo: CommentRepo;
   annotationRepo: AnnotationRepo;
   eventBus: EventBus;
+  notificationTriggers?: NotificationTriggers;
 }
 
 export class CreateComment {
@@ -125,6 +127,17 @@ export class CreateComment {
         projectId: annotation.projectId,
       },
     });
+
+    // Fire-and-forget: trigger mention notifications for @mentioned users
+    if (this.deps.notificationTriggers && input.orgId && allMentions.length > 0) {
+      for (const mentionedUserId of allMentions) {
+        if (mentionedUserId !== input.authorUserId) {
+          this.deps.notificationTriggers
+            .triggerMentionNotification(mentionedUserId, input.authorUserId, input.annotationId, input.orgId)
+            .catch(() => {}); // best-effort
+        }
+      }
+    }
 
     return ok({
       comment,

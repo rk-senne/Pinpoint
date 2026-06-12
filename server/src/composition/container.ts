@@ -26,6 +26,7 @@
 // import surface.
 
 import { S3Client } from '@aws-sdk/client-s3';
+import { createRequire } from 'node:module';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
@@ -66,6 +67,7 @@ import {
   RequestPasswordReset,
 } from '../domain/auth/usecases/requestPasswordReset.js';
 import { VerifyEmail } from '../domain/auth/usecases/verifyEmail.js';
+import { OAuthLogin, type OAuthProvider, type OAuthAccountRepo, type OAuthAccount } from '../domain/auth/usecases/oauthLogin.js';
 import { CreateComment } from '../domain/comment/usecases/createComment.js';
 import { ListComments } from '../domain/comment/usecases/listComments.js';
 import {
@@ -77,6 +79,15 @@ import {
 import {
   DispatchPendingNotifications,
 } from '../domain/notification/usecases/dispatchPendingNotifications.js';
+import {
+  RegisterWebhook, DispatchWebhook, DeleteWebhook,
+} from '../domain/webhook/usecases/webhooks.js';
+import {
+  CreateUserNotification, ListUserNotifications, MarkNotificationRead,
+} from '../domain/notification/usecases/userNotifications.js';
+import {
+  NotificationTriggers,
+} from '../domain/notification/usecases/notificationTriggers.js';
 import {
   ArchiveProject,
 } from '../domain/project/usecases/archiveProject.js';
@@ -132,6 +143,30 @@ import { PgSharedLinkRepo } from '../adapters/outbound/postgres/PgSharedLinkRepo
 import { PgTeamMemberRepo } from '../adapters/outbound/postgres/PgTeamMemberRepo.js';
 import { PgTeamRepo } from '../adapters/outbound/postgres/PgTeamRepo.js';
 import { PgUserRepo } from '../adapters/outbound/postgres/PgUserRepo.js';
+import { PgOAuthAccountRepo } from '../adapters/outbound/postgres/PgOAuthAccountRepo.js';
+import { PgWebhookRepo } from '../adapters/outbound/postgres/PgWebhookRepo.js';
+import { PgUserNotificationRepo } from '../adapters/outbound/postgres/PgUserNotificationRepo.js';
+import { PgOrgRepo } from '../adapters/outbound/postgres/PgOrgRepo.js';
+import { PgInvitationRepo } from '../adapters/outbound/postgres/PgInvitationRepo.js';
+import { PgApiKeyRepo } from '../adapters/outbound/postgres/PgApiKeyRepo.js';
+import { PgIntegrationRepo } from '../adapters/outbound/postgres/PgIntegrationRepo.js';
+import { generateDailyDigest } from '../services/dailyDigest.js';
+import {
+  InviteToOrg,
+} from '../domain/org/usecases/inviteToOrg.js';
+import {
+  AcceptInvitation,
+} from '../domain/org/usecases/acceptInvitation.js';
+import {
+  CreateCheckoutSession,
+  HandleStripeWebhook,
+  GetBillingPortal,
+  GetUsageSummary,
+  CheckGracePeriods,
+} from '../domain/billing/usecases/billing.js';
+import { StripeBillingProvider } from '../adapters/outbound/stripe/StripeBillingProvider.js';
+import { createPlanLimitsMiddleware } from '../middleware/planLimits.js';
+import { tenantRateLimit } from '../middleware/tenantRateLimit.js';
 import {
   S3ScreenshotStore,
   type S3ScreenshotStoreConfig,
@@ -139,6 +174,8 @@ import {
 import { NodemailerMailer } from '../adapters/outbound/smtp/NodemailerMailer.js';
 import { SocketIoEventBus } from '../adapters/outbound/socket/SocketIoEventBus.js';
 import { BcryptPasswordHasher } from '../adapters/outbound/bcrypt/BcryptPasswordHasher.js';
+import { GoogleOAuthProvider } from '../adapters/outbound/oauth/GoogleOAuthProvider.js';
+import { GitHubOAuthProvider } from '../adapters/outbound/oauth/GitHubOAuthProvider.js';
 import { JwtTokenIssuer } from '../adapters/outbound/jwt/JwtTokenIssuer.js';
 import { SystemClock } from '../adapters/outbound/clock/SystemClock.js';
 import { PinoLogger, pino, pinoHttp } from '../adapters/outbound/logger/PinoLogger.js';
@@ -153,6 +190,14 @@ import {
   createNotificationWorker,
   type NotificationWorker,
 } from '../adapters/inbound/workers/notificationWorker.js';
+import {
+  createDigestWorker,
+  type DigestWorker,
+} from '../adapters/inbound/workers/digestWorker.js';
+import {
+  createIntegrationRefreshWorker,
+  type IntegrationRefreshWorker,
+} from '../adapters/inbound/workers/integrationRefreshWorker.js';
 
 // --- request-pipeline middleware ----------------------------------------
 // `authRateLimiter` enforces the per-IP+email cap on auth endpoints
@@ -163,6 +208,9 @@ import {
 import { authRateLimiter } from '../middleware/authRateLimit.js';
 import { csrfMiddleware } from '../middleware/csrf.js';
 import { legacyApiCatchAll } from '../middleware/legacyApi.js';
+import { securityHeaders } from '../middleware/securityHeaders.js';
+import { inputSanitizer } from '../middleware/inputSanitizer.js';
+import { requestId } from '../middleware/requestId.js';
 
 // --- screenshot redaction helper (used as `applyRedactionBlur`) ---------
 import { applyRedactionBlur as applyRedactionBlurImpl } from '../services/screenshotRedaction.js';
@@ -215,11 +263,22 @@ export interface Config {
   logLevel: string;
   notificationIntervalMs: number;
   notificationBatchSize: number;
+  digestEnabled: boolean;
   bcryptSaltRounds: number;
   db: DbConfig;
   s3: S3Config;
   smtp: SmtpConfig;
   jwt: JwtConfig;
+  oauth: {
+    google?: { clientId: string; clientSecret: string };
+    github?: { clientId: string; clientSecret: string };
+    callbackBaseUrl: string;
+  };
+  stripe?: {
+    secretKey: string;
+    webhookSecret: string;
+    proPriceId: string;
+  };
 }
 
 /**
@@ -241,6 +300,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config 
     logLevel: env.LOG_LEVEL || (isTest ? 'silent' : 'info'),
     notificationIntervalMs: Number(env.NOTIFICATION_INTERVAL_MS) || 5_000,
     notificationBatchSize: Number(env.NOTIFICATION_BATCH_SIZE) || 10,
+    digestEnabled: env.DIGEST_ENABLED === 'true',
     bcryptSaltRounds: Number(env.BCRYPT_SALT_ROUNDS) || 10,
     db: {
       host: env.DB_HOST || 'localhost',
@@ -273,6 +333,22 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config 
       graceWindowSeconds:
         Number(env.JWT_GRACE_WINDOW_SECONDS) || 7 * 24 * 60 * 60,
     },
+    oauth: {
+      google: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+        ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET }
+        : undefined,
+      github: env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
+        ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET }
+        : undefined,
+      callbackBaseUrl: env.OAUTH_CALLBACK_BASE_URL || `http://localhost:${Number(env.PORT) || 3001}`,
+    },
+    stripe: env.STRIPE_SECRET_KEY
+      ? {
+          secretKey: env.STRIPE_SECRET_KEY,
+          webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
+          proPriceId: env.STRIPE_PRO_PRICE_ID || '',
+        }
+      : undefined,
   };
 }
 
@@ -287,6 +363,8 @@ export interface Container {
   readonly io: SocketIoServer;
   readonly db: Knex;
   readonly worker: NotificationWorker;
+  readonly notificationTriggers: import('../domain/notification/usecases/notificationTriggers.js').NotificationTriggers;
+  readonly runDailyDigest: (orgId: string) => Promise<import('../services/dailyDigest.js').DigestData>;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -341,6 +419,13 @@ export function buildContainer(config: Config): Container {
   const membershipRepo = new PgMembershipRepo(db);
   const notificationQueue = new PgNotificationQueue(db);
   const pinSequence = new PgProjectPinSequence(db);
+  const webhookRepo = new PgWebhookRepo(db);
+  const userNotificationRepo = new PgUserNotificationRepo(db);
+  const orgRepo = new PgOrgRepo(db);
+  const invitationRepo = new PgInvitationRepo(db);
+  const apiKeyRepo = new PgApiKeyRepo(db);
+  const oauthAccountRepo = new PgOAuthAccountRepo(db);
+  const integrationRepo = new PgIntegrationRepo(db);
 
   const screenshotStoreConfig: S3ScreenshotStoreConfig = {
     bucket: config.s3.bucket,
@@ -429,6 +514,32 @@ export function buildContainer(config: Config): Container {
   });
   const logout = new Logout({ authTokenRepo });
 
+  // --- OAuth providers + use case (optional) ---
+  const oauthProviders: Record<string, import('../domain/auth/usecases/oauthLogin.js').OAuthProvider> = {};
+  if (config.oauth.google) {
+    oauthProviders.google = new GoogleOAuthProvider(config.oauth.google.clientId, config.oauth.google.clientSecret);
+  }
+  if (config.oauth.github) {
+    oauthProviders.github = new GitHubOAuthProvider(config.oauth.github.clientId, config.oauth.github.clientSecret);
+  }
+
+  const createOrgAndMembership = async (userId: string, userName: string): Promise<string> => {
+    const [org] = await db('organizations')
+      .insert({ name: `${userName}'s Org`, slug: `user-${userId.slice(0, 8)}`, plan: 'free' })
+      .returning('id');
+    await db('memberships').insert({ org_id: org.id, user_id: userId, role: 'owner', accepted_at: db.fn.now() });
+    return org.id as string;
+  };
+
+  const oauthLogin = new OAuthLogin({
+    providers: oauthProviders,
+    oauthAccountRepo,
+    userRepo,
+    tokenIssuer,
+    membershipRepo,
+    createOrgAndMembership,
+  });
+
   const createProject = new CreateProject({
     projectRepo,
     pageRepo,
@@ -485,10 +596,14 @@ export function buildContainer(config: Config): Container {
     projectRepo,
     teamMemberRepo,
   });
+  const createUserNotification = new CreateUserNotification({ userNotificationRepo, eventBus });
+  const notificationTriggers = new NotificationTriggers({ createUserNotification, userNotificationRepo });
+
   const changeAnnotationStatus = new ChangeAnnotationStatus({
     annotationRepo,
     projectRepo,
     teamMemberRepo,
+    notificationTriggers,
   });
   const deleteAnnotation = new DeleteAnnotation({
     annotationRepo,
@@ -506,6 +621,7 @@ export function buildContainer(config: Config): Container {
     commentRepo,
     annotationRepo,
     eventBus,
+    notificationTriggers,
   });
   const listComments = new ListComments({ commentRepo, annotationRepo });
 
@@ -552,6 +668,37 @@ export function buildContainer(config: Config): Container {
     logger,
   });
 
+  const registerWebhook = new RegisterWebhook({ webhookRepo });
+  const dispatchWebhook = new DispatchWebhook({ webhookRepo });
+  const deleteWebhook = new DeleteWebhook({ webhookRepo });
+  const listUserNotifications = new ListUserNotifications({ userNotificationRepo });
+  const markNotificationRead = new MarkNotificationRead({ userNotificationRepo });
+  const inviteToOrg = new InviteToOrg({ invitationRepo, membershipRepo, clock, eventBus });
+  const acceptInvitation = new AcceptInvitation({ invitationRepo, membershipRepo, clock });
+
+  // ---- Billing (feature-flagged on STRIPE_SECRET_KEY) ----------------
+  let billingRouteDeps: import('../adapters/inbound/http/billing.routes.js').BillingRouteDeps | undefined;
+  if (config.stripe) {
+    // Runtime-load stripe via createRequire (ESM interop); only reached when STRIPE_SECRET_KEY is set.
+    const esmRequire = createRequire(import.meta.url);
+    const Stripe = esmRequire('stripe');
+    const stripeInstance = new Stripe(config.stripe.secretKey);
+    const billingProvider = new StripeBillingProvider(stripeInstance, config.stripe.webhookSecret);
+    const billingDeps = { db, billingProvider, proPriceId: config.stripe.proPriceId };
+    const createCheckoutSessionUc = new CreateCheckoutSession(billingDeps);
+    const handleStripeWebhookUc = new HandleStripeWebhook(billingDeps);
+    const getBillingPortalUc = new GetBillingPortal(billingDeps);
+    const getUsageSummaryUc = new GetUsageSummary({ db });
+    billingRouteDeps = {
+      authMiddleware: (_req, _res, next) => next(), // overridden by mountInboundHttp
+      createCheckoutSession: createCheckoutSessionUc,
+      handleStripeWebhook: handleStripeWebhookUc,
+      getBillingPortal: getBillingPortalUc,
+      getUsageSummary: getUsageSummaryUc,
+      db,
+    };
+  }
+
   // ---- Express middleware --------------------------------------------
   const httpLogger = pinoHttp({ logger: pinoInstance });
   app.use(httpLogger);
@@ -567,6 +714,9 @@ export function buildContainer(config: Config): Container {
   );
   app.use(express.json());
   app.use(cookieParser());
+  app.use(requestId);
+  app.use(securityHeaders);
+  app.use(inputSanitizer);
 
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -584,12 +734,19 @@ export function buildContainer(config: Config): Container {
 
   app.use('/api/v1', csrfMiddleware);
 
+  // Per-tenant rate limiting (after auth middleware resolves the org).
+  app.use('/api/v1', tenantRateLimit());
+
   // Strict per-IP+email limiter for auth-sensitive endpoints (Req 19.1).
   app.post('/api/v1/auth/login', authRateLimiter);
   app.post('/api/v1/auth/register', authRateLimiter);
   app.post('/api/v1/auth/reset-password', authRateLimiter);
   app.post('/api/v1/auth/resend-verification', authRateLimiter);
   app.post('/api/v1/shared/:linkId/verify', authRateLimiter);
+
+  // Plan-limit checks on annotation creation and project creation.
+  app.post('/api/v1/projects/:id/annotations', createPlanLimitsMiddleware(db, 'annotations'));
+  app.post('/api/v1/projects', createPlanLimitsMiddleware(db, 'projects'));
 
   // ---- Mount inbound HTTP adapter ------------------------------------
   const inboundHttpDeps: InboundHttpDeps = {
@@ -626,6 +783,7 @@ export function buildContainer(config: Config): Container {
       resolvePageUrls,
       buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
       applyRedactionBlur: (buffer, rects) => applyRedactionBlurImpl(buffer, rects),
+      db,
     },
     commentsRoutes: {
       createComment,
@@ -650,6 +808,62 @@ export function buildContainer(config: Config): Container {
       getCurrentUser,
       updateProfile,
       updateNotificationPreferences,
+    },
+    webhooksRoutes: {
+      registerWebhook,
+      deleteWebhook,
+      webhookRepo,
+    },
+    notificationsRoutes: {
+      listUserNotifications,
+      markNotificationRead,
+      userNotificationRepo,
+    },
+    orgRoutes: {
+      inviteToOrg,
+      acceptInvitation,
+      membershipRepo,
+      orgRepo,
+      userRepo,
+      tokenIssuer,
+    },
+    apiKeysRoutes: {
+      apiKeyRepo,
+    },
+    feedbackRoutes: {
+      annotationRepo,
+    },
+    heatmapRoutes: {
+      db,
+    },
+    premiumRoutes: {
+      db,
+    },
+    clientPortalRoutes: {
+      db,
+    },
+    workflowRoutes: {
+      db,
+    },
+    reportingRoutes: {
+      db,
+    },
+    oauthRoutes: Object.keys(oauthProviders).length > 0 ? {
+      oauthLogin,
+      providers: oauthProviders,
+      callbackBaseUrl: config.oauth.callbackBaseUrl,
+      appUrl: config.appUrl,
+      cookieInsecure: config.cookieInsecure,
+    } : undefined,
+    billingRoutes: billingRouteDeps ? {
+      createCheckoutSession: billingRouteDeps.createCheckoutSession,
+      handleStripeWebhook: billingRouteDeps.handleStripeWebhook,
+      getBillingPortal: billingRouteDeps.getBillingPortal,
+      getUsageSummary: billingRouteDeps.getUsageSummary,
+      db,
+    } : undefined,
+    integrationsRoutes: {
+      integrationRepo,
     },
   };
   mountInboundHttp(app, inboundHttpDeps);
@@ -703,6 +917,23 @@ export function buildContainer(config: Config): Container {
     batchSize: config.notificationBatchSize,
   });
 
+  // ---- Digest worker (feature-flagged) --------------------------------
+  let digestWorker: DigestWorker | null = null;
+  if (config.digestEnabled) {
+    digestWorker = createDigestWorker({
+      db,
+      notificationQueue,
+      generateDailyDigest,
+      logger,
+    });
+  }
+
+  // ---- Integration refresh worker (feature-flagged on integrations) ---
+  const integrationRefreshWorker: IntegrationRefreshWorker = createIntegrationRefreshWorker({
+    db,
+    logger,
+  });
+
   // ---- Lifecycle ------------------------------------------------------
   let started = false;
   let stopped = false;
@@ -725,12 +956,16 @@ export function buildContainer(config: Config): Container {
       httpServer.listen(config.port);
     });
     worker.start();
+    digestWorker?.start();
+    integrationRefreshWorker.start();
   };
 
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
     await worker.stop();
+    if (digestWorker) await digestWorker.stop();
+    await integrationRefreshWorker.stop();
     await new Promise<void>((resolve) => {
       io.close(() => resolve());
     });
@@ -747,6 +982,8 @@ export function buildContainer(config: Config): Container {
     io,
     db,
     worker,
+    notificationTriggers,
+    runDailyDigest: (orgId: string) => generateDailyDigest(db, orgId),
     start,
     stop,
   };

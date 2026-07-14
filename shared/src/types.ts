@@ -164,6 +164,12 @@ export interface Annotation {
    * dashboard's ReplayPlayer component.
    */
   sessionReplay?: ReplayEvent[] | null;
+  /** Whether this annotation was submitted by a guest (no account). */
+  isGuest?: boolean;
+  /** Display name of the guest submitter. */
+  guestName?: string | null;
+  /** Optional email of the guest submitter. */
+  guestEmail?: string | null;
 }
 
 export interface Comment {
@@ -235,6 +241,8 @@ export interface SharedLink {
   /** ISO 8601; set after 3 failed attempts. `null` clears the lock. */
   lockedUntil?: string | null;
   failedAttempts: number;
+  /** Whether guests can submit feedback through this shared link. */
+  allowFeedback: boolean;
 }
 
 /** Discriminated payload for a queued Notification (Req 28). */
@@ -358,4 +366,18 @@ export interface ReplayEvent {
   type: 'mousemove' | 'click' | 'scroll' | 'input' | 'mutation' | 'resize';
   timestamp: number;
   data: unknown;
+}
+
+// --- Activity Feed ---
+
+export interface ActivityEvent {
+  id: string;
+  projectId: string;
+  actorId: string;
+  actorName?: string;
+  action: string;
+  resourceType: string;
+  resourceId?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }

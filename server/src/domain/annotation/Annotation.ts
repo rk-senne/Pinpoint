@@ -55,6 +55,12 @@ export interface Annotation {
   capturedNetwork?: CapturedNetworkEntry[] | null;
   /** Client-supplied UUID for offline-replay idempotency (Req 44.3). */
   clientRequestId?: string;
+  /** Whether this annotation was submitted by a guest (no account). */
+  isGuest?: boolean;
+  /** Display name of the guest submitter. */
+  guestName?: string | null;
+  /** Optional email of the guest submitter. */
+  guestEmail?: string | null;
 }
 
 /** Patch shape passed to `AnnotationRepo.update`. */
@@ -85,4 +91,10 @@ export interface NewAnnotation {
   capturedConsole?: CapturedConsoleEntry[] | null;
   capturedNetwork?: CapturedNetworkEntry[] | null;
   clientRequestId?: string;
+  /** Whether this annotation was submitted by a guest (no account). */
+  isGuest?: boolean;
+  /** Display name of the guest submitter. */
+  guestName?: string | null;
+  /** Optional email of the guest submitter. */
+  guestEmail?: string | null;
 }

@@ -47,6 +47,9 @@ interface AnnotationRow {
   captured_console: unknown;
   captured_network: unknown;
   client_request_id: string | null;
+  is_guest: boolean;
+  guest_name: string | null;
+  guest_email: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -81,6 +84,9 @@ export class PgAnnotationRepo implements AnnotationRepo {
         input.capturedNetwork === null ? null : JSON.stringify(input.capturedNetwork);
     }
     if (input.clientRequestId !== undefined) row.client_request_id = input.clientRequestId;
+    if (input.isGuest) row.is_guest = true;
+    if (input.guestName !== undefined) row.guest_name = input.guestName;
+    if (input.guestEmail !== undefined) row.guest_email = input.guestEmail;
 
     const [created] = await this.db<AnnotationRow>('annotations')
       .insert(row)
@@ -203,6 +209,9 @@ export class PgAnnotationRepo implements AnnotationRepo {
           : (parseJsonb<CapturedNetworkEntry[]>(row.captured_network) as CapturedNetworkEntry[]);
     }
     if (row.client_request_id) result.clientRequestId = row.client_request_id;
+    if (row.is_guest) result.isGuest = true;
+    if (row.guest_name) result.guestName = row.guest_name;
+    if (row.guest_email) result.guestEmail = row.guest_email;
 
     return result;
   }

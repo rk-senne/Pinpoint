@@ -27,6 +27,7 @@
 import type { Project } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
+import { createCardSkeleton } from '../components/Skeleton';
 import {
   attr,
   bind,
@@ -76,6 +77,7 @@ export function mountDashboardHome(
   const recentSection = requireSection(contentRoot, 'recent');
   const recentList = requireRole(contentRoot, 'recent-list');
   const cardsGrid = requireRole(contentRoot, 'cards-grid');
+  const loadingSection = requireRole(contentRoot, 'home-loading');
   const listBtn = contentRoot.querySelector<HTMLButtonElement>('[data-action="selectList"]');
   const cardsBtn = contentRoot.querySelector<HTMLButtonElement>('[data-action="selectCards"]');
 
@@ -123,12 +125,19 @@ export function mountDashboardHome(
     rerender();
   });
 
+  // Re-render when the loaded flag transitions so the skeleton is
+  // replaced by the real empty state once projects have been fetched.
+  const unbindLoaded = projectsStore.loaded.subscribe(() => {
+    rerender();
+  });
+
   // Compose the shell: the layout owns the chrome (header, sidebar,
   // logout), the home page owns the content slot.
   const teardownLayout = mountAppLayout(rootEl, contentRoot);
 
   return () => {
     unbindRecent();
+    unbindLoaded();
     cleanupEvents();
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
@@ -149,6 +158,25 @@ export function mountDashboardHome(
     rowCleanups = [];
     recentList.replaceChildren();
     cardsGrid.replaceChildren();
+
+    // Show skeleton cards while the project list is still loading.
+    if (!projectsStore.loaded.get()) {
+      loadingSection.hidden = false;
+      loadingSection.replaceChildren();
+      const grid = document.createElement('div');
+      grid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;';
+      for (let i = 0; i < 3; i++) {
+        grid.appendChild(createCardSkeleton());
+      }
+      loadingSection.appendChild(grid);
+      emptySection.hidden = true;
+      recentSection.hidden = true;
+      return;
+    }
+
+    // Data has loaded — hide the skeleton and show the real state.
+    loadingSection.hidden = true;
+    loadingSection.replaceChildren();
 
     if (active.length === 0) {
       emptySection.hidden = false;

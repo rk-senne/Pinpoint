@@ -38,6 +38,7 @@ const TEMPLATES: Record<string, string> = {
   'tpl-dashboard-home': `
     <div data-role="root">
       <h1>Dashboard</h1>
+      <div data-role="home-loading" hidden></div>
       <div data-role="view-toggle">
         <button data-action="selectList">List</button>
         <button data-action="selectCards">Cards</button>
@@ -218,6 +219,7 @@ describe('mountDashboardHome', () => {
     document.body.appendChild(root);
 
     mountDashboardHome(root);
+    loadProjects([]); // Trigger loaded state so skeleton is replaced
 
     const empty = root.querySelector('[data-section="empty"]') as HTMLElement;
     const recent = root.querySelector('[data-section="recent"]') as HTMLElement;
@@ -292,6 +294,7 @@ describe('mountDashboardHome', () => {
     document.body.appendChild(root);
 
     mountDashboardHome(root);
+    loadProjects([]); // Trigger loaded state
 
     // Initially empty.
     expect(

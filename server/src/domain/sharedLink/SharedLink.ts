@@ -14,15 +14,19 @@ export interface SharedLink {
   /** Set after MAX_FAILED_ATTEMPTS consecutive failures. */
   lockedUntil?: string | null;
   failedAttempts: number;
+  /** Whether guests can submit feedback through this shared link. */
+  allowFeedback: boolean;
 }
 
 export interface NewSharedLink {
   projectId: string;
   passwordHash?: string | null;
+  allowFeedback?: boolean;
 }
 
 export interface SharedLinkPatch {
   passwordHash?: string | null;
   failedAttempts?: number;
   lockedUntil?: string | null;
+  allowFeedback?: boolean;
 }

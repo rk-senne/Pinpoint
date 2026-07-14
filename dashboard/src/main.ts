@@ -4,8 +4,11 @@
 // `lib/router.ts`. React, ReactDOM, and react-router-dom have been removed
 // along with the legacy `App.tsx` fallback.
 
+import './styles/theme.css';
 import './styles/a11y.css';
 import './styles/responsive.css';
+import './styles/skeleton.css';
+import './styles/toast.css';
 import { themeCss } from '@pinpoint/shared';
 import { defineRoute, setFallback, start } from './lib/router';
 import { mountAuthPage } from './pages/AuthPage';
@@ -20,6 +23,8 @@ import { mountOnboardingWizard } from './pages/OnboardingWizard';
 import { mountReportingPage } from './pages/ReportingPage';
 import { mountWorkflowsPage } from './pages/WorkflowsPage';
 import { mountIntegrationsPage } from './pages/IntegrationsPage';
+import { mountCommandPalette } from './components/CommandPalette';
+import { initToastContainer } from './components/Toast';
 
 // Populate the `<style id="fl-theme">` tag declared in `index.html` with the
 // shared Severity_Colors / Status_Labels custom properties (Requirement 26.3,
@@ -30,6 +35,18 @@ if (themeStyle && !themeStyle.textContent) {
   themeStyle.textContent = themeCss();
 }
 
+
+// Apply the user's stored theme preference (B5 Dark Mode). If the user
+// previously selected 'light' or 'dark' explicitly, we honour that choice
+// by setting `data-theme` on `<html>`. If 'system' (or no value), we remove
+// the attribute so the CSS `@media (prefers-color-scheme: dark)` rule takes
+// effect naturally.
+const storedTheme = localStorage.getItem('pp-theme');
+if (storedTheme === 'light' || storedTheme === 'dark') {
+  document.documentElement.setAttribute('data-theme', storedTheme);
+} else {
+  document.documentElement.removeAttribute('data-theme');
+}
 const root = document.getElementById('root');
 if (!root) {
   throw new Error('Dashboard root element (#root) not found in index.html');
@@ -52,3 +69,11 @@ defineRoute('/integrations', mountIntegrationsPage);
 defineRoute('/portals', mountClientPortalPage);
 setFallback(mountNotFoundPage);
 start(root);
+
+// Mount the global command palette (Ctrl+K / Cmd+K) — always available
+// regardless of route.
+mountCommandPalette(document.body);
+
+// Initialize the toast notification container (B6). Always available so any
+// page or module can fire feedback toasts via `showToast()`.
+initToastContainer();

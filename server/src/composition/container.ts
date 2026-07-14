@@ -173,6 +173,7 @@ import {
 } from '../adapters/outbound/s3/S3ScreenshotStore.js';
 import { NodemailerMailer } from '../adapters/outbound/smtp/NodemailerMailer.js';
 import { SocketIoEventBus } from '../adapters/outbound/socket/SocketIoEventBus.js';
+import { WebhookDispatchingEventBus } from '../adapters/outbound/socket/WebhookDispatchingEventBus.js';
 import { BcryptPasswordHasher } from '../adapters/outbound/bcrypt/BcryptPasswordHasher.js';
 import { GoogleOAuthProvider } from '../adapters/outbound/oauth/GoogleOAuthProvider.js';
 import { GitHubOAuthProvider } from '../adapters/outbound/oauth/GitHubOAuthProvider.js';
@@ -472,7 +473,12 @@ export function buildContainer(config: Config): Container {
   // TODO: When REDIS_URL is set and the `@socket.io/redis-adapter` package is
   // installed, call `io.adapter(createAdapter(pubClient, subClient))` here to
   // enable multi-instance WebSocket broadcasting.
-  const eventBus = new SocketIoEventBus(io);
+  const socketEventBus = new SocketIoEventBus(io);
+
+  // Wrap the Socket.IO bus with webhook dispatch + activity recording.
+  // DispatchWebhook only needs webhookRepo which is already available.
+  const dispatchWebhook = new DispatchWebhook({ webhookRepo });
+  const eventBus = new WebhookDispatchingEventBus(socketEventBus, dispatchWebhook, logger, db);
 
   // ---- Helper closures ------------------------------------------------
   const runInTransaction = async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
@@ -677,7 +683,6 @@ export function buildContainer(config: Config): Container {
   });
 
   const registerWebhook = new RegisterWebhook({ webhookRepo });
-  const dispatchWebhook = new DispatchWebhook({ webhookRepo });
   const deleteWebhook = new DeleteWebhook({ webhookRepo });
   const listUserNotifications = new ListUserNotifications({ userNotificationRepo });
   const markNotificationRead = new MarkNotificationRead({ userNotificationRepo });
@@ -882,6 +887,17 @@ export function buildContainer(config: Config): Container {
     } : undefined,
     integrationsRoutes: {
       integrationRepo,
+    },
+    guestFeedbackRoutes: {
+      annotationRepo,
+      sharedLinkRepo,
+      pageRepo,
+    },
+    activityRoutes: {
+      db,
+    },
+    bulkRoutes: {
+      db,
     },
   };
   mountInboundHttp(app, inboundHttpDeps);

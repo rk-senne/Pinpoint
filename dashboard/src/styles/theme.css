@@ -1,0 +1,174 @@
+/* Pinpoint Dashboard — Dark Mode Support (B5)
+ *
+ * Defines CSS custom properties for the dashboard's visual theme. Light mode
+ * values are the defaults (`:root`). Dark mode is activated either by the
+ * system `prefers-color-scheme: dark` media query OR by an explicit
+ * `data-theme="dark"` attribute on `<html>`.
+ *
+ * An explicit `data-theme="light"` on `<html>` overrides the system dark
+ * preference, keeping the light palette even when the OS is in dark mode.
+ */
+
+/* Apply base colors to body so the page background/text respond to theme */
+body {
+  background-color: var(--pp-bg-primary);
+  color: var(--pp-text-primary);
+}
+
+:root {
+  /* Backgrounds */
+  --pp-bg-primary: #ffffff;
+  --pp-bg-secondary: #fafafa;
+  --pp-bg-tertiary: #f3f4f6;
+  --pp-bg-page: #f5f5f5;
+  --pp-bg-hover: #f9fafb;
+
+  /* Text */
+  --pp-text-primary: #1a1a1a;
+  --pp-text-secondary: #6b7280;
+  --pp-text-tertiary: #888888;
+  --pp-text-heading: #374151;
+
+  /* Borders */
+  --pp-border: #e5e7eb;
+  --pp-border-light: #f0f0f0;
+  --pp-border-medium: #d1d5db;
+  --pp-border-heavy: #e0e0e0;
+
+  /* Accent / Interactive */
+  --pp-accent: #4f46e5;
+  --pp-accent-hover: #4338ca;
+  --pp-accent-light: #e0e7ff;
+  --pp-accent-text: #4f46e5;
+  --pp-link: #3182ce;
+  --pp-link-alt: #1976d2;
+
+  /* Surfaces (cards, dialogs, dropdowns) */
+  --pp-surface: #ffffff;
+  --pp-surface-raised: #ffffff;
+  --pp-surface-overlay: rgba(0, 0, 0, 0.5);
+  --pp-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --pp-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+  /* Status / Feedback */
+  --pp-error: #dc2626;
+  --pp-error-bg: #fdecea;
+  --pp-error-text: #b71c1c;
+  --pp-success: #16a34a;
+  --pp-warning-bg: #fefcbf;
+  --pp-warning-text: #744210;
+
+  /* Kanban / neutral surface */
+  --pp-kanban-bg: #f7f7f7;
+
+  /* Code / mono */
+  --pp-code-bg: #f7fafc;
+  --pp-code-border: #edf2f7;
+
+  /* Toggle (off state) */
+  --pp-toggle-off: #d1d5db;
+
+  /* Input */
+  --pp-input-border: #d1d5db;
+  --pp-input-bg: #ffffff;
+}
+
+/* ─── Dark mode — system preference ─── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pp-bg-primary: #1a1a2e;
+    --pp-bg-secondary: #16213e;
+    --pp-bg-tertiary: #0f3460;
+    --pp-bg-page: #0f172a;
+    --pp-bg-hover: #1e293b;
+
+    --pp-text-primary: #e2e8f0;
+    --pp-text-secondary: #94a3b8;
+    --pp-text-tertiary: #64748b;
+    --pp-text-heading: #f1f5f9;
+
+    --pp-border: #334155;
+    --pp-border-light: #1e293b;
+    --pp-border-medium: #475569;
+    --pp-border-heavy: #475569;
+
+    --pp-accent: #818cf8;
+    --pp-accent-hover: #6366f1;
+    --pp-accent-light: #312e81;
+    --pp-accent-text: #a5b4fc;
+    --pp-link: #63b3ed;
+    --pp-link-alt: #90cdf4;
+
+    --pp-surface: #1e293b;
+    --pp-surface-raised: #1e293b;
+    --pp-surface-overlay: rgba(0, 0, 0, 0.7);
+    --pp-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    --pp-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+    --pp-error: #f87171;
+    --pp-error-bg: #451a1a;
+    --pp-error-text: #fca5a5;
+    --pp-success: #4ade80;
+    --pp-warning-bg: #422006;
+    --pp-warning-text: #fbbf24;
+
+    --pp-kanban-bg: #1e293b;
+
+    --pp-code-bg: #0f172a;
+    --pp-code-border: #334155;
+
+    --pp-toggle-off: #475569;
+
+    --pp-input-border: #475569;
+    --pp-input-bg: #1e293b;
+  }
+}
+
+/* ─── Dark mode — explicit user override ─── */
+[data-theme="dark"] {
+  --pp-bg-primary: #1a1a2e;
+  --pp-bg-secondary: #16213e;
+  --pp-bg-tertiary: #0f3460;
+  --pp-bg-page: #0f172a;
+  --pp-bg-hover: #1e293b;
+
+  --pp-text-primary: #e2e8f0;
+  --pp-text-secondary: #94a3b8;
+  --pp-text-tertiary: #64748b;
+  --pp-text-heading: #f1f5f9;
+
+  --pp-border: #334155;
+  --pp-border-light: #1e293b;
+  --pp-border-medium: #475569;
+  --pp-border-heavy: #475569;
+
+  --pp-accent: #818cf8;
+  --pp-accent-hover: #6366f1;
+  --pp-accent-light: #312e81;
+  --pp-accent-text: #a5b4fc;
+  --pp-link: #63b3ed;
+  --pp-link-alt: #90cdf4;
+
+  --pp-surface: #1e293b;
+  --pp-surface-raised: #1e293b;
+  --pp-surface-overlay: rgba(0, 0, 0, 0.7);
+  --pp-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --pp-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  --pp-error: #f87171;
+  --pp-error-bg: #451a1a;
+  --pp-error-text: #fca5a5;
+  --pp-success: #4ade80;
+  --pp-warning-bg: #422006;
+  --pp-warning-text: #fbbf24;
+
+  --pp-kanban-bg: #1e293b;
+
+  --pp-code-bg: #0f172a;
+  --pp-code-border: #334155;
+
+  --pp-toggle-off: #475569;
+
+  --pp-input-border: #475569;
+  --pp-input-bg: #1e293b;
+}

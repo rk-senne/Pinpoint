@@ -1,0 +1,97 @@
+/* Skeleton loading state styles (Mission B2).
+ *
+ * Shimmer animation uses a sliding gradient to communicate loading progress.
+ * Respects prefers-reduced-motion and prefers-color-scheme for accessibility.
+ */
+
+.pp-skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: pp-skeleton-shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes pp-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .pp-skeleton {
+    background: linear-gradient(90deg, #2a2a3e 25%, #3a3a4e 50%, #2a2a3e 75%);
+    background-size: 200% 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-skeleton {
+    animation: none;
+  }
+}
+
+/* --- Variant modifiers --- */
+
+.pp-skeleton--text {
+  height: 14px;
+  margin-bottom: 8px;
+}
+
+.pp-skeleton--card {
+  height: 120px;
+  width: 100%;
+}
+
+.pp-skeleton--circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+/* --- Card skeleton container --- */
+
+.pp-skeleton-card {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pp-skeleton-card {
+    border-color: #3a3a4e;
+    background: #1e1e2e;
+  }
+}
+
+/* --- List skeleton container --- */
+
+.pp-skeleton-list__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.pp-skeleton-list__row:last-child {
+  border-bottom: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pp-skeleton-list__row {
+    border-bottom-color: #2a2a3e;
+  }
+}
+
+/* --- Form skeleton container --- */
+
+.pp-skeleton-form__field {
+  margin-bottom: 16px;
+  max-width: 400px;
+}
+
+/* --- Container --- */
+
+.pp-skeleton-container {
+  padding: 4px 0;
+}

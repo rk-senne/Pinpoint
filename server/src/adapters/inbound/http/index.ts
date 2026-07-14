@@ -39,6 +39,9 @@ import { createReportingRoutes, type ReportingRouteDeps } from './reporting.rout
 import { createOAuthRoutes, type OAuthRouteDeps } from './oauth.routes.js';
 import { createBillingRoutes, type BillingRouteDeps } from './billing.routes.js';
 import { createIntegrationsRoutes, type IntegrationsRouteDeps } from './integrations.routes.js';
+import { createGuestFeedbackRoutes, type GuestFeedbackRouteDeps } from './guestFeedback.routes.js';
+import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.js';
+import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
 import { serveApiDocs } from './apiDocs.js';
 
 export {
@@ -86,6 +89,12 @@ export {
   type BillingRouteDeps,
   createIntegrationsRoutes,
   type IntegrationsRouteDeps,
+  createGuestFeedbackRoutes,
+  type GuestFeedbackRouteDeps,
+  createActivityRoutes,
+  type ActivityRouteDeps,
+  createBulkRoutes,
+  type BulkRouteDeps,
   serveApiDocs,
 };
 
@@ -121,6 +130,9 @@ export interface InboundHttpDeps {
   oauthRoutes?: OAuthRouteDeps;
   billingRoutes?: Omit<BillingRouteDeps, 'authMiddleware'>;
   integrationsRoutes?: Omit<IntegrationsRouteDeps, 'authMiddleware'>;
+  guestFeedbackRoutes: GuestFeedbackRouteDeps;
+  activityRoutes: Omit<ActivityRouteDeps, 'authMiddleware'>;
+  bulkRoutes: Omit<BulkRouteDeps, 'authMiddleware'>;
 }
 
 /**
@@ -212,6 +224,11 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   app.use('/api/v1/teams', teamsRouter);
   app.use('/api/v1/projects/:id/share', shareRouter);
   app.use('/api/v1/shared', verifyRouter);
+
+  // Guest feedback route (public, no auth)
+  const guestFeedbackRouter = createGuestFeedbackRoutes(deps.guestFeedbackRoutes);
+  app.use('/api/v1/shared', guestFeedbackRouter);
+
   app.use('/api/v1/guidelines', guidelinesRouter);
   app.use('/api/v1/users', usersRouter);
   app.use('/api/v1/webhooks', webhooksRouter);
@@ -243,4 +260,12 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
     const integrationsRouter = createIntegrationsRoutes({ ...deps.integrationsRoutes, authMiddleware });
     app.use('/api/v1/integrations', integrationsRouter);
   }
+
+  // Bulk actions route
+  const bulkRouter = createBulkRoutes({ ...deps.bulkRoutes, authMiddleware });
+  app.use('/api/v1/projects', bulkRouter);
+
+  // Activity feed route
+  const activityRouter = createActivityRoutes({ ...deps.activityRoutes, authMiddleware });
+  app.use('/api/v1/projects/:id/activity', activityRouter);
 }

@@ -32,6 +32,8 @@ import type { Guideline, NotificationPreferences, User } from '@pinpoint/shared'
 
 import { mountAppLayout } from '../components/AppLayout';
 import { mountTeamManagement, type TeamManagementHandle } from '../components/TeamManagement';
+import { createFormSkeleton } from '../components/Skeleton';
+import { showToast } from '../components/Toast';
 import { apiFetch as defaultApiFetch, fetchCurrentUser } from '../lib/api';
 import {
   attr,
@@ -104,6 +106,10 @@ export function mountSettingsPage(
   // Profile refs.
   const profileLoading = requireRole(contentRoot, 'profile-loading');
   const profileForm = requireRole(contentRoot, 'profile-form') as HTMLFormElement;
+
+  // Replace static "Loading…" text with form-field skeletons.
+  profileLoading.textContent = '';
+  profileLoading.appendChild(createFormSkeleton(3));
   const profileNameInput = requireRole(
     contentRoot,
     'profile-name',
@@ -128,12 +134,20 @@ export function mountSettingsPage(
   const notificationsContent = requireRole(contentRoot, 'notifications-content');
   const notificationsList = requireRole(contentRoot, 'notifications-list');
 
+  // Replace static "Loading…" text with form-field skeletons.
+  notificationsLoading.textContent = '';
+  notificationsLoading.appendChild(createFormSkeleton(4));
+
   // Guidelines refs.
   const guidelinesLoading = requireRole(contentRoot, 'guidelines-loading');
   const guidelinesError = requireRole(contentRoot, 'guidelines-error');
   const guidelinesContent = requireRole(contentRoot, 'guidelines-content');
   const guidelinesEmpty = requireRole(contentRoot, 'guidelines-empty');
   const guidelinesList = requireRole(contentRoot, 'guidelines-list');
+
+  // Replace static "Loading…" text with form-field skeletons.
+  guidelinesLoading.textContent = '';
+  guidelinesLoading.appendChild(createFormSkeleton(2));
   const guidelineForm = requireRole(contentRoot, 'guideline-form') as HTMLFormElement;
   const guidelineNameInput = requireRole(
     contentRoot,
@@ -234,6 +248,7 @@ export function mountSettingsPage(
         }),
       });
       setProfileMessage('Profile updated.', 'success');
+      showToast({ message: 'Profile updated', variant: 'success' });
     } catch (err) {
       setProfileMessage(
         err instanceof Error ? err.message : 'Failed to save.',

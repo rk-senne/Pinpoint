@@ -28,6 +28,7 @@ export interface SharedLinkRouterPair {
 
 const SharePostBodySchema = z.object({
   password: z.string().nullable().optional(),
+  allowFeedback: z.boolean().optional(),
 });
 
 const VerifyBodySchema = z
@@ -60,6 +61,7 @@ export function createSharedLinkRoutes(
       userId: req.user!.userId,
       projectId,
       password: passwordValue,
+      allowFeedback: parsed.data.allowFeedback,
     });
     if (!result.ok) {
       sendDomainError(res, result.error);
@@ -71,6 +73,7 @@ export function createSharedLinkRoutes(
         id: link.id,
         projectId: link.projectId,
         hasPassword: !!link.passwordHash,
+        allowFeedback: link.allowFeedback,
         createdAt: link.createdAt,
       },
     });

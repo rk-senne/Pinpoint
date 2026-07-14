@@ -1,4 +1,5 @@
 import { getCsrfToken } from './auth';
+import { showToast } from '../components/Toast';
 import type { User } from '@pinpoint/shared';
 
 /**
@@ -58,6 +59,7 @@ export async function apiFetch<T>(
     const body = await res.json().catch(() => null);
     const message =
       body?.error?.message || `Request failed with status ${res.status}`;
+    showToast({ message, variant: 'error' });
     throw new Error(message);
   }
 

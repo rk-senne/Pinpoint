@@ -44,6 +44,8 @@ import { SEVERITY_COLORS, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/share
 import { mountAppLayout } from '../components/AppLayout';
 import { mountReplayPlayer } from '../components/ReplayPlayer';
 import { mountHeatmapOverlay } from '../components/HeatmapOverlay';
+import { createListSkeleton } from '../components/Skeleton';
+import { showToast } from '../components/Toast';
 import { apiFetch as defaultApiFetch } from '../lib/api';
 import {
   attr,
@@ -136,6 +138,8 @@ export function mountProjectView(
   const analytics: Signal<Analytics | null> = signal<Analytics | null>(null);
   const selectedAnnotationId: Signal<string | null> = signal<string | null>(null);
   const currentUserId: Signal<string | null> = signal<string | null>(null);
+  /** Bulk selection — set of annotation IDs currently checked. */
+  const selectedIds: Signal<Set<string>> = signal<Set<string>>(new Set());
   /**
    * Co-viewer presence (Reqs 6.6, 6.7). Keyed by annotation id; the value
    * is the list of user ids that the server has reported as currently
@@ -165,6 +169,10 @@ export function mountProjectView(
   const errorMessageEl = contentRoot.querySelector<HTMLElement>(
     '[data-slot="error-message"]',
   )!;
+
+  // Populate loading section with skeleton list instead of plain text.
+  loadingSection.textContent = '';
+  loadingSection.appendChild(createListSkeleton(5));
   const contentSection = requireSection(contentRoot, 'content');
   const projectTitleEl = contentRoot.querySelector<HTMLElement>(
     '[data-slot="project-title"]',
@@ -186,6 +194,9 @@ export function mountProjectView(
   const listBody = contentRoot.querySelector<HTMLElement>('[data-role="list-body"]')!;
   const kanbanSection = requireSection(contentRoot, 'kanban');
   const detailSection = requireSection(contentRoot, 'detail');
+  const bulkActionsBar = contentRoot.querySelector<HTMLElement>('[data-role="bulk-actions"]')!;
+  const bulkCountEl = contentRoot.querySelector<HTMLElement>('[data-role="bulk-count"]')!;
+  const selectAllCheckbox = contentRoot.querySelector<HTMLInputElement>('[data-role="select-all"]')!;
 
   // Per-render row listener cleanups. Cleared on every rerender so detached
   // rows can be GC'd; otherwise the closures capturing each row would keep
@@ -232,6 +243,12 @@ export function mountProjectView(
         heatmapContainer.setAttribute('hidden', '');
         heatmapContainer.replaceChildren();
       }
+    },
+    'bulk-resolve': () => void executeBulkAction('resolve'),
+    'bulk-in-progress': () => void executeBulkAction('in_progress'),
+    'bulk-delete': () => void executeBulkAction('delete'),
+    'bulk-clear': () => {
+      selectedIds.set(new Set());
     },
   });
 
@@ -369,6 +386,40 @@ export function mountProjectView(
       renderDetail();
     }),
   );
+
+  // Bulk selection — show/hide actions bar and update count.
+  unsubs.push(
+    selectedIds.subscribe((ids) => {
+      const count = ids.size;
+      toggleHidden(bulkActionsBar, count === 0);
+      if (bulkCountEl) {
+        text(bulkCountEl, count > 0 ? `${count} selected` : '');
+      }
+      // Sync select-all checkbox state
+      const annotations = currentAnnotationsStore.list.get();
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = annotations.length > 0 && count === annotations.length;
+        selectAllCheckbox.indeterminate = count > 0 && count < annotations.length;
+      }
+      // Sync row checkboxes
+      const checkboxes = listBody.querySelectorAll<HTMLInputElement>('[data-role="row-checkbox"]');
+      for (const cb of Array.from(checkboxes)) {
+        const rowId = cb.getAttribute('data-annotation-id') ?? '';
+        cb.checked = ids.has(rowId);
+      }
+    }),
+  );
+
+  // Wire select-all checkbox
+  const onSelectAll = (): void => {
+    if (selectAllCheckbox.checked) {
+      const allIds = new Set(currentAnnotationsStore.list.get().map((a) => a.id));
+      selectedIds.set(allIds);
+    } else {
+      selectedIds.set(new Set());
+    }
+  };
+  selectAllCheckbox.addEventListener('change', onSelectAll);
   unsubs.push(
     viewersByAnnotation.subscribe(() => {
       renderCoViewers();
@@ -476,6 +527,7 @@ export function mountProjectView(
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
     if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+    selectAllCheckbox.removeEventListener('change', onSelectAll);
     cleanupEvents();
     teardownLayout();
     contentRoot.remove();
@@ -560,9 +612,16 @@ export function mountProjectView(
           },
         });
       }
+      showToast({
+        message: newStatus === 'resolved'
+          ? 'Annotation resolved'
+          : `Status changed to ${STATUS_LABELS[newStatus as StatusKey] ?? newStatus}`,
+        variant: 'success',
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update status';
       errorMessage.set(message);
+      showToast({ message, variant: 'error' });
     }
   }
 
@@ -590,6 +649,23 @@ export function mountProjectView(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update annotation';
+      errorMessage.set(message);
+    }
+  }
+
+  async function executeBulkAction(action: 'resolve' | 'in_progress' | 'delete'): Promise<void> {
+    const ids = Array.from(selectedIds.get());
+    if (ids.length === 0) return;
+    try {
+      await apiFetch(`/projects/${projectId}/annotations/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ ids, action }),
+      });
+      // Clear selection and refresh data
+      selectedIds.set(new Set());
+      await fetchData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Bulk action failed';
       errorMessage.set(message);
     }
   }
@@ -657,6 +733,24 @@ export function mountProjectView(
           'style',
           `font-weight: 500; color: ${SEVERITY_COLORS[a.severity as SeverityKey] ?? '#333'};`,
         );
+      }
+      // Wire row checkbox for bulk selection
+      const rowCheckbox = row.querySelector<HTMLInputElement>('[data-role="row-checkbox"]');
+      if (rowCheckbox) {
+        rowCheckbox.setAttribute('data-annotation-id', a.id);
+        rowCheckbox.checked = selectedIds.get().has(a.id);
+        const onCheck = (e: Event): void => {
+          e.stopPropagation();
+          const next = new Set(selectedIds.get());
+          if (rowCheckbox.checked) {
+            next.add(a.id);
+          } else {
+            next.delete(a.id);
+          }
+          selectedIds.set(next);
+        };
+        rowCheckbox.addEventListener('change', onCheck);
+        rowCleanups.push(() => rowCheckbox.removeEventListener('change', onCheck));
       }
       const onClick = (): void => {
         selectedAnnotationId.set(a.id);

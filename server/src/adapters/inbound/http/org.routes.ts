@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { z } from 'zod';
 import type { Knex } from 'knex';
 import type { InviteToOrg } from '../../../domain/org/usecases/inviteToOrg.js';
 import type { AcceptInvitation } from '../../../domain/org/usecases/acceptInvitation.js';
@@ -6,8 +7,30 @@ import type { MembershipRepo } from '../../../domain/auth/ports/MembershipRepo.j
 import type { OrgRepo } from '../../../domain/org/ports/OrgRepo.js';
 import type { UserRepo } from '../../../domain/user/ports/UserRepo.js';
 import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
-import { sendDomainError } from './errors.js';
+import { sendDomainError, sendZodFailure, validateUuidParam } from './errors.js';
 import { recordAudit } from './auditLog.routes.js';
+
+// --- Zod schemas for org route inputs ---
+
+const UpdateOrgSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  slug: z.string().regex(/^[a-z0-9-]+$/, 'slug must be lowercase alphanumeric with hyphens').min(2).max(50).optional(),
+}).refine(data => data.name !== undefined || data.slug !== undefined, {
+  message: 'At least one of name or slug must be provided',
+});
+
+const UpdateMemberRoleSchema = z.object({
+  role: z.enum(['owner', 'admin', 'member', 'viewer']),
+});
+
+const SwitchOrgSchema = z.object({
+  orgId: z.string().uuid(),
+});
+
+const CreateInvitationSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(['owner', 'admin', 'member', 'viewer']),
+});
 
 export interface OrgRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -36,7 +59,9 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     if (req.user!.role !== 'owner' && req.user!.role !== 'admin') {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
-    const { name, slug } = req.body;
+    const parsed = UpdateOrgSchema.safeParse(req.body);
+    if (!parsed.success) return sendZodFailure(res, 'Invalid org update.', parsed.error.flatten());
+    const { name, slug } = parsed.data;
     const org = await orgRepo.update(req.user!.orgId, { name, slug });
     await recordAudit(db, {
       orgId: req.user!.orgId,
@@ -61,6 +86,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
     const userId = req.params.userId as string;
+    if (!validateUuidParam(res, 'userId', userId)) return;
     if (userId === req.user!.userId) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Cannot remove yourself.' } });
     }
@@ -73,11 +99,11 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     if (req.user!.role !== 'owner') {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Only owners can change roles.' } });
     }
-    const { role } = req.body;
-    if (!role || !['owner', 'admin', 'member', 'viewer'].includes(role)) {
-      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Invalid role.' } });
-    }
     const userId = req.params.userId as string;
+    if (!validateUuidParam(res, 'userId', userId)) return;
+    const parsed = UpdateMemberRoleSchema.safeParse(req.body);
+    if (!parsed.success) return sendZodFailure(res, 'Invalid role.', parsed.error.flatten());
+    const { role } = parsed.data;
     await membershipRepo.updateRole(req.user!.orgId, userId, role);
     await recordAudit(db, {
       orgId: req.user!.orgId,
@@ -92,12 +118,14 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
 
   // POST /api/v1/org/invitations — send invitation
   router.post('/invitations', authMiddleware, async (req: Request, res: Response) => {
+    const parsed = CreateInvitationSchema.safeParse(req.body);
+    if (!parsed.success) return sendZodFailure(res, 'Invalid invitation.', parsed.error.flatten());
     const result = await inviteToOrg.execute({
       actorUserId: req.user!.userId,
       actorRole: req.user!.role,
       orgId: req.user!.orgId,
-      email: req.body.email,
-      role: req.body.role,
+      email: parsed.data.email,
+      role: parsed.data.role,
     });
     if (!result.ok) return sendDomainError(res, result.error);
     res.status(201).json(result.value);
@@ -115,8 +143,9 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
 
   // POST /api/v1/org/switch — switch active org, re-issue JWT
   router.post('/switch', authMiddleware, async (req: Request, res: Response) => {
-    const { orgId } = req.body;
-    if (!orgId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'orgId is required.' } });
+    const parsed = SwitchOrgSchema.safeParse(req.body);
+    if (!parsed.success) return sendZodFailure(res, 'Invalid switch request.', parsed.error.flatten());
+    const { orgId } = parsed.data;
 
     const membership = await membershipRepo.findByOrgAndUser(orgId, req.user!.userId);
     if (!membership) {

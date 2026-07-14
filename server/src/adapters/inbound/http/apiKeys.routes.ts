@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { createHash, randomBytes } from 'node:crypto';
 import type { Knex } from 'knex';
 import type { ApiKeyRepo } from '../../../domain/org/ports/ApiKeyRepo.js';
+import { validateUuidParam } from './errors.js';
 import { recordAudit } from './auditLog.routes.js';
 
 export interface ApiKeyRouteDeps {
@@ -62,6 +63,7 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
     if (req.user!.role !== 'owner' && req.user!.role !== 'admin') {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
+    if (!validateUuidParam(res, 'id', req.params.id as string)) return;
     await apiKeyRepo.revoke(req.params.id as string);
     await recordAudit(db, {
       orgId: req.user!.orgId,

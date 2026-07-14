@@ -10,6 +10,7 @@ import './styles/accessibility.css';
 import './styles/responsive.css';
 import './styles/skeleton.css';
 import './styles/toast.css';
+import './styles/empty-state.css';
 import { themeCss } from '@pinpoint/shared';
 import { defineRoute, setFallback, start } from './lib/router';
 import { mountAuthPage } from './pages/AuthPage';

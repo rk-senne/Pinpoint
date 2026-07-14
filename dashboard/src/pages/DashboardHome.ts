@@ -27,6 +27,7 @@
 import type { Project } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
+import { createEmptyState } from '../components/EmptyState';
 import { createCardSkeleton } from '../components/Skeleton';
 import {
   attr,
@@ -180,6 +181,8 @@ export function mountDashboardHome(
 
     if (active.length === 0) {
       emptySection.hidden = false;
+      // Replace template empty-state content with the rich EmptyState component
+      emptySection.replaceChildren(createEmptyState('no-projects'));
       recentSection.hidden = true;
       return;
     }

@@ -50,6 +50,16 @@ services:
     command: ["npm", "run", "migrate"]
     restart: "no"
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
   api:
     build:
       context: .
@@ -58,6 +68,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -69,6 +81,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4173}
       APP_URL: ${APP_URL:-http://localhost:4173}
       NODE_ENV: development
+      REDIS_URL: redis://redis:6379
     ports:
       - "3001:3001"
 

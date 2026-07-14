@@ -158,3 +158,17 @@ export function paramString(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? '';
   return '';
 }
+
+/**
+ * Validate that a route parameter value is a well-formed UUID.
+ * Returns `true` if valid, `false` (after sending 400) if invalid.
+ * Use as an early guard in handlers that accept UUID path params.
+ */
+export function validateUuidParam(res: Response, paramName: string, value: string): boolean {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(value)) {
+    res.status(400).json({ error: { code: 'VALIDATION', message: `${paramName} must be a valid UUID`, details: {} } });
+    return false;
+  }
+  return true;
+}

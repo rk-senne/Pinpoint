@@ -389,7 +389,15 @@ export function buildContainer(config: Config): Container {
       user: config.db.user,
       password: config.db.password,
     },
-    pool: { min: config.db.poolMin, max: config.db.poolMax },
+    pool: {
+      min: config.db.poolMin,
+      max: config.db.poolMax,
+      afterCreate: (conn: unknown, done: (err: Error | null, conn: unknown) => void) => {
+        (conn as { query: (sql: string, cb: (err: Error | null, conn: unknown) => void) => void })
+          .query('SET statement_timeout = 30000', (err) => done(err, conn));
+      },
+    },
+    acquireConnectionTimeout: 10000,
   });
 
   const s3ClientConfig: ConstructorParameters<typeof S3Client>[0] = {
@@ -921,7 +929,15 @@ export function buildContainer(config: Config): Container {
     } catch {
       checks.database = 'error';
     }
-    const allOk = Object.values(checks).every((v) => v === 'ok');
+
+    // Redis health check.
+    // TODO: When ioredis is added as a dependency, replace this with an
+    // actual PING check against the Redis instance:
+    //   const redis = new Redis(config.redisUrl);
+    //   await redis.ping(); // checks.redis = 'ok'
+    checks.redis = config.redisUrl ? 'configured' : 'not_configured';
+
+    const allOk = Object.values(checks).every((v) => v === 'ok' || v === 'configured' || v === 'not_configured');
     res.status(allOk ? 200 : 503).json({ status: allOk ? 'ok' : 'degraded', checks, uptime: process.uptime() });
   });
   app.get('/health', async (_req, res) => {

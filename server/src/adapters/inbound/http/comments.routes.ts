@@ -6,6 +6,9 @@
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
+import type { Knex } from 'knex';
+
+import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
 
 import type { CreateComment } from '../../../domain/comment/usecases/createComment.js';
 import type { ListComments } from '../../../domain/comment/usecases/listComments.js';
@@ -18,6 +21,7 @@ export interface CommentsRouteDeps {
   listComments: ListComments;
   createUserNotification?: CreateUserNotification;
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
+  db: Knex;
 }
 
 const CommentBodySchema = z.object({
@@ -39,7 +43,7 @@ function formatComment(c: Comment): Record<string, unknown> {
 }
 
 export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
-  const { createComment, listComments, createUserNotification, authMiddleware } = deps;
+  const { createComment, listComments, createUserNotification, authMiddleware, db } = deps;
 
   const router = Router({ mergeParams: true });
   router.use(authMiddleware);
@@ -99,13 +103,41 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
 
   router.get('/', async (req: Request, res: Response) => {
     const annotationId = paramString((req.params as { id?: string | string[] }).id);
+
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
+    // Verify annotation exists via the use case's validation
     const result = await listComments.execute({ annotationId });
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
     }
+
+    const [{ count: total }] = await db('comments')
+      .where('annotation_id', annotationId)
+      .count('* as count');
+
+    const rows = await db('comments')
+      .where('annotation_id', annotationId)
+      .orderBy('created_at', 'asc')
+      .limit(pageSize)
+      .offset(offset);
+
+    const comments: Comment[] = rows.map((r: any) => ({
+      id: r.id,
+      annotationId: r.annotation_id,
+      authorId: r.author_id,
+      body: r.body,
+      mentions: r.mentions ?? [],
+      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+      ...(r.client_request_id ? { clientRequestId: r.client_request_id } : {}),
+    }));
+
     res.status(200).json({
-      comments: result.value.comments.map(formatComment),
+      data: comments.map(formatComment),
+      pagination: paginationMeta(Number(total), page, pageSize),
     });
   });
 

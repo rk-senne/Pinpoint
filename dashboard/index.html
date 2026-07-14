@@ -15,7 +15,7 @@
     <style id="fl-theme"></style>
   </head>
   <body>
-    <a href="#root" class="skip-to-main">Skip to main content</a>
+    <a href="#main-content" class="pp-skip-link">Skip to content</a>
     <div id="root"></div>
 
     <!--
@@ -54,8 +54,8 @@
           </div>
         </header>
         <div class="fl-app-layout__body" style="display: flex; flex: 1; min-height: 0;">
-          <aside data-slot="sidebar" style="width: 260px; border-right: 1px solid var(--pp-border); background: var(--pp-bg-secondary); overflow-y: auto;"></aside>
-          <main data-slot="content" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
+          <aside data-slot="sidebar" role="navigation" aria-label="Main navigation" style="width: 260px; border-right: 1px solid var(--pp-border); background: var(--pp-bg-secondary); overflow-y: auto;"></aside>
+          <main data-slot="content" id="main-content" role="main" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
         </div>
       </div>
     </template>
@@ -86,6 +86,7 @@
           data-action="input:search"
           data-role="search"
           placeholder="Search projects"
+          aria-label="Search projects"
           style="width: 100%; padding: 6px 8px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px;"
         />
         <div data-role="list" style="flex: 1; overflow-y: auto;"></div>

@@ -796,6 +796,7 @@ export function buildContainer(config: Config): Container {
       resolveProjectByUrl,
       exportProjectReport,
       computeAnalytics,
+      db,
     },
     annotationsRoutes: {
       createAnnotation,
@@ -812,6 +813,7 @@ export function buildContainer(config: Config): Container {
     commentsRoutes: {
       createComment,
       listComments,
+      db,
     },
     teamsRoutes: {
       createTeam,
@@ -819,6 +821,7 @@ export function buildContainer(config: Config): Container {
       inviteMember,
       updateMemberRole,
       removeMember,
+      db,
     },
     sharedLinkRoutes: {
       createSharedLink,
@@ -837,6 +840,7 @@ export function buildContainer(config: Config): Container {
       registerWebhook,
       deleteWebhook,
       webhookRepo,
+      db,
     },
     notificationsRoutes: {
       listUserNotifications,
@@ -850,9 +854,11 @@ export function buildContainer(config: Config): Container {
       orgRepo,
       userRepo,
       tokenIssuer,
+      db,
     },
     apiKeysRoutes: {
       apiKeyRepo,
+      db,
     },
     feedbackRoutes: {
       annotationRepo,
@@ -898,6 +904,9 @@ export function buildContainer(config: Config): Container {
       db,
     },
     bulkRoutes: {
+      db,
+    },
+    auditLogRoutes: {
       db,
     },
   };

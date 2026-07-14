@@ -42,6 +42,7 @@ import { createIntegrationsRoutes, type IntegrationsRouteDeps } from './integrat
 import { createGuestFeedbackRoutes, type GuestFeedbackRouteDeps } from './guestFeedback.routes.js';
 import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.js';
 import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
+import { createAuditLogRoutes, type AuditLogRouteDeps } from './auditLog.routes.js';
 import { serveApiDocs } from './apiDocs.js';
 
 export {
@@ -95,10 +96,13 @@ export {
   type ActivityRouteDeps,
   createBulkRoutes,
   type BulkRouteDeps,
+  createAuditLogRoutes,
+  type AuditLogRouteDeps,
   serveApiDocs,
 };
 
 export { sendDomainError, sendZodFailure } from './errors.js';
+export { recordAudit } from './auditLog.routes.js';
 
 /**
  * Aggregate dependency record consumed by `mountInboundHttp`. Composed
@@ -133,6 +137,7 @@ export interface InboundHttpDeps {
   guestFeedbackRoutes: GuestFeedbackRouteDeps;
   activityRoutes: Omit<ActivityRouteDeps, 'authMiddleware'>;
   bulkRoutes: Omit<BulkRouteDeps, 'authMiddleware'>;
+  auditLogRoutes: Omit<AuditLogRouteDeps, 'authMiddleware'>;
 }
 
 /**
@@ -268,4 +273,8 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   // Activity feed route
   const activityRouter = createActivityRoutes({ ...deps.activityRoutes, authMiddleware });
   app.use('/api/v1/projects/:id/activity', activityRouter);
+
+  // Audit log route (mounted under /org)
+  const auditLogRouter = createAuditLogRoutes({ ...deps.auditLogRoutes, authMiddleware });
+  app.use('/api/v1/org/audit-log', auditLogRouter);
 }

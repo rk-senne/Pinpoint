@@ -39,6 +39,7 @@ export function initToastContainer(): void {
   const container = document.createElement('div');
   container.id = CONTAINER_ID;
   container.className = 'pp-toast-container';
+  container.setAttribute('role', 'status');
   container.setAttribute('aria-live', 'polite');
   container.setAttribute('aria-relevant', 'additions');
   document.body.appendChild(container);

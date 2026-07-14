@@ -183,6 +183,11 @@ export function mountProjectListSidebar(
 
     const onRowClick = (): void => {
       deps.navigate(`/projects/${project.id}`);
+      // Mark this row as the current page for accessibility (aria-current).
+      for (const sibling of listEl.querySelectorAll('[aria-current]')) {
+        sibling.removeAttribute('aria-current');
+      }
+      row.setAttribute('aria-current', 'page');
     };
     const onRowContext = (e: Event): void => {
       e.preventDefault();
@@ -199,6 +204,12 @@ export function mountProjectListSidebar(
     row.addEventListener('contextmenu', onRowContext);
     row.addEventListener('mouseenter', onRowEnter);
     row.addEventListener('mouseleave', onRowLeave);
+
+    // Mark the active row based on the current URL (aria-current="page").
+    if (location.pathname === `/projects/${project.id}`) {
+      row.setAttribute('aria-current', 'page');
+    }
+
     rowCleanups.push(() => {
       row.removeEventListener('click', onRowClick);
       row.removeEventListener('contextmenu', onRowContext);

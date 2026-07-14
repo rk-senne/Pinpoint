@@ -11,6 +11,9 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import type { Knex } from 'knex';
+
+import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
 
 import type { CreateProject } from '../../../domain/project/usecases/createProject.js';
 import type { SearchProjects } from '../../../domain/project/usecases/searchProjects.js';
@@ -24,6 +27,7 @@ import type { ExportProjectReport } from '../../../domain/project/usecases/expor
 import type { ComputeAnalytics } from '../../../domain/analytics/usecases/computeAnalytics.js';
 import type { ProjectStatus } from '../../../domain/project/Project.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
+import { recordAudit } from './auditLog.routes.js';
 
 export interface ProjectsRouteDeps {
   createProject: CreateProject;
@@ -38,6 +42,7 @@ export interface ProjectsRouteDeps {
   computeAnalytics: ComputeAnalytics;
   /** Authenticated middleware injected so route order stays inside the factory. */
   authMiddleware: (req: Request, res: Response, next: import('express').NextFunction) => void;
+  db: Knex;
 }
 
 const CreateProjectBodySchema = z.object({
@@ -90,6 +95,7 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
     exportProjectReport,
     computeAnalytics,
     authMiddleware,
+    db,
   } = deps;
 
   const router = Router();
@@ -143,17 +149,23 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
     const status: ProjectStatus | undefined =
       statusRaw === 'active' || statusRaw === 'archived' ? statusRaw : undefined;
 
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
     const result = await searchProjects.execute({
       userId,
       ...(search !== undefined ? { search } : {}),
       ...(status !== undefined ? { status } : {}),
+      limit: pageSize,
+      offset,
     });
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
     }
     res.status(200).json({
-      projects: result.value.projects.map((p) => ({
+      data: result.value.projects.map((p) => ({
         id: p.id,
         name: p.name,
         urls: p.urls,
@@ -163,6 +175,7 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
       })),
+      pagination: paginationMeta(result.value.total, page, pageSize),
     });
   });
 
@@ -275,6 +288,13 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
       sendDomainError(res, result.error);
       return;
     }
+    await recordAudit(db, {
+      orgId: req.user!.orgId,
+      actorId: req.user!.userId,
+      action: 'project.deleted',
+      resourceType: 'project',
+      resourceId: paramString(req.params.id),
+    });
     res.status(200).json({
       message: 'Project and all associated data deleted successfully.',
     });

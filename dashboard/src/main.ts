@@ -6,6 +6,7 @@
 
 import './styles/theme.css';
 import './styles/a11y.css';
+import './styles/accessibility.css';
 import './styles/responsive.css';
 import './styles/skeleton.css';
 import './styles/toast.css';

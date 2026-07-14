@@ -140,6 +140,19 @@ export class FakeAnnotationRepo implements AnnotationRepo {
     }
     return null;
   }
+
+  async countByProject(
+    projectId: string,
+    filter?: Pick<ListAnnotationsFilter, 'status'>,
+  ): Promise<number> {
+    let count = 0;
+    for (const row of this.annotations.values()) {
+      if (row.projectId !== projectId) continue;
+      if (filter?.status && row.status !== filter.status) continue;
+      count++;
+    }
+    return count;
+  }
 }
 
 function clone(a: Annotation): Annotation {

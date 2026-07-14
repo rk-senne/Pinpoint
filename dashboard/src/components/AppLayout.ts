@@ -45,15 +45,44 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
 
   // Sidebar slot — mount the vanilla `ProjectListSidebar` (task 18.6). It
   // owns its own DOM lifecycle and fetches the project list on mount.
+  //
+  // Accessibility: `aria-current="page"` is set on the active project row
+  // inside `ProjectListSidebar.ts`. On initial render, the row matching
+  // `location.pathname` receives the attribute. On click navigation, the
+  // previous current row's attribute is removed and the clicked row gains it.
+  // This lets assistive technology announce which project is currently active.
   const sidebarSlot = layoutRoot.querySelector<HTMLElement>('[data-slot="sidebar"]');
   let sidebarHandle: { dispose: () => void } | null = null;
+
+  // Backdrop overlay for mobile sidebar (Mission B1). Sits behind the
+  // sidebar in z-index stacking; tapping it closes the sidebar.
+  const backdrop = document.createElement('div');
+  backdrop.className = 'fl-sidebar-backdrop';
+  backdrop.setAttribute('aria-hidden', 'true');
+  layoutRoot.appendChild(backdrop);
+
+  /** Opens the mobile sidebar. */
+  function openSidebar(): void {
+    sidebarSlot?.classList.add('sidebar--open');
+    backdrop.classList.add('fl-sidebar-backdrop--visible');
+  }
+
+  /** Closes the mobile sidebar. */
+  function closeSidebar(): void {
+    sidebarSlot?.classList.remove('sidebar--open');
+    backdrop.classList.remove('fl-sidebar-backdrop--visible');
+  }
+
   if (sidebarSlot) {
     sidebarSlot.replaceChildren();
     sidebarHandle = mountProjectListSidebar(sidebarSlot, {
-      navigate: (path) => navigate(path),
+      navigate: (path) => {
+        closeSidebar();
+        navigate(path);
+      },
     });
 
-    // Mobile hamburger toggle for the sidebar.
+    // Mobile hamburger toggle for the sidebar (Mission B1).
     const header = layoutRoot.querySelector('header');
     if (header) {
       const hamburger = document.createElement('button');
@@ -61,12 +90,20 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
       hamburger.className = 'fl-hamburger';
       hamburger.setAttribute('aria-label', 'Toggle navigation');
       hamburger.textContent = '☰';
-      hamburger.style.display = 'none'; // shown via responsive.css
       hamburger.addEventListener('click', () => {
-        sidebarSlot.classList.toggle('open');
+        if (sidebarSlot.classList.contains('sidebar--open')) {
+          closeSidebar();
+        } else {
+          openSidebar();
+        }
       });
       header.insertBefore(hamburger, header.firstChild);
     }
+
+    // Close sidebar when backdrop is tapped/clicked.
+    backdrop.addEventListener('click', () => {
+      closeSidebar();
+    });
   }
 
   // Content slot — caller-provided node moved into place.

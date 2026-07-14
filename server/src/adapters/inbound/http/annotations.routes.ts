@@ -24,6 +24,8 @@ import {
   DOMTargetSchema,
   EnvironmentMetadataSchema,
   MarkupDocumentSchema,
+  PaginationParamsSchema,
+  paginationMeta,
   SeveritySchema,
 } from '@pinpoint/shared';
 
@@ -269,20 +271,25 @@ export function createAnnotationRoutes(
       statusFilter = statusResult.data;
     }
 
-    // The list path is a thin projection — no domain logic beyond
-    // owner/team-membership scoping (already enforced by future use cases).
-    // Until a `ListAnnotations` use case lands, fall back to the repo
-    // directly and let the composition root layer in access checks via a
-    // wrapper if it wants to.
-    const annotations = await annotationRepo.listByProject(
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
+    const total = await annotationRepo.countByProject(
       projectId,
       statusFilter !== undefined ? { status: statusFilter } : undefined,
     );
+
+    const annotations = await annotationRepo.listByProject(
+      projectId,
+      { ...(statusFilter !== undefined ? { status: statusFilter } : {}), limit: pageSize, offset },
+    );
     const pageUrlByPageId = await resolvePageUrls(annotations, projectId);
     res.status(200).json({
-      annotations: annotations.map((a) =>
+      data: annotations.map((a) =>
         formatAnnotation(a, pageUrlByPageId.get(a.pageId)),
       ),
+      pagination: paginationMeta(total, page, pageSize),
     });
   });
 

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import type { Knex } from 'knex';
 import type { InviteToOrg } from '../../../domain/org/usecases/inviteToOrg.js';
 import type { AcceptInvitation } from '../../../domain/org/usecases/acceptInvitation.js';
 import type { MembershipRepo } from '../../../domain/auth/ports/MembershipRepo.js';
@@ -6,6 +7,7 @@ import type { OrgRepo } from '../../../domain/org/ports/OrgRepo.js';
 import type { UserRepo } from '../../../domain/user/ports/UserRepo.js';
 import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
 import { sendDomainError } from './errors.js';
+import { recordAudit } from './auditLog.routes.js';
 
 export interface OrgRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -15,11 +17,12 @@ export interface OrgRouteDeps {
   orgRepo: OrgRepo;
   userRepo: UserRepo;
   tokenIssuer: TokenIssuer;
+  db: Knex;
 }
 
 export function createOrgRoutes(deps: OrgRouteDeps): Router {
   const router = Router();
-  const { authMiddleware, inviteToOrg, acceptInvitation, membershipRepo, orgRepo, userRepo, tokenIssuer } = deps;
+  const { authMiddleware, inviteToOrg, acceptInvitation, membershipRepo, orgRepo, userRepo, tokenIssuer, db } = deps;
 
   // GET /api/v1/org — current org settings
   router.get('/', authMiddleware, async (req: Request, res: Response) => {
@@ -35,6 +38,14 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     }
     const { name, slug } = req.body;
     const org = await orgRepo.update(req.user!.orgId, { name, slug });
+    await recordAudit(db, {
+      orgId: req.user!.orgId,
+      actorId: req.user!.userId,
+      action: 'org.settings_updated',
+      resourceType: 'org',
+      resourceId: req.user!.orgId,
+      metadata: { name, slug },
+    });
     res.json({ org });
   });
 
@@ -68,6 +79,14 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     }
     const userId = req.params.userId as string;
     await membershipRepo.updateRole(req.user!.orgId, userId, role);
+    await recordAudit(db, {
+      orgId: req.user!.orgId,
+      actorId: req.user!.userId,
+      action: 'member.role_changed',
+      resourceType: 'member',
+      resourceId: userId,
+      metadata: { newRole: role },
+    });
     res.json({ userId, role });
   });
 

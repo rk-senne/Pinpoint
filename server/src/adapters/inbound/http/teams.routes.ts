@@ -5,8 +5,9 @@
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
+import type { Knex } from 'knex';
 
-import { TeamRoleSchema } from '@pinpoint/shared';
+import { PaginationParamsSchema, paginationMeta, TeamRoleSchema } from '@pinpoint/shared';
 
 import type { CreateTeam } from '../../../domain/team/usecases/createTeam.js';
 import type { ListTeams } from '../../../domain/team/usecases/listTeams.js';
@@ -22,6 +23,7 @@ export interface TeamsRouteDeps {
   updateMemberRole: UpdateMemberRole;
   removeMember: RemoveMember;
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
+  db: Knex;
 }
 
 const CreateTeamBodySchema = z.object({
@@ -44,6 +46,7 @@ export function createTeamsRoutes(deps: TeamsRouteDeps): Router {
     updateMemberRole,
     removeMember,
     authMiddleware,
+    db,
   } = deps;
 
   const router = Router();
@@ -76,13 +79,27 @@ export function createTeamsRoutes(deps: TeamsRouteDeps): Router {
 
   // GET /teams -----------------------------------------------------------
   router.get('/', async (req: Request, res: Response) => {
-    const result = await listTeams.execute({ userId: req.user!.userId });
+    const userId = req.user!.userId;
+
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
+    const [{ count: total }] = await db('teams')
+      .join('team_members', 'teams.id', 'team_members.team_id')
+      .where('team_members.user_id', userId)
+      .count('* as count');
+
+    const result = await listTeams.execute({ userId });
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
     }
+
+    const paged = result.value.teams.slice(offset, offset + pageSize);
+
     res.status(200).json({
-      teams: result.value.teams.map((t) => ({
+      data: paged.map((t) => ({
         id: t.id,
         name: t.name,
         ownerId: t.ownerId,
@@ -90,6 +107,7 @@ export function createTeamsRoutes(deps: TeamsRouteDeps): Router {
         role: t.role,
         members: t.members,
       })),
+      pagination: paginationMeta(Number(total), page, pageSize),
     });
   });
 

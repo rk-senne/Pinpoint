@@ -1,11 +1,80 @@
-/* Responsive overrides for the Pinpoint Dashboard. */
+/* ==========================================================================
+ * Pinpoint Dashboard — Responsive Layout (Mission B1)
+ *
+ * Breakpoints:
+ *   - Desktop (default): Full sidebar (260px), 3+ column project cards
+ *   - Tablet (max-width: 1024px): Icon-only sidebar (48px), 2-column cards
+ *   - Mobile (max-width: 768px): Sidebar hidden, slides in from left,
+ *     overlay backdrop, single-column, touch-friendly targets
+ * ========================================================================== */
 
-/* --- Tablet (max-width: 1024px) --- */
+/* ==========================================================================
+ * DESKTOP (default) — Full sidebar, multi-column grids
+ * ========================================================================== */
+
+/* Sidebar backdrop — hidden by default, used on mobile */
+.fl-sidebar-backdrop {
+  display: none;
+}
+
+/* Hamburger button — hidden on desktop */
+.fl-hamburger {
+  display: none !important;
+}
+
+/* Project cards grid — 3+ columns on desktop */
+[data-role="cards-grid"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+/* ==========================================================================
+ * TABLET (max-width: 1024px)
+ * ========================================================================== */
 @media (max-width: 1024px) {
+  /* Sidebar collapses to icon-only width (48px) */
   .fl-app-layout__body [data-slot="sidebar"] {
-    width: 200px;
+    width: 48px !important;
+    overflow: hidden;
   }
 
+  /* Hide text content in sidebar, show only icons */
+  .fl-app-layout__body [data-slot="sidebar"] [data-role="root"] {
+    padding: 8px 4px !important;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"] [data-role="search"],
+  .fl-app-layout__body [data-slot="sidebar"] [data-role="body"],
+  .fl-app-layout__body [data-slot="sidebar"] [data-role="url"],
+  .fl-app-layout__body [data-slot="sidebar"] [data-role="create"] {
+    display: none;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"] [data-action="selectActive"],
+  .fl-app-layout__body [data-slot="sidebar"] [data-action="selectArchived"] {
+    font-size: 0;
+    padding: 6px !important;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"] [data-action="selectActive"]::before {
+    content: "●";
+    font-size: 14px;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"] [data-action="selectArchived"]::before {
+    content: "○";
+    font-size: 14px;
+  }
+
+  /* Project cards in 2-column grid */
+  [data-role="cards-grid"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Analytics cards wrap tighter */
   [data-role="analytics"] {
     flex-wrap: wrap;
   }
@@ -15,31 +84,64 @@
   }
 }
 
-/* --- Mobile (max-width: 768px) --- */
+/* ==========================================================================
+ * MOBILE (max-width: 768px)
+ * ========================================================================== */
 @media (max-width: 768px) {
-  /* Sidebar: collapse by default, show via hamburger toggle */
-  .fl-app-layout__body {
-    flex-direction: column !important;
-  }
-
+  /* --- Sidebar: hidden off-screen, slides in from left --- */
   .fl-app-layout__body [data-slot="sidebar"] {
-    width: 100% !important;
-    height: auto;
-    max-height: 0;
-    overflow: hidden;
-    border-right: none !important;
-    border-bottom: 1px solid #e5e7eb;
-    transition: max-height 0.3s ease;
-  }
-
-  .fl-app-layout__body [data-slot="sidebar"].open {
-    max-height: 70vh;
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px !important;
+    max-width: 80vw;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    border-right: 1px solid var(--pp-border) !important;
+    background: var(--pp-bg-secondary) !important;
     overflow-y: auto;
   }
 
-  /* Hamburger toggle (injected by JS) */
+  /* Sidebar slides in when .sidebar--open is present */
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open {
+    transform: translateX(0);
+  }
+
+  /* Restore hidden elements when sidebar is open on mobile */
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open [data-role="root"] {
+    padding: 12px !important;
+  }
+
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open [data-role="search"],
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open [data-role="body"],
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open [data-role="url"],
+  .fl-app-layout__body [data-slot="sidebar"].sidebar--open [data-role="create"] {
+    display: block;
+  }
+
+  /* Overlay/backdrop behind sidebar when open */
+  .fl-sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--pp-surface-overlay, rgba(0, 0, 0, 0.5));
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .fl-sidebar-backdrop.fl-sidebar-backdrop--visible {
+    display: block;
+    opacity: 1;
+  }
+
+  /* Hamburger menu button — visible on mobile */
   .fl-hamburger {
-    display: block !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
     font-size: 24px;
@@ -47,18 +149,49 @@
     padding: 8px;
     min-width: 44px;
     min-height: 44px;
+    color: var(--pp-text-primary);
+    -webkit-tap-highlight-color: transparent;
   }
 
-  /* Content area full width */
+  /* Content area takes full width */
   .fl-app-layout__body [data-slot="content"] {
+    flex: 1;
     padding: 12px !important;
-  }
-
-  /* Project list single column */
-  [data-role="recent-list"] {
     width: 100%;
   }
 
+  /* --- Filter bar stacks vertically on mobile --- */
+  [data-role="filter-bar"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  [data-role="filter-bar"] input,
+  [data-role="filter-bar"] select,
+  [data-role="filter-bar"] button {
+    width: 100%;
+    min-width: unset !important;
+  }
+
+  /* --- Kanban board scrolls horizontally on mobile --- */
+  [data-section="kanban"] {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    padding-bottom: 8px;
+  }
+
+  [data-section="kanban"] [data-role="kanban-column"] {
+    min-width: 260px !important;
+    flex-shrink: 0;
+  }
+
+  /* --- Project cards single-column on mobile --- */
+  [data-role="cards-grid"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Recent project links stack vertically */
   [data-role="recent-link"] {
     flex-direction: column;
     align-items: flex-start !important;
@@ -79,15 +212,19 @@
     min-width: 100% !important;
   }
 
-  /* Kanban board scrolls horizontally */
-  [data-section="kanban"] {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  /* --- Touch targets: minimum 44x44px on mobile --- */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="switch"] {
+    min-height: 44px;
   }
 
-  [data-section="kanban"] [data-role="kanban-column"] {
-    min-width: 260px !important;
-    flex-shrink: 0;
+  button,
+  a {
+    min-width: 44px;
   }
 
   /* Forms and tables full-width */
@@ -103,28 +240,13 @@
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Notification dropdown full-width */
+  /* Notification dropdown full-width on mobile */
   [data-role="dropdown"] {
     position: fixed !important;
     left: 8px !important;
     right: 8px !important;
     width: auto !important;
     max-width: none;
-  }
-
-  /* Touch targets — min 44px on interactive elements */
-  button,
-  a,
-  input,
-  select,
-  textarea,
-  [role="switch"] {
-    min-height: 44px;
-  }
-
-  button,
-  a {
-    min-width: 44px;
   }
 
   /* Settings tabs scroll horizontally */
@@ -134,14 +256,21 @@
     flex-wrap: nowrap !important;
   }
 
-  /* Dialog panels full-width */
+  /* Dialog panels full-width on mobile */
   [data-role="panel"] {
     width: calc(100vw - 32px) !important;
     max-width: 100%;
   }
+
+  /* Header adjustments */
+  .fl-app-layout header {
+    padding: 8px 12px !important;
+  }
 }
 
-/* --- Print styles --- */
+/* ==========================================================================
+ * PRINT STYLES
+ * ========================================================================== */
 @media print {
   /* Hide navigation, sidebar, toolbar */
   header,
@@ -149,7 +278,8 @@
   [data-role="notification-bell"],
   [data-action="logout"],
   [data-role="view-toggle"],
-  .fl-hamburger {
+  .fl-hamburger,
+  .fl-sidebar-backdrop {
     display: none !important;
   }
 

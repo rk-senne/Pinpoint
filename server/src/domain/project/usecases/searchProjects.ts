@@ -21,10 +21,13 @@ export interface SearchProjectsInput {
   userId: string;
   search?: string;
   status?: ProjectStatus;
+  limit?: number;
+  offset?: number;
 }
 
 export interface SearchProjectsOutput {
   projects: Project[];
+  total: number;
 }
 
 export interface SearchProjectsDeps {
@@ -44,8 +47,13 @@ export class SearchProjects {
     };
     if (input.search !== undefined) repoInput.search = input.search;
     if (input.status !== undefined) repoInput.status = input.status;
+    if (input.limit !== undefined) repoInput.limit = input.limit;
+    if (input.offset !== undefined) repoInput.offset = input.offset;
 
-    const projects = await projectRepo.search(repoInput);
-    return ok({ projects });
+    const [projects, total] = await Promise.all([
+      projectRepo.search(repoInput),
+      projectRepo.countSearch({ userId: input.userId, search: input.search, status: input.status }),
+    ]);
+    return ok({ projects, total });
   }
 }

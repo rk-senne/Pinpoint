@@ -359,7 +359,7 @@ export function createAnnotationRoutes(
       if (file.mimetype !== 'image/png') {
         res
           .status(400)
-          .json({ error: 'Image must be a PNG (Content-Type: image/png).' });
+          .json({ error: { code: 'VALIDATION', message: 'Image must be a PNG (Content-Type: image/png).' } });
         return;
       }
 
@@ -374,7 +374,7 @@ export function createAnnotationRoutes(
           } catch {
             res
               .status(400)
-              .json({ error: 'redactionRects must be a JSON-encoded array.' });
+              .json({ error: { code: 'VALIDATION', message: 'redactionRects must be a JSON-encoded array.' } });
             return;
           }
         } else {
@@ -446,7 +446,7 @@ export function createAnnotationRoutes(
   // --- Suggestions endpoint (premium feature: triage + smart suggestions) ---
   annotationRouter.get('/:id/suggestions', async (req: Request, res: Response) => {
     if (!db) {
-      res.status(501).json({ error: 'Suggestions not available.' });
+      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Suggestions not available.' } });
       return;
     }
     const annotationId = paramString(req.params.id);

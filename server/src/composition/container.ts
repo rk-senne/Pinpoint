@@ -467,8 +467,9 @@ export function buildContainer(config: Config): Container {
   // ---- HTTP / Socket.IO infrastructure (so we can build EventBus) -----
   const app = express();
   const httpServer = createServer(app);
+  const corsCredentials = config.corsOrigin !== '*';
   const io = new SocketIoServer(httpServer, {
-    cors: { origin: config.corsOrigin, credentials: true },
+    cors: { origin: config.corsOrigin, credentials: corsCredentials },
   });
   // TODO: When REDIS_URL is set and the `@socket.io/redis-adapter` package is
   // installed, call `io.adapter(createAdapter(pubClient, subClient))` here to
@@ -722,7 +723,7 @@ export function buildContainer(config: Config): Container {
   app.use(
     cors({
       origin: config.corsOrigin,
-      credentials: true,
+      credentials: corsCredentials,
     }),
   );
   app.use(express.json());

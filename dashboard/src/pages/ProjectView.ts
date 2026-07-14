@@ -105,6 +105,31 @@ const KANBAN_COLUMNS: AnnotationStatus[] = ['active', 'in_progress', 'resolved']
 
 const MAX_COVIEWER_AVATARS = 4;
 
+// --- Filter / Sort types (Mission B3) ------------------------------------
+
+type SortMode = 'newest' | 'oldest' | 'severity' | 'pin';
+
+interface FilterState {
+  search: string;
+  severity: string; // '' = all
+  status: string;   // '' = all
+  sort: SortMode;
+}
+
+const DEFAULT_FILTER: FilterState = {
+  search: '',
+  severity: '',
+  status: '',
+  sort: 'newest',
+};
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  major: 1,
+  minor: 2,
+  informational: 3,
+};
+
 // --- Public entry point ---------------------------------------------------
 
 export interface MountProjectViewOptions {
@@ -149,6 +174,11 @@ export function mountProjectView(
   const viewersByAnnotation: Signal<Record<string, string[]>> = signal<
     Record<string, string[]>
   >({});
+
+  // --- Filter state (Mission B3) -----------------------------------------
+  const filterState: Signal<FilterState> = signal<FilterState>(
+    readFilterFromUrl(),
+  );
 
   // --- Build the page DOM and mount inside the layout shell --------------
   const fragment = cloneTemplate('tpl-project-view');
@@ -197,6 +227,15 @@ export function mountProjectView(
   const bulkActionsBar = contentRoot.querySelector<HTMLElement>('[data-role="bulk-actions"]')!;
   const bulkCountEl = contentRoot.querySelector<HTMLElement>('[data-role="bulk-count"]')!;
   const selectAllCheckbox = contentRoot.querySelector<HTMLInputElement>('[data-role="select-all"]')!;
+
+  // Filter bar DOM refs (Mission B3).
+  const filterBar = contentRoot.querySelector<HTMLElement>('[data-role="filter-bar"]')!;
+  const filterSearchInput = contentRoot.querySelector<HTMLInputElement>('[data-role="filter-search"]')!;
+  const filterSeveritySelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-severity"]')!;
+  const filterStatusSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-status"]')!;
+  const filterSortSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-sort"]')!;
+  const clearFiltersBtn = contentRoot.querySelector<HTMLElement>('[data-role="clear-filters-btn"]')!;
+  const filterEmptyEl = contentRoot.querySelector<HTMLElement>('[data-role="filter-empty"]')!;
 
   // Per-render row listener cleanups. Cleared on every rerender so detached
   // rows can be GC'd; otherwise the closures capturing each row would keep
@@ -249,6 +288,9 @@ export function mountProjectView(
     'bulk-delete': () => void executeBulkAction('delete'),
     'bulk-clear': () => {
       selectedIds.set(new Set());
+    },
+    'clear-filters': () => {
+      filterState.set({ ...DEFAULT_FILTER });
     },
   });
 
@@ -420,6 +462,36 @@ export function mountProjectView(
     }
   };
   selectAllCheckbox.addEventListener('change', onSelectAll);
+
+  // --- Filter bar input listeners (Mission B3) ----------------------------
+  let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const onFilterSearchInput = (): void => {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    filterDebounceTimer = setTimeout(() => {
+      const f = filterState.get();
+      filterState.set({ ...f, search: filterSearchInput.value.trim() });
+    }, 200);
+  };
+  filterSearchInput.addEventListener('input', onFilterSearchInput);
+
+  const onFilterSeverityChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, severity: filterSeveritySelect.value });
+  };
+  filterSeveritySelect.addEventListener('change', onFilterSeverityChange);
+
+  const onFilterStatusChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, status: filterStatusSelect.value });
+  };
+  filterStatusSelect.addEventListener('change', onFilterStatusChange);
+
+  const onFilterSortChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, sort: filterSortSelect.value as SortMode });
+  };
+  filterSortSelect.addEventListener('change', onFilterSortChange);
   unsubs.push(
     viewersByAnnotation.subscribe(() => {
       renderCoViewers();
@@ -428,6 +500,31 @@ export function mountProjectView(
   unsubs.push(
     currentUserId.subscribe(() => {
       renderCoViewers();
+    }),
+  );
+
+  // Filter state subscription (Mission B3) — re-render list/kanban,
+  // sync DOM controls, persist to URL, and toggle clear-filters button.
+  unsubs.push(
+    filterState.subscribe((f) => {
+      // Sync DOM controls with the canonical state (handles programmatic
+      // resets from Clear Filters or initial URL parse).
+      if (filterSearchInput.value !== f.search) filterSearchInput.value = f.search;
+      if (filterSeveritySelect.value !== f.severity) filterSeveritySelect.value = f.severity;
+      if (filterStatusSelect.value !== f.status) filterStatusSelect.value = f.status;
+      if (filterSortSelect.value !== f.sort) filterSortSelect.value = f.sort;
+
+      // Show/hide clear-filters button.
+      const hasFilters =
+        f.search !== '' || f.severity !== '' || f.status !== '' || f.sort !== 'newest';
+      toggleHidden(clearFiltersBtn, !hasFilters);
+
+      // Persist to URL.
+      writeFilterToUrl(f);
+
+      // Rerender.
+      rerenderList();
+      rerenderKanban();
     }),
   );
   unsubs.push(
@@ -528,6 +625,11 @@ export function mountProjectView(
     rowCleanups = [];
     if (replayTeardown) { replayTeardown(); replayTeardown = null; }
     selectAllCheckbox.removeEventListener('change', onSelectAll);
+    filterSearchInput.removeEventListener('input', onFilterSearchInput);
+    filterSeveritySelect.removeEventListener('change', onFilterSeverityChange);
+    filterStatusSelect.removeEventListener('change', onFilterStatusChange);
+    filterSortSelect.removeEventListener('change', onFilterSortChange);
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
     cleanupEvents();
     teardownLayout();
     contentRoot.remove();
@@ -708,9 +810,17 @@ export function mountProjectView(
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
 
-    const annotations = currentAnnotationsStore.list.get();
+    const allAnnotations = currentAnnotationsStore.list.get();
+    const annotations = applyFilterAndSort(allAnnotations, filterState.get());
+
+    // Show filter-empty state when filters are active but produce no results,
+    // but the unfiltered list is non-empty.
+    const hasActiveFilters = isFiltered(filterState.get());
+    const noFilterResults = hasActiveFilters && annotations.length === 0 && allAnnotations.length > 0;
+    toggleHidden(filterEmptyEl, !noFilterResults);
+
     if (annotations.length === 0) {
-      toggleHidden(listEmpty, false);
+      toggleHidden(listEmpty, !noFilterResults); // show generic empty only if no filter active
       toggleHidden(listTable, true);
       return;
     }
@@ -762,7 +872,8 @@ export function mountProjectView(
   }
 
   function rerenderKanban(): void {
-    const annotations = currentAnnotationsStore.list.get();
+    const allAnnotations = currentAnnotationsStore.list.get();
+    const annotations = applyFilterAndSort(allAnnotations, filterState.get());
     const columns = kanbanSection.querySelectorAll<HTMLElement>(
       '[data-role="kanban-column"]',
     );
@@ -1433,4 +1544,114 @@ function paintToggle(button: HTMLButtonElement, active: boolean, side: 'left' | 
 function toggleHidden(el: HTMLElement, hidden: boolean): void {
   if (hidden) el.setAttribute('hidden', '');
   else el.removeAttribute('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Filter / Sort helpers (Mission B3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when any filter field differs from its default value,
+ * meaning the user has actively engaged the filter bar.
+ */
+function isFiltered(f: FilterState): boolean {
+  return f.search !== '' || f.severity !== '' || f.status !== '' || f.sort !== 'newest';
+}
+
+/**
+ * Apply the filter and sort criteria to an annotation list, returning a
+ * new array (never mutates the input). Runs entirely client-side.
+ */
+function applyFilterAndSort(
+  annotations: Annotation[],
+  f: FilterState,
+): Annotation[] {
+  let result = annotations;
+
+  // Text search — case-insensitive substring match on body.
+  if (f.search) {
+    const needle = f.search.toLowerCase();
+    result = result.filter(
+      (a) => (a.body ?? '').toLowerCase().includes(needle),
+    );
+  }
+
+  // Severity filter.
+  if (f.severity) {
+    result = result.filter((a) => a.severity === f.severity);
+  }
+
+  // Status filter.
+  if (f.status) {
+    result = result.filter((a) => a.status === f.status);
+  }
+
+  // Sort.
+  result = [...result].sort((a, b) => {
+    switch (f.sort) {
+      case 'newest':
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      case 'oldest':
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      case 'severity': {
+        const sa = SEVERITY_ORDER[a.severity] ?? 99;
+        const sb = SEVERITY_ORDER[b.severity] ?? 99;
+        return sa - sb;
+      }
+      case 'pin':
+        return a.pinNumber - b.pinNumber;
+      default:
+        return 0;
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Read filter state from URL query parameters. Called once at mount to
+ * restore any previously set filter state (e.g. shared links or browser
+ * back/forward).
+ */
+function readFilterFromUrl(): FilterState {
+  const params = new URLSearchParams(window.location.search);
+  const search = params.get('q') ?? '';
+  const severity = params.get('severity') ?? '';
+  const status = params.get('status') ?? '';
+  const sortRaw = params.get('sort') ?? 'newest';
+  const validSorts: SortMode[] = ['newest', 'oldest', 'severity', 'pin'];
+  const sort: SortMode = validSorts.includes(sortRaw as SortMode)
+    ? (sortRaw as SortMode)
+    : 'newest';
+  return { search, severity, status, sort };
+}
+
+/**
+ * Write the current filter state to the URL using `replaceState` so
+ * filters are bookmark-able without polluting browser history.
+ */
+function writeFilterToUrl(f: FilterState): void {
+  const params = new URLSearchParams(window.location.search);
+
+  // Only write non-default values to keep URLs clean.
+  if (f.search) params.set('q', f.search);
+  else params.delete('q');
+
+  if (f.severity) params.set('severity', f.severity);
+  else params.delete('severity');
+
+  if (f.status) params.set('status', f.status);
+  else params.delete('status');
+
+  if (f.sort !== 'newest') params.set('sort', f.sort);
+  else params.delete('sort');
+
+  const qs = params.toString();
+  const newUrl = qs
+    ? `${window.location.pathname}?${qs}`
+    : window.location.pathname;
+
+  // Use replaceState to avoid flooding the history stack with every
+  // keystroke / dropdown change.
+  window.history.replaceState(null, '', newUrl);
 }

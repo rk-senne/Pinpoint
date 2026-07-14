@@ -41,7 +41,7 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
 
   function handleRedirect(providerName: string, req: Request, res: Response): void {
     const provider = providers[providerName];
-    if (!provider) { res.status(404).json({ error: `${providerName} OAuth not configured.` }); return; }
+    if (!provider) { res.status(404).json({ error: { code: 'NOT_FOUND', message: `${providerName} OAuth not configured.` } }); return; }
 
     const state = randomBytes(16).toString('hex');
     const redirectUri = `${callbackBaseUrl}/api/v1/auth/oauth/${providerName}/callback`;
@@ -69,7 +69,7 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
 
   async function handleCallback(providerName: string, req: Request, res: Response): Promise<void> {
     const provider = providers[providerName];
-    if (!provider) { res.status(404).json({ error: `${providerName} OAuth not configured.` }); return; }
+    if (!provider) { res.status(404).json({ error: { code: 'NOT_FOUND', message: `${providerName} OAuth not configured.` } }); return; }
 
     const { code, state, code_verifier } = req.query as {
       code?: string;
@@ -106,11 +106,11 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
     // PKCE mobile flow: validate code_verifier and return JSON
     if (code_verifier && stateCookie.codeChallenge) {
       if (stateCookie.codeChallengeMethod !== 'S256') {
-        res.status(400).json({ error: 'Unsupported code_challenge_method. Only S256 is supported.' });
+        res.status(400).json({ error: { code: 'VALIDATION', message: 'Unsupported code_challenge_method. Only S256 is supported.' } });
         return;
       }
       if (!verifyPkceS256(code_verifier, stateCookie.codeChallenge)) {
-        res.status(403).json({ error: 'PKCE verification failed.' });
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'PKCE verification failed.' } });
         return;
       }
       // Mobile clients get JSON response (can't use cookies)

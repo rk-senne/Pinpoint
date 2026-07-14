@@ -42,7 +42,7 @@ export function createNotificationsRoutes(deps: NotificationsRouteDeps): Router 
       limit: parsed.data.limit,
       offset: parsed.data.offset,
     });
-    if (!result.ok) { res.status(500).json({ error: 'Internal error' }); return; }
+    if (!result.ok) { res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Internal error' } }); return; }
     res.json(result.value);
   });
 

@@ -2,6 +2,15 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import type { CreateCheckoutSession, HandleStripeWebhook, GetBillingPortal, GetUsageSummary } from '../../../domain/billing/usecases/billing.js';
 import type { Knex } from 'knex';
 
+/** Helper to emit a standard error envelope from catch blocks. */
+function sendError(res: Response, status: number, code: string, message: string, details?: Record<string, unknown>): Response {
+  const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = {
+    error: { code, message },
+  };
+  if (details && Object.keys(details).length > 0) body.error.details = details;
+  return res.status(status).json(body);
+}
+
 export interface BillingRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   createCheckoutSession: CreateCheckoutSession;
@@ -20,7 +29,7 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
     try {
       const { successUrl, cancelUrl } = req.body;
       if (!successUrl || !cancelUrl) {
-        res.status(400).json({ error: { code: 'VALIDATION', message: 'successUrl and cancelUrl required' } });
+        sendError(res, 400, 'VALIDATION', 'successUrl and cancelUrl required');
         return;
       }
       const url = await createCheckoutSession.execute(
@@ -32,7 +41,7 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
       );
       res.json({ url });
     } catch (e: any) {
-      res.status(500).json({ error: { code: 'BILLING_ERROR', message: e.message } });
+      sendError(res, 500, 'BILLING_ERROR', e.message);
     }
   });
 
@@ -40,13 +49,13 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
   router.post('/webhook', async (req: Request, res: Response) => {
     try {
       const signature = req.headers['stripe-signature'] as string;
-      if (!signature) { res.status(400).json({ error: { code: 'MISSING_SIGNATURE' } }); return; }
+      if (!signature) { sendError(res, 400, 'MISSING_SIGNATURE', 'stripe-signature header is required'); return; }
       // Body must be raw string for signature verification
       const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
       await handleStripeWebhook.execute(body, signature);
       res.json({ received: true });
     } catch (e: any) {
-      res.status(400).json({ error: { code: 'WEBHOOK_ERROR', message: e.message } });
+      sendError(res, 400, 'WEBHOOK_ERROR', e.message);
     }
   });
 
@@ -58,7 +67,8 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
       res.json({ url });
     } catch (e: any) {
       const code = e.message === 'NO_STRIPE_CUSTOMER' ? 'NO_SUBSCRIPTION' : 'BILLING_ERROR';
-      res.status(e.message === 'NO_STRIPE_CUSTOMER' ? 404 : 500).json({ error: { code, message: e.message } });
+      const status = e.message === 'NO_STRIPE_CUSTOMER' ? 404 : 500;
+      sendError(res, status, code, e.message);
     }
   });
 
@@ -68,7 +78,7 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
       const summary = await getUsageSummary.execute(req.user!.orgId);
       res.json(summary);
     } catch (e: any) {
-      res.status(500).json({ error: { code: 'BILLING_ERROR', message: e.message } });
+      sendError(res, 500, 'BILLING_ERROR', e.message);
     }
   });
 
@@ -76,14 +86,14 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
   router.get('/subscription', authMiddleware, async (req: Request, res: Response) => {
     try {
       const org = await db('organizations').where({ id: req.user!.orgId }).first();
-      if (!org) { res.status(404).json({ error: { code: 'NOT_FOUND' } }); return; }
+      if (!org) { sendError(res, 404, 'NOT_FOUND', 'Organization not found'); return; }
       res.json({
         plan: org.plan,
         status: org.plan_status || 'active',
         stripeSubscriptionId: org.stripe_subscription_id || null,
       });
     } catch (e: any) {
-      res.status(500).json({ error: { code: 'BILLING_ERROR', message: e.message } });
+      sendError(res, 500, 'BILLING_ERROR', e.message);
     }
   });
 
@@ -107,7 +117,7 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
       });
       res.json({ invoices });
     } catch (e: any) {
-      res.status(500).json({ error: { code: 'BILLING_ERROR', message: e.message } });
+      sendError(res, 500, 'BILLING_ERROR', e.message);
     }
   });
 

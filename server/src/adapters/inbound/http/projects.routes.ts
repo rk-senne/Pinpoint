@@ -230,7 +230,7 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
     if (parsed.data.status === undefined) {
       res
         .status(400)
-        .json({ error: 'Project rename is not yet supported via this endpoint.' });
+        .json({ error: { code: 'NOT_IMPLEMENTED', message: 'Project rename is not yet supported via this endpoint.' } });
       return;
     }
     const result = await archiveProject.execute({

@@ -905,6 +905,68 @@
             </div>
           </header>
 
+          <!-- Filter bar (Mission B3: Search, Filter & Sort). -->
+          <div
+            data-role="filter-bar"
+            style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; padding: 12px; background: var(--pp-bg-secondary); border: 1px solid var(--pp-border); border-radius: 6px;"
+          >
+            <input
+              type="text"
+              data-role="filter-search"
+              placeholder="Search annotations…"
+              aria-label="Search annotations by body text"
+              style="flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            />
+            <select
+              data-role="filter-severity"
+              aria-label="Filter by severity"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="">All Severities</option>
+              <option value="critical">Critical</option>
+              <option value="major">Major</option>
+              <option value="minor">Minor</option>
+              <option value="informational">Informational</option>
+            </select>
+            <select
+              data-role="filter-status"
+              aria-label="Filter by status"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <select
+              data-role="filter-sort"
+              aria-label="Sort annotations"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="severity">Severity High→Low</option>
+              <option value="pin">Pin Number</option>
+            </select>
+            <button
+              type="button"
+              data-action="clear-filters"
+              data-role="clear-filters-btn"
+              hidden
+              style="padding: 6px 12px; background: var(--pp-bg-tertiary); border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--pp-text-secondary);"
+            >Clear filters</button>
+          </div>
+
+          <!-- Empty state when filters match no annotations. -->
+          <div
+            data-role="filter-empty"
+            hidden
+            style="padding: 32px; text-align: center; color: var(--pp-text-tertiary); font-size: 14px; border: 1px dashed var(--pp-border-medium); border-radius: 6px; margin-bottom: 16px;"
+          >
+            <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+            <p style="margin: 0;">No annotations match the current filters.</p>
+          </div>
+
           <!-- Analytics panel (severity, type, status, byBrowser). One
                container element per dimension; rows inside each are
                populated programmatically so the component can show the

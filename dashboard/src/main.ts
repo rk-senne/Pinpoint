@@ -41,12 +41,29 @@ if (themeStyle && !themeStyle.textContent) {
 // by setting `data-theme` on `<html>`. If 'system' (or no value), we remove
 // the attribute so the CSS `@media (prefers-color-scheme: dark)` rule takes
 // effect naturally.
-const storedTheme = localStorage.getItem('pp-theme');
-if (storedTheme === 'light' || storedTheme === 'dark') {
-  document.documentElement.setAttribute('data-theme', storedTheme);
-} else {
-  document.documentElement.removeAttribute('data-theme');
+type ThemePreference = 'light' | 'dark' | 'system';
+const storedTheme = localStorage.getItem('pinpoint_theme') as ThemePreference | null;
+
+function applyTheme(preference: ThemePreference | null): void {
+  if (preference === 'light' || preference === 'dark') {
+    document.documentElement.setAttribute('data-theme', preference);
+  } else {
+    // 'system' or null — remove attribute so @media prefers-color-scheme drives it
+    document.documentElement.removeAttribute('data-theme');
+  }
 }
+
+applyTheme(storedTheme);
+
+// Listen for system theme changes so UI updates live when preference is 'system'
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  const current = localStorage.getItem('pinpoint_theme') as ThemePreference | null;
+  if (!current || current === 'system') {
+    // No data-theme attribute needed; CSS @media handles it. But we
+    // re-confirm removal in case something else set it.
+    document.documentElement.removeAttribute('data-theme');
+  }
+});
 const root = document.getElementById('root');
 if (!root) {
   throw new Error('Dashboard root element (#root) not found in index.html');

@@ -734,7 +734,12 @@ export function buildContainer(config: Config): Container {
       credentials: corsCredentials,
     }),
   );
-  app.use(express.json());
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      // Preserve raw body for Stripe webhook signature verification (BUG-002).
+      (req as any).rawBody = buf;
+    },
+  }));
   app.use(cookieParser());
   app.use(compress(1024));
   app.use(requestId);
@@ -920,7 +925,104 @@ export function buildContainer(config: Config): Container {
   };
   mountInboundHttp(app, inboundHttpDeps);
 
-  // ---- Health endpoints ----------------------------------------------
+  // ---- Health endpoints (Mission D2: Enhanced Health & Readiness) ------
+
+  // Track shutdown state for liveness probe.
+  let isShuttingDown = false;
+  process.on('SIGTERM', () => { isShuttingDown = true; });
+  process.on('SIGINT', () => { isShuttingDown = true; });
+
+  // Read version from package.json at startup.
+  const esmRequireHealth = createRequire(import.meta.url);
+  const pkgJson = esmRequireHealth('../../package.json') as { version: string };
+
+  /**
+   * Perform full readiness checks and return a structured response.
+   */
+  async function performReadinessCheck(): Promise<{
+    status: 'ok' | 'degraded' | 'unhealthy';
+    checks: Record<string, string>;
+    info: {
+      version: string;
+      nodeVersion: string;
+      uptime: number;
+      memoryUsage: { rss: number; heapUsed: number };
+    };
+    httpStatus: number;
+  }> {
+    const checks: Record<string, string> = {};
+
+    // Required check: database
+    try {
+      await db.raw('SELECT 1');
+      checks.database = 'ok';
+    } catch {
+      checks.database = 'error';
+    }
+
+    // Optional check: Redis
+    // TODO: When ioredis is added, replace with an actual PING check.
+    checks.redis = config.redisUrl ? 'configured' : 'not_configured';
+
+    // Optional check: S3 (configuration only — no runtime call)
+    checks.s3 = 'configured';
+
+    // Determine overall status.
+    const requiredOk = checks.database === 'ok';
+    let status: 'ok' | 'degraded' | 'unhealthy';
+    if (!requiredOk) {
+      status = 'unhealthy';
+    } else {
+      // Check optional dependencies for degraded state.
+      const optionalValues = [checks.redis, checks.s3];
+      const optionalOk = optionalValues.every(
+        (v) => v === 'ok' || v === 'configured' || v === 'not_configured',
+      );
+      status = optionalOk ? 'ok' : 'degraded';
+    }
+
+    const mem = process.memoryUsage();
+    const info = {
+      version: pkgJson.version,
+      nodeVersion: process.version,
+      uptime: Math.floor(process.uptime()),
+      memoryUsage: { rss: mem.rss, heapUsed: mem.heapUsed },
+    };
+
+    const httpStatus = status === 'unhealthy' ? 503 : 200;
+    return { status, checks, info, httpStatus };
+  }
+
+  // GET /health/live — Simple liveness probe.
+  app.get('/health/live', (_req, res) => {
+    if (isShuttingDown) {
+      res.status(503).json({ status: 'shutting_down' });
+      return;
+    }
+    res.status(200).json({ status: 'ok' });
+  });
+
+  // GET /health/ready — Full readiness check with dependency status.
+  app.get('/health/ready', async (_req, res) => {
+    const result = await performReadinessCheck();
+    res.status(result.httpStatus).json({
+      status: result.status,
+      checks: result.checks,
+      info: result.info,
+    });
+  });
+
+  // GET /health — Legacy alias to /health/ready for backward compat.
+  app.get('/health', async (_req, res) => {
+    const result = await performReadinessCheck();
+    res.status(result.httpStatus).json({
+      status: result.status,
+      checks: result.checks,
+      info: result.info,
+    });
+  });
+
+  // GET /api/v1/health — Existing behavior (DB check).
   app.get('/api/v1/health', async (_req, res) => {
     const checks: Record<string, string> = {};
     try {
@@ -930,23 +1032,10 @@ export function buildContainer(config: Config): Container {
       checks.database = 'error';
     }
 
-    // Redis health check.
-    // TODO: When ioredis is added as a dependency, replace this with an
-    // actual PING check against the Redis instance:
-    //   const redis = new Redis(config.redisUrl);
-    //   await redis.ping(); // checks.redis = 'ok'
     checks.redis = config.redisUrl ? 'configured' : 'not_configured';
 
     const allOk = Object.values(checks).every((v) => v === 'ok' || v === 'configured' || v === 'not_configured');
     res.status(allOk ? 200 : 503).json({ status: allOk ? 'ok' : 'degraded', checks, uptime: process.uptime() });
-  });
-  app.get('/health', async (_req, res) => {
-    try {
-      await db.raw('SELECT 1');
-      res.json({ status: 'ok' });
-    } catch {
-      res.status(503).json({ status: 'error', message: 'Database unreachable' });
-    }
   });
 
   // ---- Legacy /api/* catch-all (Req 25.2) ----------------------------

@@ -250,7 +250,7 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
 
   // OAuth routes (optional — only mounted when provider credentials are configured)
   if (deps.oauthRoutes) {
-    const oauthRouter = createOAuthRoutes(deps.oauthRoutes);
+    const oauthRouter = createOAuthRoutes({ ...deps.oauthRoutes, authMiddleware });
     app.use('/api/v1/auth/oauth', oauthRouter);
   }
 

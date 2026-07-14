@@ -50,8 +50,9 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
     try {
       const signature = req.headers['stripe-signature'] as string;
       if (!signature) { sendError(res, 400, 'MISSING_SIGNATURE', 'stripe-signature header is required'); return; }
-      // Body must be raw string for signature verification
-      const body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+      // Use raw body buffer preserved by express.json({ verify }) for Stripe signature verification.
+      const rawBody: Buffer | undefined = (req as any).rawBody;
+      const body = rawBody ? rawBody.toString('utf8') : JSON.stringify(req.body);
       await handleStripeWebhook.execute(body, signature);
       res.json({ received: true });
     } catch (e: any) {

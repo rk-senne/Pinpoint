@@ -1,7 +1,7 @@
 // Inbound HTTP adapter — OAuth routes (GET redirect + GET callback).
 // PKCE S256 support for mobile deep-link callbacks (Task 1).
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { createHash, randomBytes } from 'node:crypto';
 import type { OAuthLogin, OAuthProvider } from '../../../domain/auth/usecases/oauthLogin.js';
 
@@ -11,6 +11,7 @@ export interface OAuthRouteDeps {
   callbackBaseUrl: string;
   appUrl: string;
   cookieInsecure?: boolean;
+  authMiddleware?: (req: Request, res: Response, next: NextFunction) => void;
 }
 
 function buildSessionCookie(token: string, insecure: boolean): string {
@@ -36,7 +37,7 @@ interface OAuthStateCookie {
 }
 
 export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
-  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false } = deps;
+  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false, authMiddleware } = deps;
   const router = Router();
 
   function handleRedirect(providerName: string, req: Request, res: Response): void {
@@ -126,11 +127,22 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
   }
 
   // --- Google ---
-  router.get('/google', (req, res) => handleRedirect('google', req, res));
+  if (authMiddleware) {
+    router.get('/google', authMiddleware, (req, res) => handleRedirect('google', req, res));
+  } else {
+    router.get('/google', (req, res) => handleRedirect('google', req, res));
+  }
+  // Callback route — NO auth middleware; OAuth providers redirect here before the user is authenticated.
+  // State param is validated instead to prevent CSRF.
   router.get('/google/callback', (req, res) => handleCallback('google', req, res));
 
   // --- GitHub ---
-  router.get('/github', (req, res) => handleRedirect('github', req, res));
+  if (authMiddleware) {
+    router.get('/github', authMiddleware, (req, res) => handleRedirect('github', req, res));
+  } else {
+    router.get('/github', (req, res) => handleRedirect('github', req, res));
+  }
+  // Callback route — NO auth middleware; state param validated instead.
   router.get('/github/callback', (req, res) => handleCallback('github', req, res));
 
   return router;

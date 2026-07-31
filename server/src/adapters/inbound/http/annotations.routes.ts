@@ -468,7 +468,6 @@ export function createAnnotationRoutes(
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
       return;
     }
-    const orgId = req.user!.orgId;
     const triageService = createTriageService(db);
     const [triageResult, suggestions] = await Promise.all([
       triageService.triage(annotation.projectId, {
@@ -476,7 +475,7 @@ export function createAnnotationRoutes(
         target: annotation.target,
         excludeId: annotationId,
       }),
-      getSuggestions(db, orgId, annotationId),
+      getSuggestions(db, annotationId),
     ]);
     res.json({ triage: triageResult, suggestions });
   });

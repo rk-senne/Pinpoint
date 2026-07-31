@@ -67,6 +67,13 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Insufficient permissions.' } });
     }
     if (!validateUuidParam(res, 'id', req.params.id as string)) return;
+
+    // Verify the API key belongs to the caller's org (cross-tenant IDOR fix)
+    const key = await db('api_keys').where({ id: req.params.id, org_id: req.user!.orgId }).first();
+    if (!key) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'API key not found.' } });
+    }
+
     await apiKeyRepo.revoke(req.params.id as string);
     await recordAudit(db, {
       orgId: req.user!.orgId,

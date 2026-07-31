@@ -72,6 +72,11 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
     const parsed = CreateBoardSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid board payload.', parsed.error.flatten()); return; }
     const { projectId, title, slug, description } = parsed.data;
+
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) { sendError(res, 403, 'FORBIDDEN', 'Project not in your organization'); return; }
+
     const [board] = await db('feedback_boards').insert({ org_id: req.user!.orgId, project_id: projectId, slug, title, description }).returning('*');
     res.status(201).json({ board });
   });
@@ -150,6 +155,13 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
     const parsed = CreateWorkflowSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid workflow.', parsed.error.flatten()); return; }
     const { name, projectId, steps } = parsed.data;
+
+    // Verify project belongs to the caller's org when provided (prevent cross-tenant IDOR)
+    if (projectId) {
+      const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+      if (!project) { sendError(res, 403, 'FORBIDDEN', 'Project not in your organization'); return; }
+    }
+
     const [workflow] = await db('approval_workflows').insert({
       org_id: req.user!.orgId, project_id: projectId, name, steps: JSON.stringify(steps),
     }).returning('*');
@@ -167,12 +179,22 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
     const { workflowId, annotationId } = parsed.data;
     const workflow = await db('approval_workflows').where({ id: workflowId, org_id: req.user!.orgId }).first();
     if (!workflow) { sendError(res, 404, 'NOT_FOUND', 'Workflow not found'); return; }
+
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotation = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotation) { sendError(res, 404, 'NOT_FOUND', 'Annotation not found'); return; }
+
     const [instance] = await db('approval_instances').insert({ workflow_id: workflowId, annotation_id: annotationId }).returning('*');
     res.status(201).json({ instance });
   });
 
   router.post('/approvals/:instanceId/advance', authMiddleware, async (req: Request, res: Response) => {
-    const instance = await db('approval_instances').where('id', req.params.instanceId).first();
+    // Verify instance belongs to the caller's org by joining through workflow (prevent cross-tenant IDOR)
+    const instance = await db('approval_instances')
+      .join('approval_workflows', 'approval_workflows.id', 'approval_instances.workflow_id')
+      .where({ 'approval_instances.id': req.params.instanceId, 'approval_workflows.org_id': req.user!.orgId })
+      .select('approval_instances.*')
+      .first();
     if (!instance) { sendError(res, 404, 'NOT_FOUND', 'Approval instance not found'); return; }
     const workflow = await db('approval_workflows').where('id', instance.workflow_id).first();
     const steps = typeof workflow.steps === 'string' ? JSON.parse(workflow.steps) : workflow.steps;

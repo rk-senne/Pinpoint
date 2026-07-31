@@ -41,6 +41,15 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
     const parsed = CreateRuleSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid rule.', parsed.error.flatten()); return; }
 
+    // Verify project belongs to the caller's org when provided (prevent cross-tenant IDOR)
+    if (parsed.data.projectId) {
+      const project = await db('projects').where({ id: parsed.data.projectId, org_id: req.user!.orgId }).first();
+      if (!project) {
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Project not in your organization' } });
+        return;
+      }
+    }
+
     const [rule] = await db('automation_rules').insert({
       org_id: req.user!.orgId,
       project_id: parsed.data.projectId,

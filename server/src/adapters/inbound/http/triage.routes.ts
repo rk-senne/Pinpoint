@@ -47,6 +47,13 @@ export function createTriageRoutes(deps: TriageRouteDeps): Router {
     }
 
     const projectId = String(req.params.id);
+
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     const result = await service.triage(projectId, parsed.data);
     return res.json(result);
   });

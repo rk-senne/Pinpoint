@@ -12,18 +12,31 @@ import { createTriageRoutes, type TriageRouteDeps } from './triage.routes.js';
  */
 
 function noopAuth(_req: express.Request, _res: express.Response, next: express.NextFunction) {
+  (_req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
   next();
 }
+
+const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
 
 interface MockDbOpts {
   candidates?: Array<{ id: string; body: string; pin_number: number }>;
   topResolver?: { assignee_id: string } | undefined;
   user?: { id: string; email: string } | undefined;
+  /** Whether the project ownership check should pass (default: true) */
+  projectOwned?: boolean;
 }
 
 function makeDb(opts: MockDbOpts = {}): any {
-  const { candidates = [], topResolver, user } = opts;
+  const { candidates = [], topResolver, user, projectOwned = true } = opts;
   return vi.fn((table: string) => {
+    if (table === 'projects') {
+      const builder: any = {};
+      const chain = () => builder;
+      builder.where = vi.fn(chain);
+      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID } : undefined));
+      return builder;
+    }
     const builder: any = {};
     const chain = () => builder;
     builder.where = vi.fn(chain);
@@ -131,5 +144,17 @@ describe('triage.routes — POST /api/v1/projects/:id/annotations/triage', () =>
     expect(res.body.suggestedSeverity).toBe('informational');
     expect(res.body.suggestedTags).toEqual([]);
     expect(res.body.duplicates).toEqual([]);
+  });
+
+  it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+    const db = makeDb({ candidates: [], projectOwned: false });
+    const app = makeApp({ authMiddleware: noopAuth, db });
+
+    const res = await request(app)
+      .post(`/api/v1/projects/${PROJECT}/annotations/triage`)
+      .send({ body: 'something broke' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 });

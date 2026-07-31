@@ -27,6 +27,12 @@ export function createBulkRoutes(deps: BulkRouteDeps): Router {
     const { ids, action, params } = parsed.data;
     const projectId = req.params.id;
 
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     // Verify all annotations belong to this project
     const annotations = await db('annotations').whereIn('id', ids).andWhere({ project_id: projectId });
     if (annotations.length !== ids.length) {

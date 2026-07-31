@@ -378,6 +378,7 @@ export function buildContainer(config: Config): Container {
     },
     feedbackRoutes: {
       annotationRepo: adapters.annotationRepo,
+      db,
     },
     heatmapRoutes: {
       db,

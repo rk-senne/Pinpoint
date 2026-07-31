@@ -10,8 +10,11 @@ import { createTagRoutes, type TagRouteDeps } from './tags.routes.js';
  */
 
 function noopAuth(_req: express.Request, _res: express.Response, next: express.NextFunction) {
+  (_req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
   next();
 }
+
+const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
 
 function makeApp(deps: TagRouteDeps): express.Express {
   const app = express();
@@ -30,16 +33,42 @@ describe('tags.routes', () => {
   describe('GET /api/v1/projects/:id/tags', () => {
     it('returns empty array initially', async () => {
       const orderBy = vi.fn().mockResolvedValue([]);
-      const where = vi.fn().mockReturnValue({ orderBy });
-      mockDb = vi.fn().mockReturnValue({ where });
+      const whereTags = vi.fn().mockReturnValue({ orderBy });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'proj-1', org_id: ORG_ID });
+          return b;
+        }
+        return { where: whereTags };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
       const res = await request(app).get('/api/v1/projects/proj-1/tags');
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ tags: [] });
-      expect(where).toHaveBeenCalledWith('project_id', 'proj-1');
+      expect(whereTags).toHaveBeenCalledWith('project_id', 'proj-1');
       expect(orderBy).toHaveBeenCalledWith('name', 'asc');
+    });
+
+    it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue(undefined);
+          return b;
+        }
+        return {};
+      });
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app).get('/api/v1/projects/proj-1/tags');
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });
 
@@ -54,7 +83,15 @@ describe('tags.routes', () => {
       };
       const returning = vi.fn().mockResolvedValue([tagRow]);
       const insert = vi.fn().mockReturnValue({ returning });
-      mockDb = vi.fn().mockReturnValue({ insert });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'proj-1', org_id: ORG_ID });
+          return b;
+        }
+        return { insert };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
@@ -105,7 +142,15 @@ describe('tags.routes', () => {
       pgError.code = '23505';
       const returning = vi.fn().mockRejectedValue(pgError);
       const insert = vi.fn().mockReturnValue({ returning });
-      mockDb = vi.fn().mockReturnValue({ insert });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'proj-1', org_id: ORG_ID });
+          return b;
+        }
+        return { insert };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
@@ -116,29 +161,84 @@ describe('tags.routes', () => {
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe('DUPLICATE');
     });
+
+    it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue(undefined);
+          return b;
+        }
+        return {};
+      });
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app)
+        .post('/api/v1/projects/proj-1/tags')
+        .send({ name: 'Bug', color: '#ff0000' });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
   });
 
   describe('DELETE /api/v1/projects/:id/tags/:tagId', () => {
     it('returns 204 when tag is deleted', async () => {
       const del = vi.fn().mockResolvedValue(1);
-      const where = vi.fn().mockReturnValue({ del });
-      mockDb = vi.fn().mockReturnValue({ where });
+      const whereTags = vi.fn().mockReturnValue({ del });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'proj-1', org_id: ORG_ID });
+          return b;
+        }
+        return { where: whereTags };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
       const res = await request(app).delete('/api/v1/projects/proj-1/tags/tag-1');
       expect(res.status).toBe(204);
-      expect(where).toHaveBeenCalledWith({ id: 'tag-1', project_id: 'proj-1' });
+      expect(whereTags).toHaveBeenCalledWith({ id: 'tag-1', project_id: 'proj-1' });
     });
 
     it('returns 404 when tag does not exist', async () => {
       const del = vi.fn().mockResolvedValue(0);
-      const where = vi.fn().mockReturnValue({ del });
-      mockDb = vi.fn().mockReturnValue({ where });
+      const whereTags = vi.fn().mockReturnValue({ del });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'proj-1', org_id: ORG_ID });
+          return b;
+        }
+        return { where: whereTags };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
       const res = await request(app).delete('/api/v1/projects/proj-1/tags/nonexistent');
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+
+    it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue(undefined);
+          return b;
+        }
+        return {};
+      });
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app).delete('/api/v1/projects/proj-1/tags/tag-1');
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe('NOT_FOUND');
     });
@@ -169,6 +269,12 @@ describe('tags.routes', () => {
       });
 
       mockDb = vi.fn().mockImplementation((tableName: string) => {
+        if (tableName === 'annotations') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue({ id: 'ann-1', org_id: ORG_ID });
+          return b;
+        }
         if (tableName === 'tags') {
           return { join: joinFn };
         }
@@ -198,6 +304,48 @@ describe('tags.routes', () => {
         .send({ tagIds: ['not-a-uuid'] });
 
       expect(res.status).toBe(400);
+    });
+
+    it('rejects cross-tenant access with 404 when annotation does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((tableName: string) => {
+        if (tableName === 'annotations') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue(undefined);
+          return b;
+        }
+        return {};
+      });
+      mockDb.transaction = vi.fn();
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app)
+        .put('/api/v1/annotations/ann-1/tags')
+        .send({ tagIds: ['a0000000-0000-0000-0000-000000000001'] });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+  });
+
+  describe('GET /api/v1/annotations/:annotationId/tags', () => {
+    it('rejects cross-tenant access with 404 when annotation does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((tableName: string) => {
+        if (tableName === 'annotations') {
+          const b: any = {};
+          b.where = vi.fn().mockReturnValue(b);
+          b.first = vi.fn().mockResolvedValue(undefined);
+          return b;
+        }
+        return {};
+      });
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app).get('/api/v1/annotations/ann-1/tags');
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });
 });

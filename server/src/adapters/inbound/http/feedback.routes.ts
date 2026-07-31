@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import type { Knex } from 'knex';
 import type { AnnotationRepo, ListAnnotationsFilter } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { AnnotationStatus, NewAnnotation } from '../../../domain/annotation/Annotation.js';
 
@@ -6,17 +7,24 @@ export interface FeedbackRouteDeps {
   /** Combined middleware: tries API key first, falls back to JWT */
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   annotationRepo: AnnotationRepo;
+  db: Knex;
 }
 
 export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
   const router = Router();
-  const { authMiddleware, annotationRepo } = deps;
+  const { authMiddleware, annotationRepo, db } = deps;
 
   // GET /api/v1/feedback — paginated, filterable list
   router.get('/', authMiddleware, async (req: Request, res: Response) => {
     const projectId = req.query.projectId as string | undefined;
     if (!projectId) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'projectId query param required.' } });
+    }
+
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
     }
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -47,6 +55,12 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'projectId, body, target, environment are required.' } });
     }
 
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     const annotation = await annotationRepo.insert({
       projectId,
       pageId: pageId ?? projectId,
@@ -72,6 +86,12 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
     }
 
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
+    }
+
     const { body, severity, status, assigneeId, dueDate } = req.body;
     const annotation = await annotationRepo.update(id, {
       body, severity, status, assigneeId, dueDate,
@@ -87,6 +107,13 @@ export function createFeedbackRoutes(deps: FeedbackRouteDeps): Router {
     if (!existing) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
     }
+
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Feedback not found.' } });
+    }
+
     await annotationRepo.delete(id);
     res.status(204).end();
   });

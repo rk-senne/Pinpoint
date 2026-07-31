@@ -22,6 +22,12 @@ export function createActivityRoutes(deps: ActivityRouteDeps): Router {
     const parsed = PaginationParamsSchema.safeParse(req.query);
     const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
 
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     const offset = (page - 1) * pageSize;
 
     const [{ count: total }] = await db('activity_events')

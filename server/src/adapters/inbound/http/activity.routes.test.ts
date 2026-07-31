@@ -10,10 +10,14 @@ import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.
  */
 
 function noopAuth(_req: express.Request, _res: express.Response, next: express.NextFunction) {
+  (_req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
   next();
 }
 
-function makeMockDb(rows: any[] = [], total = 0) {
+const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
+
+function makeMockDb(rows: any[] = [], total = 0, opts: { projectOwned?: boolean } = {}) {
+  const { projectOwned = true } = opts;
   // Build a chain that mimics knex query builder
   const offset = vi.fn().mockResolvedValue(rows);
   const limit = vi.fn().mockReturnValue({ offset });
@@ -27,7 +31,14 @@ function makeMockDb(rows: any[] = [], total = 0) {
   const whereCount = vi.fn().mockReturnValue({ count });
 
   let callCount = 0;
-  const db: any = vi.fn().mockImplementation(() => {
+  const db: any = vi.fn().mockImplementation((table: string) => {
+    if (table === 'projects') {
+      const builder: any = {};
+      const chain = () => builder;
+      builder.where = vi.fn(chain);
+      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID } : undefined));
+      return builder;
+    }
     callCount++;
     if (callCount === 1) {
       // count query
@@ -130,6 +141,16 @@ describe('activity.routes', () => {
       // Invalid params should fall back to defaults
       expect(offset).toHaveBeenCalledWith(0);
       expect(limit).toHaveBeenCalledWith(25);
+    });
+
+    it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+      const { db } = makeMockDb([], 0, { projectOwned: false });
+      const app = makeApp({ authMiddleware: noopAuth, db });
+
+      const res = await request(app).get('/api/v1/projects/proj-1/activity');
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });
 });

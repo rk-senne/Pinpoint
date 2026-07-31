@@ -23,6 +23,12 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
 
   // GET /api/v1/projects/:id/tags — list all tags for a project
   router.get('/projects/:id/tags', authMiddleware, async (req: Request, res: Response) => {
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: req.params.id, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     const tags = await db('tags')
       .where('project_id', req.params.id)
       .orderBy('name', 'asc');
@@ -44,6 +50,12 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
     if (!parsed.success) {
       sendZodFailure(res, 'Validation failed', parsed.error.flatten());
       return;
+    }
+
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: req.params.id, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
     }
 
     const { name, color } = parsed.data;
@@ -76,6 +88,12 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
 
   // DELETE /api/v1/projects/:id/tags/:tagId — delete a tag
   router.delete('/projects/:id/tags/:tagId', authMiddleware, async (req: Request, res: Response) => {
+    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
+    const project = await db('projects').where({ id: req.params.id, org_id: req.user!.orgId }).first();
+    if (!project) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
+    }
+
     const deleted = await db('tags')
       .where({ id: req.params.tagId, project_id: req.params.id })
       .del();
@@ -100,6 +118,12 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
 
     const { tagIds } = parsed.data;
     const { annotationId } = req.params;
+
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotation = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotation) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.', details: {} } });
+    }
 
     await db.transaction(async (trx) => {
       // Remove existing tags
@@ -132,6 +156,12 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
 
   // GET /api/v1/annotations/:annotationId/tags — get tags for an annotation
   router.get('/annotations/:annotationId/tags', authMiddleware, async (req: Request, res: Response) => {
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotation = await db('annotations').where({ id: req.params.annotationId, org_id: req.user!.orgId }).first();
+    if (!annotation) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.', details: {} } });
+    }
+
     const tags = await db('tags')
       .join('annotation_tags', 'tags.id', 'annotation_tags.tag_id')
       .where('annotation_tags.annotation_id', req.params.annotationId)

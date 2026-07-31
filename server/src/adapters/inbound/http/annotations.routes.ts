@@ -470,6 +470,12 @@ export function createAnnotationRoutes(
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
       return;
     }
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
     const triageService = createTriageService(db);
     const [triageResult, suggestions] = await Promise.all([
       triageService.triage(annotation.projectId, {
@@ -491,6 +497,12 @@ export function createAnnotationRoutes(
     const annotationId = paramString(req.params.id);
     const annotation = await annotationRepo.findById(annotationId);
     if (!annotation) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
       return;
     }

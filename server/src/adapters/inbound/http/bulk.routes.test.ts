@@ -10,8 +10,11 @@ import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
  */
 
 function noopAuth(_req: express.Request, _res: express.Response, next: express.NextFunction) {
+  (_req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
   next();
 }
+
+const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
 
 function makeApp(deps: BulkRouteDeps): express.Express {
   const app = express();
@@ -58,13 +61,22 @@ describe('bulk.routes', () => {
     });
 
     it('rejects assign action without assigneeId', async () => {
-      // Mock: whereIn → andWhere chain returns matching annotations
+      // Mock: projects ownership check passes, then whereIn → andWhere chain returns matching annotations
       const update = vi.fn().mockResolvedValue(1);
       const whereIn = vi.fn().mockReturnValue({
         andWhere: vi.fn().mockResolvedValue([{ id: 'a0000000-0000-0000-0000-000000000001', project_id: 'proj-1' }]),
         update,
       });
-      mockDb = vi.fn().mockReturnValue({ whereIn });
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const builder: any = {};
+          const chain = () => builder;
+          builder.where = vi.fn(chain);
+          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID }));
+          return builder;
+        }
+        return { whereIn };
+      });
 
       const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
 
@@ -88,9 +100,16 @@ describe('bulk.routes', () => {
       const andWhere = vi.fn().mockResolvedValue(annotations);
       const whereInForCheck = vi.fn().mockReturnValue({ andWhere });
 
-      // First call is for checking annotations, second for updating
+      // First call is for projects ownership check, second for annotations check, third for update
       let callCount = 0;
-      mockDb = vi.fn().mockImplementation(() => {
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const builder: any = {};
+          const chain = () => builder;
+          builder.where = vi.fn(chain);
+          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID }));
+          return builder;
+        }
         callCount++;
         if (callCount === 1) return { whereIn: whereInForCheck };
         return { whereIn: whereInForUpdate };
@@ -133,6 +152,28 @@ describe('bulk.routes', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('VALIDATION');
+    });
+
+    it('rejects cross-tenant access with 404 when project does not belong to user org', async () => {
+      mockDb = vi.fn().mockImplementation((table: string) => {
+        if (table === 'projects') {
+          const builder: any = {};
+          const chain = () => builder;
+          builder.where = vi.fn(chain);
+          builder.first = vi.fn(() => Promise.resolve(undefined));
+          return builder;
+        }
+        return {};
+      });
+
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app)
+        .post('/api/v1/projects/proj-1/annotations/bulk')
+        .send({ ids: ['a0000000-0000-0000-0000-000000000001'], action: 'resolve' });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('NOT_FOUND');
     });
   });
 });

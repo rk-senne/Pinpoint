@@ -41,8 +41,8 @@ export async function generateDailyDigest(db: Knex, orgId: string): Promise<Dige
       .where('org_id', orgId)
       .where('created_at', '>=', yesterday)
       .whereNotNull('target')
-      .select(db.raw("target->>'selector' as selector"), db.raw('COUNT(*) as count'))
-      .groupByRaw("target->>'selector'")
+      .select(db.raw("target->>'cssSelector' as selector"), db.raw('COUNT(*) as count'))
+      .groupByRaw("target->>'cssSelector'")
       .orderByRaw('COUNT(*) DESC')
       .limit(3),
   ]);

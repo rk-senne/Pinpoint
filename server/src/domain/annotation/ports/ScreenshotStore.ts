@@ -33,6 +33,9 @@ export interface ScreenshotStore {
   uploadScreenshot(input: UploadScreenshotInput): Promise<UploadScreenshotResult>;
   buildScreenshotUrl(objectKey: string): string;
 
+  /** Fetch a screenshot PNG by its object key. Returns null when the key does not exist. */
+  fetchScreenshot(objectKey: string): Promise<Buffer | null>;
+
   uploadMarkupDocument(input: UploadMarkupInput): Promise<UploadMarkupResult>;
   fetchMarkupDocument(screenshotKey: string): Promise<unknown | null>;
 }

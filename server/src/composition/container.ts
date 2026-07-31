@@ -322,6 +322,7 @@ export function buildContainer(config: Config): Container {
       annotationRepo: adapters.annotationRepo,
       resolvePageUrls,
       buildScreenshotUrl: (key) => adapters.screenshotStore.buildScreenshotUrl(key),
+      fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
       applyRedactionBlur: (buffer, rects) => applyRedactionBlurImpl(buffer, rects),
       db,
     },

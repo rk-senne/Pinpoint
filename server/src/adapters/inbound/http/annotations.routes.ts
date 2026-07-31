@@ -66,6 +66,8 @@ export interface AnnotationRouteDeps {
   ) => Promise<Map<string, string>>;
   /** Per-port screenshot URL builder (composition root supplies). */
   buildScreenshotUrl: (objectKey: string) => string;
+  /** Fetches a screenshot PNG from the store by its object key. */
+  fetchScreenshotBuffer: (objectKey: string) => Promise<Buffer | null>;
   /** Optional pre-upload buffer transform (e.g., redaction blur). */
   applyRedactionBlur?: (
     buffer: Buffer,
@@ -506,11 +508,7 @@ export function createAnnotationRoutes(
           const row = await db!('annotations').where('id', id).first('screenshot_object_key');
           return row ? { screenshotObjectKey: row.screenshot_object_key as string | null } : null;
         },
-        fetchScreenshotBuffer: async (_objectKey) => {
-          // Phase 2: wire to screenshotStore.fetchScreenshot(objectKey)
-          // Until fetchScreenshot is added to the ScreenshotStore port, return null.
-          return null;
-        },
+        fetchScreenshotBuffer: deps.fetchScreenshotBuffer,
       },
       annotationId,
       buffer,

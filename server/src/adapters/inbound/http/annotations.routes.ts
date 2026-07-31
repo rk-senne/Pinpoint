@@ -500,7 +500,21 @@ export function createAnnotationRoutes(
     }
     const buffer = Buffer.from(screenshot, 'base64');
     const { checkRegression } = await import('../../../services/visualRegression.js');
-    const result = await checkRegression(db, annotationId, buffer);
+    const result = await checkRegression(
+      {
+        fetchAnnotation: async (id) => {
+          const row = await db!('annotations').where('id', id).first('screenshot_object_key');
+          return row ? { screenshotObjectKey: row.screenshot_object_key as string | null } : null;
+        },
+        fetchScreenshotBuffer: async (_objectKey) => {
+          // Phase 2: wire to screenshotStore.fetchScreenshot(objectKey)
+          // Until fetchScreenshot is added to the ScreenshotStore port, return null.
+          return null;
+        },
+      },
+      annotationId,
+      buffer,
+    );
     res.json(result);
   });
 

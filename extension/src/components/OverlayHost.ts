@@ -67,7 +67,7 @@ import { io } from 'socket.io-client';
 
 import { adoptStyles } from '../styles/sharedStyleSheet';
 import { DOMTargetResolver } from '../lib/DOMTargetResolver';
-import { DEFAULT_API_ORIGIN } from '../lib/api';
+import { DEFAULT_API_ORIGIN, requestTriage } from '../lib/api';
 import { withBoundary } from '../lib/withBoundary';
 import {
   PinPositioner,
@@ -103,6 +103,7 @@ import type {
   PopoverSubmitDetail,
   PopoverStatusChangeDetail,
   PopoverCommentSubmitDetail,
+  PopoverTriageRequestDetail,
 } from './Popover';
 import type { FlClusterListPopover } from './ClusterListPopover';
 import { popoverTargetFromRect } from './ClusterListPopover';
@@ -307,6 +308,8 @@ export class FlOverlayHost extends HTMLElement {
 
   // --- configuration ---
   #projectId: string | null = null;
+  /** Monotonic counter so only the latest triage response is applied. */
+  #triageSeq = 0;
   #pageId: string | null = null;
   #token: string | null = null;
   #serverUrl: string = DEFAULT_API_ORIGIN;
@@ -1073,6 +1076,7 @@ export class FlOverlayHost extends HTMLElement {
     this.#popover.addEventListener('close', this.#onPopoverClose);
     this.#popover.addEventListener('status-change', this.#onPopoverStatusChange);
     this.#popover.addEventListener('comment-submit', this.#onPopoverCommentSubmit);
+    this.#popover.addEventListener('triage-request', this.#onPopoverTriageRequest);
     this.#clusterList.addEventListener('annotation-select', this.#onClusterListSelect);
     this.#clusterList.addEventListener('close', this.#onClusterListClose);
     this.#toolbar.addEventListener('close', this.#onOverlayClose);
@@ -1085,6 +1089,7 @@ export class FlOverlayHost extends HTMLElement {
     this.#sidebar.removeEventListener('annotation-select', this.#onAnnotationSelect);
     this.#sidebar.removeEventListener('close', this.#onOverlayClose);
     this.#popover.removeEventListener('submit', this.#onPopoverSubmit);
+    this.#popover.removeEventListener('triage-request', this.#onPopoverTriageRequest);
     this.#popover.removeEventListener('cancel', this.#onPopoverCancel);
     this.#popover.removeEventListener('close', this.#onPopoverClose);
     this.#popover.removeEventListener('status-change', this.#onPopoverStatusChange);
@@ -1230,6 +1235,24 @@ export class FlOverlayHost extends HTMLElement {
         /* best-effort */
       }
     }
+  };
+
+  #onPopoverTriageRequest = (event: Event): void => {
+    const detail = (event as CustomEvent<PopoverTriageRequestDetail>).detail;
+    const projectId = this.#projectId;
+    if (!projectId || !detail || typeof detail.body !== 'string') return;
+    // Race guard: only the newest request's result is applied to the popover,
+    // so out-of-order responses from earlier keystrokes are ignored.
+    const seq = ++this.#triageSeq;
+    void requestTriage(projectId, { body: detail.body, target: detail.target })
+      .then((suggestions) => {
+        if (seq !== this.#triageSeq) return;
+        this.#popover.showTriageSuggestions(suggestions);
+      })
+      .catch(() => {
+        // Best-effort enhancement — never interrupt drafting on triage
+        // failure (offline, 401, 5xx). Leave the current hint untouched.
+      });
   };
 
   #onPopoverStatusChange = (event: Event): void => {

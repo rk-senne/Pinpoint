@@ -8,7 +8,8 @@
     "dashboard",
     "extension",
     "e2e",
-    "mobile-sdk"
+    "mobile-sdk",
+    "widget"
   ],
   "engines": {
     "node": ">=20"

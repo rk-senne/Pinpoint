@@ -9,6 +9,28 @@ import type { User } from '@pinpoint/shared';
 export const API_BASE = '/api/v1';
 
 /**
+ * Custom error class thrown by `apiFetch` on non-2xx responses.
+ * Exposes the structured `code` and optional `details` from the API's
+ * standard error envelope `{ error: { code, message, details? } }` so
+ * callers can branch on specific error codes (e.g. `EMAIL_NOT_VERIFIED`).
+ */
+export class ApiError extends Error {
+  public readonly code: string;
+  public readonly details?: unknown;
+  public readonly status: number;
+
+  constructor(message: string, code: string, status: number, details?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+    // Fix prototype chain for instanceof checks in transpiled ES5 output.
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+/**
  * The set of HTTP methods that mutate state on the server. The CSRF
  * middleware enforces `X-CSRF-Token == fl_csrf` cookie on exactly these
  * methods (Req 18.4, 18.5). Read-only requests (`GET`, `HEAD`, `OPTIONS`)
@@ -59,8 +81,10 @@ export async function apiFetch<T>(
     const body = await res.json().catch(() => null);
     const message =
       body?.error?.message || `Request failed with status ${res.status}`;
+    const code: string = body?.error?.code || 'UNKNOWN_ERROR';
+    const details: unknown = body?.error?.details;
     showToast({ message, variant: 'error' });
-    throw new Error(message);
+    throw new ApiError(message, code, res.status, details);
   }
 
   return res.json() as Promise<T>;

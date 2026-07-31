@@ -51,6 +51,15 @@ async function main(): Promise<void> {
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
+
+  // Safety net for truly unhandled errors (production reliability).
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason }, 'Unhandled promise rejection');
+  });
+  process.on('uncaughtException', (err) => {
+    logger.fatal({ err }, 'Uncaught exception — shutting down');
+    container.stop().finally(() => process.exit(1));
+  });
 }
 
 if (process.env.NODE_ENV !== 'test') {

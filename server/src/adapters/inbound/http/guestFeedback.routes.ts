@@ -7,6 +7,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
+import { paramString } from './errors.js';
 import type { AnnotationRepo } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { SharedLinkRepo } from '../../../domain/sharedLink/ports/SharedLinkRepo.js';
 import type { PageRepo } from '../../../domain/project/ports/PageRepo.js';
@@ -49,7 +50,7 @@ export function createGuestFeedbackRoutes(deps: GuestFeedbackRouteDeps): Router 
     '/:linkId/feedback',
     guestFeedbackLimiter,
     async (req: Request, res: Response) => {
-      const linkId = req.params.linkId;
+      const linkId = paramString(req.params.linkId);
       if (!linkId) {
         return res.status(400).json({
           error: { code: 'VALIDATION', message: 'linkId parameter is required.' },

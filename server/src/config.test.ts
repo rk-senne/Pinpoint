@@ -24,10 +24,15 @@ const NON_PRODUCTION_ENVS: ReadonlyArray<string | undefined> = [
   undefined,
 ];
 
-function buildEnv(nodeEnv: string | undefined, jwtSecret: string | undefined): NodeJS.ProcessEnv {
+function buildEnv(
+  nodeEnv: string | undefined,
+  jwtSecret: string | undefined,
+  corsOrigin?: string,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   if (nodeEnv !== undefined) env.NODE_ENV = nodeEnv;
   if (jwtSecret !== undefined) env.JWT_SECRET = jwtSecret;
+  if (corsOrigin !== undefined) env.CORS_ORIGIN = corsOrigin;
   return env;
 }
 
@@ -42,13 +47,27 @@ describe('validateConfig', () => {
     );
 
     it('passes when JWT_SECRET is a strong random secret', () => {
-      const env = buildEnv('production', 'a-strong-random-secret');
+      const env = buildEnv('production', 'a-strong-random-secret', 'https://app.pinpoint.dev');
       expect(() => validateConfig(env)).not.toThrow();
     });
 
     it('passes for any other non-empty, non-blocklisted secret', () => {
-      const env = buildEnv('production', 's3cret-with-entropy-9f8a2b1c4d5e6f70');
+      const env = buildEnv(
+        'production',
+        's3cret-with-entropy-9f8a2b1c4d5e6f70',
+        'https://app.pinpoint.dev',
+      );
       expect(() => validateConfig(env)).not.toThrow();
+    });
+
+    it('throws when CORS_ORIGIN is unset in production (even with a strong secret)', () => {
+      const env = buildEnv('production', 'a-strong-random-secret');
+      expect(() => validateConfig(env)).toThrow(InvalidConfigError);
+    });
+
+    it('throws when CORS_ORIGIN is a wildcard in production', () => {
+      const env = buildEnv('production', 'a-strong-random-secret', '*');
+      expect(() => validateConfig(env)).toThrow(InvalidConfigError);
     });
   });
 

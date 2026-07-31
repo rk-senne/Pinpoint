@@ -39,7 +39,7 @@ import type {
   MarkupDocument,
   User,
 } from '@pinpoint/shared';
-import { SEVERITY_COLORS, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
+import { SEVERITY_COLORS, SEVERITY_SHAPES, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
 import { mountReplayPlayer } from '../components/ReplayPlayer';
@@ -838,6 +838,10 @@ export function mountProjectView(
       const row = rowFragment.firstElementChild as HTMLElement;
       const sevSpan = row.querySelector<HTMLElement>('[data-slot="severity"]');
       if (sevSpan) {
+        // B7: Shape indicator alongside color for WCAG 1.4.1 (not color alone)
+        const shape = SEVERITY_SHAPES[a.severity as SeverityKey] ?? '';
+        sevSpan.textContent = `${shape} ${a.severity}`;
+        sevSpan.setAttribute('data-severity', a.severity);
         attr(
           sevSpan,
           'style',

@@ -25,6 +25,8 @@
 import type { Project } from '@pinpoint/shared';
 
 import { apiFetch as defaultApiFetch } from '../lib/api';
+import { showToast } from './Toast';
+import { trapFocus, linkInputToError } from '../lib/a11y';
 import {
   attr,
   bind,
@@ -305,6 +307,10 @@ export function mountProjectListSidebar(
           method: 'PUT',
           body: JSON.stringify({ status: newStatus }),
         });
+        showToast({
+          message: newStatus === 'archived' ? 'Project archived' : 'Project unarchived',
+          variant: 'success',
+        });
         await refresh();
       },
       delete: async () => {
@@ -315,6 +321,7 @@ export function mountProjectListSidebar(
           )
         ) {
           await apiFetch(`/projects/${project.id}`, { method: 'DELETE' });
+          showToast({ message: 'Project deleted', variant: 'success' });
           await refresh();
         }
       },
@@ -419,6 +426,9 @@ export function mountProjectListSidebar(
 
     panel.addEventListener('click', (e) => e.stopPropagation());
 
+    // B7 Accessibility: link inputs to error element and trap focus in dialog
+    linkInputToError(nameInput, errorEl);
+    const releaseFocus = trapFocus(panel);
     const teardown = bindEvents(overlay, {
       closeOverlay: closeDialog,
       cancel: closeDialog,
@@ -438,6 +448,7 @@ export function mountProjectListSidebar(
             method: 'POST',
             body: JSON.stringify({ name, urls: [url] }),
           });
+          showToast({ message: 'Project created', variant: 'success' });
           closeDialog();
           await refresh();
         } catch (err) {
@@ -452,6 +463,7 @@ export function mountProjectListSidebar(
     queueMicrotask(() => nameInput.focus());
 
     openDialogCleanup = () => {
+      releaseFocus();
       teardown();
       overlay.remove();
     };

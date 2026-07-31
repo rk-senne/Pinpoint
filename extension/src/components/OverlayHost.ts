@@ -271,7 +271,7 @@ const TEMPLATE = (() => {
 })();
 
 export class FlOverlayHost extends HTMLElement {
-  static readonly tagName = 'fl-overlay-host';
+  static readonly tagName = 'pp-overlay-host';
 
   // --- store + lifecycle ---
   #store: OverlayStore;
@@ -1538,6 +1538,11 @@ if (typeof customElements !== 'undefined' && !customElements.get(FlOverlayHost.t
   withBoundary(FlOverlayHost.prototype, 'connectedCallback');
   withBoundary(FlOverlayHost.prototype, 'disconnectedCallback');
   customElements.define(FlOverlayHost.tagName, FlOverlayHost);
+  const flOverlayTag = FlOverlayHost.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flOverlayTag)) {
+    const LegacyOverlay = class extends FlOverlayHost {};
+    customElements.define(flOverlayTag, LegacyOverlay);
+  }
 }
 
 declare global {

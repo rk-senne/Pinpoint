@@ -44,7 +44,7 @@ import {
   text,
 } from '../lib/render';
 
-type SettingsTab = 'profile' | 'notifications' | 'guidelines' | 'teams';
+type SettingsTab = 'profile' | 'notifications' | 'guidelines' | 'teams' | 'appearance';
 
 interface NotificationRow {
   key: keyof NotificationPreferences;
@@ -94,14 +94,33 @@ export function mountSettingsPage(
     ) as HTMLButtonElement,
     guidelines: requireRole(contentRoot, 'tab-guidelines') as HTMLButtonElement,
     teams: requireRole(contentRoot, 'tab-teams') as HTMLButtonElement,
+    appearance: requireRole(contentRoot, 'tab-appearance') as HTMLButtonElement,
   };
   const tabSections: Record<SettingsTab, HTMLElement> = {
     profile: requireSection(contentRoot, 'profile'),
     notifications: requireSection(contentRoot, 'notifications'),
     guidelines: requireSection(contentRoot, 'guidelines'),
     teams: requireSection(contentRoot, 'teams'),
+    appearance: requireSection(contentRoot, 'appearance'),
   };
   const teamsContainer = requireRole(contentRoot, 'teams-container');
+
+  // Theme select (Appearance tab — B5 Dark Mode).
+  const themeSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="theme-select"]');
+  if (themeSelect) {
+    // Sync the select to the stored preference on mount.
+    const stored = localStorage.getItem('pinpoint_theme') || 'system';
+    themeSelect.value = stored;
+    themeSelect.addEventListener('change', () => {
+      const value = themeSelect.value as 'light' | 'dark' | 'system';
+      localStorage.setItem('pinpoint_theme', value);
+      if (value === 'light' || value === 'dark') {
+        document.documentElement.setAttribute('data-theme', value);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    });
+  }
 
   // Profile refs.
   const profileLoading = requireRole(contentRoot, 'profile-loading');
@@ -501,6 +520,10 @@ export function mountSettingsPage(
     selectTeams: (e) => {
       e.preventDefault();
       setActiveTab('teams');
+    },
+    selectAppearance: (e) => {
+      e.preventDefault();
+      setActiveTab('appearance');
     },
     saveProfile: (e) => {
       e.preventDefault();

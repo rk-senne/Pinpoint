@@ -26,6 +26,7 @@ export class FakeSharedLinkRepo implements SharedLinkRepo {
       createdAt: this.clock.now().toISOString(),
       failedAttempts: 0,
       lockedUntil: null,
+      allowFeedback: input.allowFeedback ?? false,
     };
     this.links.set(id, link);
     return { ...link };

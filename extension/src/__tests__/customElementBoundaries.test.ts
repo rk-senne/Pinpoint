@@ -62,7 +62,7 @@ describe('Custom Element error boundaries (Req 50.1)', () => {
     // The error tag is appended to the open Shadow Root since the
     // probe attached one. (`pickRenderRoot` in `withBoundary`
     // prefers the Shadow Root when it exists.)
-    const tag = el.shadowRoot!.querySelector('fl-error-tag');
+    const tag = el.shadowRoot!.querySelector('pp-error-tag, fl-error-tag');
     expect(tag).not.toBeNull();
     expect(tag!.hasAttribute('data-fl-error-tag')).toBe(true);
 
@@ -106,7 +106,7 @@ describe('Custom Element error boundaries (Req 50.1)', () => {
     expect(consoleSpy).toHaveBeenCalledTimes(3);
 
     // Exactly ONE error tag despite three failures.
-    expect(el.shadowRoot!.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(el.shadowRoot!.querySelectorAll('pp-error-tag')).toHaveLength(1);
 
     el.remove();
   });

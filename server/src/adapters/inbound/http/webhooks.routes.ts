@@ -5,7 +5,7 @@ import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
 import { WEBHOOK_EVENTS } from '../../../domain/webhook/Webhook.js';
 import type { RegisterWebhook, DeleteWebhook } from '../../../domain/webhook/usecases/webhooks.js';
 import type { WebhookRepo } from '../../../domain/webhook/ports/WebhookRepo.js';
-import { sendDomainError, sendZodFailure } from './errors.js';
+import { sendDomainError, sendZodFailure, paramString } from './errors.js';
 import { recordAudit } from './auditLog.routes.js';
 
 export interface WebhookRouteDeps {
@@ -97,7 +97,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
       }
     }
 
-    const updated = await webhookRepo.update(req.params.id, req.user!.orgId, parsed.data);
+    const updated = await webhookRepo.update(paramString(req.params.id), req.user!.orgId, parsed.data);
     if (!updated) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Webhook not found' } }); return; }
     const { secret, ...rest } = updated;
     res.json({ webhook: rest });
@@ -105,23 +105,23 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
 
   // DELETE /api/v1/webhooks/:id
   router.delete('/:id', async (req: Request, res: Response) => {
-    const result = await deleteWebhook.execute(req.params.id, req.user!.orgId);
+    const result = await deleteWebhook.execute(paramString(req.params.id), req.user!.orgId);
     if (!result.ok) { sendDomainError(res, result.error); return; }
     await recordAudit(db, {
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'webhook.deleted',
       resourceType: 'webhook',
-      resourceId: req.params.id,
+      resourceId: paramString(req.params.id),
     });
     res.status(204).end();
   });
 
   // GET /api/v1/webhooks/:id/deliveries
   router.get('/:id/deliveries', async (req: Request, res: Response) => {
-    const endpoint = await webhookRepo.findById(req.params.id, req.user!.orgId);
+    const endpoint = await webhookRepo.findById(paramString(req.params.id), req.user!.orgId);
     if (!endpoint) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Webhook not found' } }); return; }
-    const deliveries = await webhookRepo.listDeliveries(req.params.id, 50);
+    const deliveries = await webhookRepo.listDeliveries(paramString(req.params.id), 50);
     res.json({ deliveries });
   });
 

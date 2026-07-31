@@ -18,6 +18,49 @@ function sendError(res: Response, status: number, code: string, message: string,
   return res.status(status).json(body);
 }
 
+// --- Zod schemas for premium route inputs ---
+
+const CreateBoardSchema = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  slug: z.string().regex(/^[a-z0-9-]+$/, 'slug must be lowercase alphanumeric with hyphens').min(2).max(80),
+  description: z.string().max(1000).optional(),
+});
+
+const CreateBoardPostSchema = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().min(1).max(5000),
+  email: z.string().email(),
+  name: z.string().max(100).optional(),
+});
+
+const VoteSchema = z.object({
+  email: z.string().email(),
+});
+
+const CsatRequestSchema = z.object({
+  annotationId: z.string().uuid(),
+});
+
+const CsatRateSchema = z.object({
+  score: z.number().int().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+const CreateWorkflowSchema = z.object({
+  name: z.string().min(1).max(200),
+  projectId: z.string().uuid().optional(),
+  steps: z.array(z.object({
+    approver: z.string().min(1),
+    role: z.string().optional(),
+  })).min(1).max(20),
+});
+
+const StartApprovalSchema = z.object({
+  workflowId: z.string().uuid(),
+  annotationId: z.string().uuid(),
+});
+
 export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   const { authMiddleware, db } = deps;
   const router = Router();
@@ -26,8 +69,9 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
 
   // POST /api/v1/boards — create board (auth required)
   router.post('/boards', authMiddleware, async (req: Request, res: Response) => {
-    const { projectId, title, slug, description } = req.body;
-    if (!projectId || !title || !slug) { sendError(res, 400, 'VALIDATION', 'projectId, title, slug required'); return; }
+    const parsed = CreateBoardSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid board payload.', parsed.error.flatten()); return; }
+    const { projectId, title, slug, description } = parsed.data;
     const [board] = await db('feedback_boards').insert({ org_id: req.user!.orgId, project_id: projectId, slug, title, description }).returning('*');
     res.status(201).json({ board });
   });
@@ -44,16 +88,18 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   router.post('/board/:slug/posts', async (req: Request, res: Response) => {
     const board = await db('feedback_boards').where({ slug: req.params.slug, active: true, allow_submissions: true }).first();
     if (!board) { sendError(res, 404, 'NOT_FOUND', 'Board not found or submissions disabled'); return; }
-    const { title, body, email, name } = req.body;
-    if (!title || !body || !email) { sendError(res, 400, 'VALIDATION', 'title, body, email required'); return; }
+    const parsed = CreateBoardPostSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid post payload.', parsed.error.flatten()); return; }
+    const { title, body, email, name } = parsed.data;
     const [post] = await db('board_posts').insert({ board_id: board.id, title, body, author_email: email, author_name: name }).returning('*');
     res.status(201).json({ post });
   });
 
   // POST /board/:slug/posts/:postId/vote — vote on a post
   router.post('/board/:slug/posts/:postId/vote', async (req: Request, res: Response) => {
-    const { email } = req.body;
-    if (!email) { sendError(res, 400, 'VALIDATION', 'email required'); return; }
+    const parsed = VoteSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid vote payload.', parsed.error.flatten()); return; }
+    const { email } = parsed.data;
     const board = await db('feedback_boards').where({ slug: req.params.slug }).first();
     if (!board) { sendError(res, 404, 'NOT_FOUND', 'Board not found'); return; }
     try {
@@ -67,8 +113,9 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
 
   // POST /api/v1/csat/request — request CSAT rating (called after annotation resolved)
   router.post('/csat/request', authMiddleware, async (req: Request, res: Response) => {
-    const { annotationId } = req.body;
-    if (!annotationId) { sendError(res, 400, 'VALIDATION', 'annotationId is required'); return; }
+    const parsed = CsatRequestSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid CSAT request.', parsed.error.flatten()); return; }
+    const { annotationId } = parsed.data;
     const annotation = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId, status: 'resolved' }).first();
     if (!annotation) { sendError(res, 404, 'NOT_FOUND', 'Resolved annotation not found'); return; }
     const token = randomBytes(32).toString('hex');
@@ -81,8 +128,9 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
 
   // POST /api/v1/csat/rate/:token — submit rating (no auth, token-based)
   router.post('/csat/rate/:token', async (req: Request, res: Response) => {
-    const { score, comment } = req.body;
-    if (!score || score < 1 || score > 5) { sendError(res, 400, 'VALIDATION', 'score 1-5 required'); return; }
+    const parsed = CsatRateSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid rating.', parsed.error.flatten()); return; }
+    const { score, comment } = parsed.data;
     const updated = await db('satisfaction_scores').where({ token: req.params.token }).whereNull('rated_at')
       .update({ score, comment, rated_at: new Date() });
     if (!updated) { sendError(res, 404, 'NOT_FOUND', 'Invalid or already rated'); return; }
@@ -99,8 +147,9 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   // ==================== APPROVAL WORKFLOWS ====================
 
   router.post('/approvals/workflows', authMiddleware, async (req: Request, res: Response) => {
-    const { name, projectId, steps } = req.body;
-    if (!name || !steps?.length) { sendError(res, 400, 'VALIDATION', 'name and steps are required'); return; }
+    const parsed = CreateWorkflowSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid workflow.', parsed.error.flatten()); return; }
+    const { name, projectId, steps } = parsed.data;
     const [workflow] = await db('approval_workflows').insert({
       org_id: req.user!.orgId, project_id: projectId, name, steps: JSON.stringify(steps),
     }).returning('*');
@@ -113,7 +162,9 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   });
 
   router.post('/approvals/start', authMiddleware, async (req: Request, res: Response) => {
-    const { workflowId, annotationId } = req.body;
+    const parsed = StartApprovalSchema.safeParse(req.body);
+    if (!parsed.success) { sendZodFailure(res, 'Invalid approval start.', parsed.error.flatten()); return; }
+    const { workflowId, annotationId } = parsed.data;
     const workflow = await db('approval_workflows').where({ id: workflowId, org_id: req.user!.orgId }).first();
     if (!workflow) { sendError(res, 404, 'NOT_FOUND', 'Workflow not found'); return; }
     const [instance] = await db('approval_instances').insert({ workflow_id: workflowId, annotation_id: annotationId }).returning('*');

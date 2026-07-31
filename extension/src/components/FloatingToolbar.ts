@@ -116,7 +116,7 @@ const TEMPLATE = (() => {
 type FloatingToolbarAction = 'close' | 'avatar' | 'share' | 'link';
 
 export class FlFloatingToolbar extends HTMLElement {
-  static readonly tagName = 'fl-floating-toolbar';
+  static readonly tagName = 'pp-floating-toolbar';
 
   #avatarUrl: string | null = null;
   #isOffline: boolean = false;
@@ -333,6 +333,11 @@ if (
   withBoundary(FlFloatingToolbar.prototype, 'connectedCallback');
   withBoundary(FlFloatingToolbar.prototype, 'disconnectedCallback');
   customElements.define(FlFloatingToolbar.tagName, FlFloatingToolbar);
+  const flToolbarTag = FlFloatingToolbar.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flToolbarTag)) {
+    const LegacyToolbar = class extends FlFloatingToolbar {};
+    customElements.define(flToolbarTag, LegacyToolbar);
+  }
 }
 
 declare global {

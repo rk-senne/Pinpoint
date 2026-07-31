@@ -46,7 +46,7 @@ describe('<fl-mention-autocomplete>', () => {
   });
 
   it('is registered as a Custom Element', () => {
-    expect(customElements.get('fl-mention-autocomplete')).toBe(FlMentionAutocomplete);
+    expect(customElements.get('pp-mention-autocomplete')).toBe(FlMentionAutocomplete); expect(customElements.get('fl-mention-autocomplete')).toBeDefined();
   });
 
   it('extends HTMLElement and attaches an open Shadow Root', () => {

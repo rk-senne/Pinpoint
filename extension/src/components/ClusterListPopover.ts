@@ -212,7 +212,7 @@ function firstLineOf(body: string): string {
 }
 
 export class FlClusterListPopover extends HTMLElement {
-  static readonly tagName = 'fl-cluster-list-popover';
+  static readonly tagName = 'pp-cluster-list-popover';
 
   // --- Public-property backing fields ---
   #annotations: Annotation[] = [];
@@ -576,6 +576,17 @@ if (
   withBoundary(FlClusterListPopover.prototype, 'connectedCallback');
   withBoundary(FlClusterListPopover.prototype, 'disconnectedCallback');
   customElements.define(FlClusterListPopover.tagName, FlClusterListPopover);
+  const flClusterListTag = FlClusterListPopover.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flClusterListTag)) {
+    const LegacyClusterList = class extends FlClusterListPopover {};
+    customElements.define(flClusterListTag, LegacyClusterList);
+  }
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const legacy_FlClusterListPopover_tag = FlClusterListPopover.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(legacy_FlClusterListPopover_tag)) {
+    const LegacyFlClusterListPopover = class extends FlClusterListPopover {};
+    customElements.define(legacy_FlClusterListPopover_tag, LegacyFlClusterListPopover);
+  }
 }
 
 declare global {

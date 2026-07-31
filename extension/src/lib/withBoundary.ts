@@ -29,7 +29,8 @@
  * pattern.
  */
 
-const ERROR_TAG_NAME = 'fl-error-tag';
+const ERROR_TAG_NAME = 'pp-error-tag';
+const LEGACY_ERROR_TAG_NAME = 'fl-error-tag';
 
 /**
  * Marker attribute used to detect an already-rendered error tag inside an
@@ -89,6 +90,11 @@ export class FlErrorTag extends HTMLElement {
 // not throw "this name has already been used".
 if (typeof customElements !== 'undefined' && !customElements.get(FlErrorTag.tagName)) {
   customElements.define(FlErrorTag.tagName, FlErrorTag);
+}
+// Legacy fl- alias (Mission E4)
+if (typeof customElements !== 'undefined' && !customElements.get(LEGACY_ERROR_TAG_NAME)) {
+  const LegacyErrorTag = class extends FlErrorTag {};
+  customElements.define(LEGACY_ERROR_TAG_NAME, LegacyErrorTag);
 }
 
 declare global {

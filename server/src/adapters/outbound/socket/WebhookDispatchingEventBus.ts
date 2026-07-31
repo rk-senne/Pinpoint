@@ -25,17 +25,6 @@ const ACTIVITY_EVENT_TYPES = new Set<string>([
 ]);
 
 /**
- * Extracts the orgId from an event payload.
- * Use cases embed orgId in the payload for scoping.
- */
-function extractOrgId(payload: unknown): string | undefined {
-  if (payload && typeof payload === 'object' && 'orgId' in payload) {
-    return (payload as { orgId: string }).orgId;
-  }
-  return undefined;
-}
-
-/**
  * Extracts fields required for recording an activity event from a
  * DomainEvent's payload.
  */
@@ -95,20 +84,16 @@ export class WebhookDispatchingEventBus implements EventBus {
     // Always forward to the primary (Socket.IO) bus
     this.primary.emit(event);
 
-    // If this event type is a webhook event, dispatch asynchronously
+    // If this event type is a webhook event, dispatch asynchronously. Most
+    // domain events are project-scoped and do NOT embed orgId, so resolution
+    // falls back to a projects.org_id lookup (see resolveOrgId). Previously
+    // this read payload.orgId directly and silently skipped every event that
+    // lacked it — which was every annotation/comment event — so webhooks
+    // never fired (INCONSISTENCIES.md #5).
     if (WEBHOOK_EVENT_SET.has(event.type)) {
-      const orgId = extractOrgId(event.payload);
-      if (orgId) {
-        this.dispatchWebhook
-          .execute({
-            orgId,
-            eventType: event.type as WebhookEventType,
-            payload: event.payload as Record<string, unknown>,
-          })
-          .catch((err) => {
-            this.logger.error({ eventType: event.type, orgId, error: err }, 'Webhook dispatch failed');
-          });
-      }
+      this.dispatchWebhookEvent(event).catch((err) => {
+        this.logger.error({ eventType: event.type, error: err }, 'Webhook dispatch failed');
+      });
     }
 
     // Record activity for relevant event types
@@ -133,5 +118,41 @@ export class WebhookDispatchingEventBus implements EventBus {
       resource_id: resourceId ?? null,
       metadata: JSON.stringify(event.payload ?? {}),
     });
+  }
+
+  /**
+   * Resolve the owning orgId for a webhook event, then dispatch. orgId is
+   * used directly when the payload carries it; otherwise it is resolved from
+   * the payload's projectId via a projects.org_id lookup (most domain events
+   * are project-scoped and do not embed orgId). Skips with a warning when no
+   * org can be determined, so a missing scope is observable, not silent.
+   */
+  private async dispatchWebhookEvent(event: DomainEvent): Promise<void> {
+    const orgId = await this.resolveOrgId(event.payload);
+    if (!orgId) {
+      this.logger.warn(
+        { eventType: event.type },
+        'Webhook dispatch skipped: could not resolve orgId for event',
+      );
+      return;
+    }
+    await this.dispatchWebhook.execute({
+      orgId,
+      eventType: event.type as WebhookEventType,
+      payload: event.payload as Record<string, unknown>,
+    });
+  }
+
+  private async resolveOrgId(payload: unknown): Promise<string | undefined> {
+    if (!payload || typeof payload !== 'object') return undefined;
+    const p = payload as Record<string, unknown>;
+    if (typeof p.orgId === 'string') return p.orgId;
+    if (typeof p.projectId === 'string') {
+      const row = (await this.db('projects').where({ id: p.projectId }).first('org_id')) as
+        | { org_id?: string }
+        | undefined;
+      return row?.org_id ?? undefined;
+    }
+    return undefined;
   }
 }

@@ -18,11 +18,11 @@ import { FlErrorTag, renderInlineErrorTag, withBoundary } from './withBoundary';
 
 describe('FlErrorTag custom element', () => {
   it('is registered under <fl-error-tag>', () => {
-    expect(customElements.get('fl-error-tag')).toBe(FlErrorTag);
+    expect(customElements.get('pp-error-tag')).toBe(FlErrorTag); expect(customElements.get('fl-error-tag')).toBeDefined();
   });
 
   it('renders the "Something went wrong" indicator with role="alert"', () => {
-    const tag = document.createElement('fl-error-tag') as FlErrorTag;
+    const tag = document.createElement('pp-error-tag') as FlErrorTag;
     document.body.appendChild(tag);
     const span = tag.shadowRoot!.querySelector('span.fl-error-tag') as HTMLSpanElement;
     expect(span).not.toBeNull();
@@ -43,7 +43,7 @@ describe('renderInlineErrorTag', () => {
 
     renderInlineErrorTag(host);
 
-    const tag = host.querySelector('fl-error-tag');
+    const tag = host.querySelector('pp-error-tag, fl-error-tag');
     expect(tag).not.toBeNull();
     expect(tag!.hasAttribute('data-fl-error-tag')).toBe(true);
   });
@@ -55,8 +55,8 @@ describe('renderInlineErrorTag', () => {
 
     renderInlineErrorTag(host);
 
-    expect(host.querySelector('fl-error-tag')).toBeNull();
-    expect(shadow.querySelector('fl-error-tag')).not.toBeNull();
+    expect(host.querySelector('pp-error-tag, fl-error-tag')).toBeNull();
+    expect(shadow.querySelector('pp-error-tag')).not.toBeNull();
   });
 
   it('is idempotent: calling it twice on the same host renders one tag', () => {
@@ -67,7 +67,7 @@ describe('renderInlineErrorTag', () => {
     renderInlineErrorTag(host);
     renderInlineErrorTag(host);
 
-    expect(host.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(host.querySelectorAll('pp-error-tag')).toHaveLength(1);
   });
 
   it('is a no-op when host is null/undefined', () => {
@@ -148,7 +148,7 @@ describe('withBoundary', () => {
 
     (host as unknown as { doWork(): void }).doWork();
 
-    expect(host.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(host.querySelectorAll('pp-error-tag')).toHaveLength(1);
   });
 
   it('does not propagate the error to the caller', () => {
@@ -182,7 +182,7 @@ describe('withBoundary', () => {
 
     expect(result).toBeUndefined();
     expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(host.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(host.querySelectorAll('pp-error-tag')).toHaveLength(1);
   });
 
   it('passes async resolved values through unchanged', async () => {
@@ -220,7 +220,7 @@ describe('withBoundary', () => {
     expect(calls).toBe(3);
     expect(consoleSpy).toHaveBeenCalledTimes(3);
     // Exactly ONE error tag despite three failures.
-    expect(host.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(host.querySelectorAll('pp-error-tag')).toHaveLength(1);
   });
 
   it('throws TypeError if methodName does not resolve to a function on target', () => {
@@ -248,7 +248,7 @@ describe('withBoundary', () => {
     const el = document.createElement('fl-boom-test') as FlBoom;
     expect(() => document.body.appendChild(el)).not.toThrow();
 
-    expect(el.querySelectorAll('fl-error-tag')).toHaveLength(1);
+    expect(el.querySelectorAll('pp-error-tag')).toHaveLength(1);
     expect(consoleSpy).toHaveBeenCalledTimes(1);
 
     el.remove();

@@ -77,7 +77,12 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
   // GET /api/v1/org/members — list org members
   router.get('/members', authMiddleware, async (req: Request, res: Response) => {
     const members = await membershipRepo.listByOrgWithUsers(req.user!.orgId);
-    res.json({ members });
+    // Return paginated envelope for API consistency (MISSION-A2).
+    // Org members are typically small lists, so we paginate client-side.
+    res.json({
+      data: members,
+      pagination: { page: 1, pageSize: members.length, total: members.length, totalPages: 1 },
+    });
   });
 
   // DELETE /api/v1/org/members/:userId — remove member (owner/admin only)

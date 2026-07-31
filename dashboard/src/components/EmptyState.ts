@@ -123,7 +123,7 @@ const CONFIGS: Record<EmptyStateType, EmptyStateConfig> = {
     svg: SVG_NO_SEARCH_RESULTS,
     title: 'No results found',
     description:
-      'Try adjusting your search or filter criteria to find what you're looking for.',
+      "Try adjusting your search or filter criteria to find what you\u2019re looking for.",
   },
 };
 

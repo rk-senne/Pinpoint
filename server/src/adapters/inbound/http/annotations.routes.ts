@@ -39,6 +39,7 @@ import type { AttachScreenshot } from '../../../domain/annotation/usecases/attac
 import type { AnnotationRepo } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { AnnotationPatch } from '../../../domain/annotation/Annotation.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
+import { invalidateCache } from '../../../middleware/cache.js';
 import { createTriageService } from '../../../services/triage.js';
 import { getSuggestions } from '../../../services/smartSuggestions.js';
 
@@ -255,6 +256,7 @@ export function createAnnotationRoutes(
       res.status(200).json({ annotation: formatAnnotation(annotation, pageUrl) });
       return;
     }
+    invalidateCache(`/api/v1/projects/${projectId}/analytics`);
     res.status(201).json({ annotation: formatAnnotation(annotation, pageUrl) });
   });
 
@@ -318,6 +320,7 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
   });
 
@@ -330,6 +333,8 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    // Invalidate analytics cache; projectId isn't returned by delete, so clear all analytics.
+    invalidateCache('/api/v1/projects/');
     res.status(200).json({ message: 'Annotation deleted successfully.' });
   });
 
@@ -348,6 +353,7 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
   });
 
@@ -465,10 +471,38 @@ export function createAnnotationRoutes(
     const orgId = req.user!.orgId;
     const triageService = createTriageService(db);
     const [triageResult, suggestions] = await Promise.all([
-      triageService.triage(orgId, annotation.body, annotation.target as unknown as Record<string, unknown>),
+      triageService.triage(annotation.projectId, {
+        body: annotation.body,
+        target: annotation.target,
+        excludeId: annotationId,
+      }),
       getSuggestions(db, orgId, annotationId),
     ]);
     res.json({ triage: triageResult, suggestions });
+  });
+
+  // --- Visual regression check (premium feature) ---
+  annotationRouter.post('/:id/check-regression', async (req: Request, res: Response) => {
+    if (!db) {
+      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Visual regression not available.' } });
+      return;
+    }
+    const annotationId = paramString(req.params.id);
+    const annotation = await annotationRepo.findById(annotationId);
+    if (!annotation) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    // Expect base64-encoded screenshot in body
+    const { screenshot } = req.body as { screenshot?: string };
+    if (!screenshot) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'screenshot (base64 PNG) required.' } });
+      return;
+    }
+    const buffer = Buffer.from(screenshot, 'base64');
+    const { checkRegression } = await import('../../../services/visualRegression.js');
+    const result = await checkRegression(db, annotationId, buffer);
+    res.json(result);
   });
 
   return { projectAnnotationsRouter, annotationRouter };

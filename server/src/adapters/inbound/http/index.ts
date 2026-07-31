@@ -42,6 +42,7 @@ import { createIntegrationsRoutes, type IntegrationsRouteDeps } from './integrat
 import { createGuestFeedbackRoutes, type GuestFeedbackRouteDeps } from './guestFeedback.routes.js';
 import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.js';
 import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
+import { createTriageRoutes, type TriageRouteDeps } from './triage.routes.js';
 import { createAuditLogRoutes, type AuditLogRouteDeps } from './auditLog.routes.js';
 import { serveApiDocs } from './apiDocs.js';
 
@@ -96,6 +97,8 @@ export {
   type ActivityRouteDeps,
   createBulkRoutes,
   type BulkRouteDeps,
+  createTriageRoutes,
+  type TriageRouteDeps,
   createAuditLogRoutes,
   type AuditLogRouteDeps,
   serveApiDocs,
@@ -137,6 +140,7 @@ export interface InboundHttpDeps {
   guestFeedbackRoutes: GuestFeedbackRouteDeps;
   activityRoutes: Omit<ActivityRouteDeps, 'authMiddleware'>;
   bulkRoutes: Omit<BulkRouteDeps, 'authMiddleware'>;
+  triageRoutes: Omit<TriageRouteDeps, 'authMiddleware'>;
   auditLogRoutes: Omit<AuditLogRouteDeps, 'authMiddleware'>;
 }
 
@@ -269,6 +273,10 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   // Bulk actions route
   const bulkRouter = createBulkRoutes({ ...deps.bulkRoutes, authMiddleware });
   app.use('/api/v1/projects', bulkRouter);
+
+  // AI feedback triage route (read-only suggestions)
+  const triageRouter = createTriageRoutes({ ...deps.triageRoutes, authMiddleware });
+  app.use('/api/v1/projects', triageRouter);
 
   // Activity feed route
   const activityRouter = createActivityRoutes({ ...deps.activityRoutes, authMiddleware });

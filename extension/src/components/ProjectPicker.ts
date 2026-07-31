@@ -188,7 +188,7 @@ function formatLastUsed(value: string): string {
 }
 
 export class FlProjectPicker extends HTMLElement {
-  static readonly tagName = 'fl-project-picker';
+  static readonly tagName = 'pp-project-picker';
 
   #projects: PickerProject[] = [];
   #list!: HTMLOListElement;
@@ -349,6 +349,11 @@ if (
 ) {
   withBoundary(FlProjectPicker.prototype, 'connectedCallback');
   customElements.define(FlProjectPicker.tagName, FlProjectPicker);
+  const flPickerTag = FlProjectPicker.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flPickerTag)) {
+    const LegacyPicker = class extends FlProjectPicker {};
+    customElements.define(flPickerTag, LegacyPicker);
+  }
 }
 
 declare global {

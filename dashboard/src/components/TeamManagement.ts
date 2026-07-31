@@ -33,6 +33,7 @@
 import type { TeamRole } from '@pinpoint/shared';
 
 import { apiFetch as defaultApiFetch, fetchCurrentUser } from '../lib/api';
+import { showToast } from './Toast';
 import {
   attr,
   bind,
@@ -356,6 +357,7 @@ export function mountTeamManagement(
         method: 'POST',
         body: JSON.stringify({ email }),
       });
+      showToast({ message: 'Invitation sent', variant: 'success' });
       // Successful invites clear the input, but `rerenderList` rebuilds the
       // DOM so the next render must start from a clean state.
       await refresh();
@@ -380,6 +382,7 @@ export function mountTeamManagement(
         method: 'PUT',
         body: JSON.stringify({ role: newRole }),
       });
+      showToast({ message: 'Role updated', variant: 'success' });
       await refresh();
     } catch (err) {
       // Roll the <select> back to the previously selected role so the UI
@@ -402,6 +405,7 @@ export function mountTeamManagement(
       await apiFetch(`/teams/${team.id}/members/${userId}`, {
         method: 'DELETE',
       });
+      showToast({ message: 'Member removed', variant: 'success' });
       await refresh();
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Failed to remove member.');

@@ -61,6 +61,7 @@ export { signal, type Signal } from './signal.js';
 
 export {
   SEVERITY_COLORS,
+  SEVERITY_SHAPES,
   STATUS_LABELS,
   sharedStyleSheet,
   themeCss,

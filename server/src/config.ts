@@ -42,4 +42,12 @@ export function validateConfig(env: NodeJS.ProcessEnv = process.env): void {
         'Refusing to start with an unset, empty, or development placeholder secret.',
     );
   }
+
+  const corsOrigin = env.CORS_ORIGIN;
+  if (!corsOrigin || corsOrigin === '*') {
+    throw new InvalidConfigError(
+      'CORS_ORIGIN must be set to a specific origin (e.g. https://app.pinpoint.dev) when NODE_ENV=production. ' +
+        'A wildcard or missing value allows any website to make credentialed requests to the API.',
+    );
+  }
 }

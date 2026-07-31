@@ -3,6 +3,7 @@
  */
 
 import { mountAppLayout } from '../components/AppLayout';
+import { showToast } from '../components/Toast';
 import { apiFetch } from '../lib/api';
 import { cloneTemplate } from '../lib/render';
 
@@ -69,6 +70,7 @@ export function mountIntegrationsPage(
   async function connect(provider: string): Promise<void> {
     try {
       await apiFetch(`/integrations/${provider}/connect`, { method: 'POST', body: JSON.stringify({}) });
+      showToast({ message: 'Integration connected', variant: 'success' });
       await load();
     } catch { /* render shows current state */ }
   }
@@ -76,6 +78,7 @@ export function mountIntegrationsPage(
   async function disconnect(provider: string): Promise<void> {
     try {
       await apiFetch(`/integrations/${provider}`, { method: 'DELETE' });
+      showToast({ message: 'Integration disconnected', variant: 'success' });
       await load();
     } catch { /* render shows current state */ }
   }

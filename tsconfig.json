@@ -18,7 +18,8 @@
     { "path": "dashboard" },
     { "path": "extension" },
     { "path": "e2e" },
-    { "path": "mobile-sdk" }
+    { "path": "mobile-sdk" },
+    { "path": "widget" }
   ],
   "files": []
 }

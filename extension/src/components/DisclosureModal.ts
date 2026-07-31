@@ -277,7 +277,7 @@ const TEMPLATE = (() => {
  * settings change resets the seen-flag — task 39.2).
  */
 export class FlDisclosureModal extends HTMLElement {
-  static readonly tagName = 'fl-disclosure-modal';
+  static readonly tagName = 'pp-disclosure-modal';
 
   #dialog!: HTMLDialogElement;
   #list!: HTMLUListElement;
@@ -432,7 +432,11 @@ if (
 ) {
   withBoundary(FlDisclosureModal.prototype, 'connectedCallback');
   withBoundary(FlDisclosureModal.prototype, 'disconnectedCallback');
-  customElements.define('fl-disclosure-modal', FlDisclosureModal);
+  customElements.define('pp-disclosure-modal', FlDisclosureModal);
+  if (!customElements.get('fl-disclosure-modal')) {
+    const LegacyDisclosureModal = class extends FlDisclosureModal {};
+    customElements.define('fl-disclosure-modal', LegacyDisclosureModal);
+  }
 }
 
 declare global {

@@ -731,7 +731,7 @@ function isFocusable(el: HTMLElement | null): el is HTMLElement {
 }
 
 export class FlPopover extends HTMLElement {
-  static readonly tagName = 'fl-popover';
+  static readonly tagName = 'pp-popover';
 
   // --- Public-property backing fields ---
   #target: PopoverTarget | null = null;
@@ -2712,6 +2712,12 @@ if (
   withBoundary(FlPopover.prototype, 'connectedCallback');
   withBoundary(FlPopover.prototype, 'disconnectedCallback');
   customElements.define(FlPopover.tagName, FlPopover);
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const flPopoverTag = FlPopover.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flPopoverTag)) {
+    const LegacyPopover = class extends FlPopover {};
+    customElements.define(flPopoverTag, LegacyPopover);
+  }
 }
 
 declare global {

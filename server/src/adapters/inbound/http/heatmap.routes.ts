@@ -1,5 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { z } from 'zod';
 import type { Knex } from 'knex';
+
+const HeatmapQuerySchema = z.object({
+  pageUrl: z.string().url().optional(),
+});
 
 export interface HeatmapRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -14,7 +19,12 @@ export function createHeatmapRoutes(deps: HeatmapRouteDeps): Router {
   // GET /api/v1/projects/:id/heatmap — feedback density by page coordinates
   router.get('/:projectId/heatmap', async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const { pageUrl } = req.query;
+    const queryParsed = HeatmapQuerySchema.safeParse(req.query);
+    if (!queryParsed.success) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'pageUrl must be a valid URL' } });
+      return;
+    }
+    const { pageUrl } = queryParsed.data;
 
     const query = db('annotations')
       .where({ project_id: projectId, org_id: req.user!.orgId })

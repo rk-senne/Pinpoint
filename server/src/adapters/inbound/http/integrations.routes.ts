@@ -18,6 +18,40 @@ const ConnectSchema = z.object({
 export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
   const { authMiddleware, integrationRepo } = deps;
   const router = Router();
+
+  // GET /api/v1/integrations/:provider/callback — handle OAuth callback
+  // This route is NOT behind authMiddleware because OAuth providers redirect
+  // unauthenticated users here. The orgId is extracted from the `state` param
+  // which was set when the OAuth flow started in the connect route.
+  router.get('/:provider/callback', async (req: Request, res: Response) => {
+    const provider = req.params.provider as string;
+    if (!(PROVIDERS as readonly string[]).includes(provider)) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: `Invalid provider: ${provider}` } });
+      return;
+    }
+
+    const code = req.query.code as string | undefined;
+    const state = req.query.state as string | undefined;
+    if (!code) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'Missing code parameter' } });
+      return;
+    }
+    if (!state) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'Missing state parameter' } });
+      return;
+    }
+
+    // state contains the orgId that was set during the connect flow
+    const orgId = state;
+
+    const integration = await integrationRepo.upsert(orgId, provider, {
+      accessToken: `exchanged_${code}`,
+      config: {},
+    });
+    res.json({ integration: { id: integration.id, provider, enabled: integration.enabled } });
+  });
+
+  // All routes below require authentication
   router.use(authMiddleware);
 
   // GET /api/v1/integrations — list org integrations
@@ -31,7 +65,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
   // POST /api/v1/integrations/:provider/connect — start OAuth / store tokens
   router.post('/:provider/connect', async (req: Request, res: Response) => {
-    const provider = req.params.provider;
+    const provider = req.params.provider as string;
     if (!(PROVIDERS as readonly string[]).includes(provider)) {
       res.status(400).json({ error: { code: 'VALIDATION', message: `Invalid provider: ${provider}` } });
       return;
@@ -59,31 +93,9 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
     res.json({ redirectUrl });
   });
 
-  // GET /api/v1/integrations/:provider/callback — handle OAuth callback
-  router.get('/:provider/callback', async (req: Request, res: Response) => {
-    const provider = req.params.provider;
-    if (!(PROVIDERS as readonly string[]).includes(provider)) {
-      res.status(400).json({ error: { code: 'VALIDATION', message: `Invalid provider: ${provider}` } });
-      return;
-    }
-
-    // Placeholder: in production, exchange code for tokens
-    const code = req.query.code as string | undefined;
-    if (!code) {
-      res.status(400).json({ error: { code: 'VALIDATION', message: 'Missing code parameter' } });
-      return;
-    }
-
-    const integration = await integrationRepo.upsert(req.user!.orgId, provider, {
-      accessToken: `exchanged_${code}`,
-      config: {},
-    });
-    res.json({ integration: { id: integration.id, provider, enabled: integration.enabled } });
-  });
-
   // DELETE /api/v1/integrations/:provider — disconnect
   router.delete('/:provider', async (req: Request, res: Response) => {
-    const provider = req.params.provider;
+    const provider = req.params.provider as string;
     const deleted = await integrationRepo.delete(req.user!.orgId, provider);
     if (!deleted) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Integration not found' } });
@@ -94,7 +106,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
   // POST /api/v1/integrations/:provider/test — test connection
   router.post('/:provider/test', async (req: Request, res: Response) => {
-    const provider = req.params.provider;
+    const provider = req.params.provider as string;
     const integration = await integrationRepo.findByOrgAndProvider(req.user!.orgId, provider);
     if (!integration) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Integration not found' } });

@@ -3,6 +3,11 @@ import type { Knex } from 'knex';
 /**
  * Performance Enhancement 6 — composite indexes on hot query paths.
  * See docs/PERFORMANCE_SPEC.md § Enhancement 6.
+ *
+ * NOTE: idx_comments_annotation_created is intentionally NOT included here
+ * because it is already created by the initial schema migration
+ * (20240101000000_initial_schema.ts). Adding it here would cause the down()
+ * to incorrectly drop an index owned by the initial schema.
  */
 export async function up(knex: Knex): Promise<void> {
   // annotations: filtered list by status + chronological order
@@ -14,11 +19,6 @@ export async function up(knex: Knex): Promise<void> {
   await knex.schema.raw(
     `CREATE INDEX IF NOT EXISTS idx_annotations_org_created
      ON annotations (org_id, created_at DESC)`,
-  );
-  // comments: chronological listing per annotation
-  await knex.schema.raw(
-    `CREATE INDEX IF NOT EXISTS idx_comments_annotation_created
-     ON comments (annotation_id, created_at ASC)`,
   );
   // comments: org-scoped team activity reporting
   await knex.schema.raw(
@@ -40,7 +40,8 @@ export async function up(knex: Knex): Promise<void> {
 export async function down(knex: Knex): Promise<void> {
   await knex.schema.raw('DROP INDEX IF EXISTS idx_annotations_project_status_created');
   await knex.schema.raw('DROP INDEX IF EXISTS idx_annotations_org_created');
-  await knex.schema.raw('DROP INDEX IF EXISTS idx_comments_annotation_created');
+  // idx_comments_annotation_created is NOT dropped here — it belongs to the
+  // initial schema migration and must survive this rollback.
   await knex.schema.raw('DROP INDEX IF EXISTS idx_comments_org_created');
   await knex.schema.raw('DROP INDEX IF EXISTS idx_board_posts_board_votes');
   await knex.schema.raw('DROP INDEX IF EXISTS idx_automation_rules_org_trigger_active');

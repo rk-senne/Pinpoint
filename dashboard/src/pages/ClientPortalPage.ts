@@ -8,6 +8,7 @@
 import type { Project } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
+import { showToast } from '../components/Toast';
 import { apiFetch } from '../lib/api';
 import { bindEvents, cloneTemplate, requireRole } from '../lib/render';
 import { projectsStore } from '../lib/stores';
@@ -61,6 +62,7 @@ export function mountClientPortalPage(
       try {
         errorEl.hidden = true;
         await apiFetch('/portals', { method: 'POST', body: JSON.stringify(body) });
+        showToast({ message: 'Client portal created', variant: 'success' });
         form.reset();
         formEl.hidden = true;
         void loadPortals();

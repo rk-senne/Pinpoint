@@ -42,7 +42,7 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
   router.post('/projects/:id/tags', authMiddleware, async (req: Request, res: Response) => {
     const parsed = CreateTagSchema.safeParse(req.body);
     if (!parsed.success) {
-      sendZodFailure(res, parsed.error);
+      sendZodFailure(res, 'Validation failed', parsed.error.flatten());
       return;
     }
 
@@ -94,7 +94,7 @@ export function createTagRoutes(deps: TagRouteDeps): Router {
   router.put('/annotations/:annotationId/tags', authMiddleware, async (req: Request, res: Response) => {
     const parsed = SetAnnotationTagsSchema.safeParse(req.body);
     if (!parsed.success) {
-      sendZodFailure(res, parsed.error);
+      sendZodFailure(res, 'Validation failed', parsed.error.flatten());
       return;
     }
 

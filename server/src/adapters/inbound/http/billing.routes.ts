@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { z } from 'zod';
 import type { CreateCheckoutSession, HandleStripeWebhook, GetBillingPortal, GetUsageSummary } from '../../../domain/billing/usecases/billing.js';
 import type { Knex } from 'knex';
 
@@ -10,6 +11,20 @@ function sendError(res: Response, status: number, code: string, message: string,
   if (details && Object.keys(details).length > 0) body.error.details = details;
   return res.status(status).json(body);
 }
+
+// --- Zod schemas for billing route inputs ---
+
+/** Validates checkout URLs to prevent SSRF. Only allows http(s) with no IP addresses. */
+const CheckoutSchema = z.object({
+  successUrl: z.string().url().refine(
+    (url) => /^https?:\/\//.test(url) && !/\d+\.\d+\.\d+\.\d+/.test(url),
+    { message: 'successUrl must be a valid HTTP(S) URL without IP addresses' },
+  ),
+  cancelUrl: z.string().url().refine(
+    (url) => /^https?:\/\//.test(url) && !/\d+\.\d+\.\d+\.\d+/.test(url),
+    { message: 'cancelUrl must be a valid HTTP(S) URL without IP addresses' },
+  ),
+});
 
 export interface BillingRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -27,11 +42,12 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
   // POST /api/v1/billing/checkout — create Stripe checkout session
   router.post('/checkout', authMiddleware, async (req: Request, res: Response) => {
     try {
-      const { successUrl, cancelUrl } = req.body;
-      if (!successUrl || !cancelUrl) {
-        sendError(res, 400, 'VALIDATION', 'successUrl and cancelUrl required');
+      const parsed = CheckoutSchema.safeParse(req.body);
+      if (!parsed.success) {
+        sendError(res, 400, 'VALIDATION', 'Invalid checkout URLs', { issues: parsed.error.flatten().fieldErrors });
         return;
       }
+      const { successUrl, cancelUrl } = parsed.data;
       const url = await createCheckoutSession.execute(
         req.user!.orgId,
         req.user!.email,
@@ -50,9 +66,16 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
     try {
       const signature = req.headers['stripe-signature'] as string;
       if (!signature) { sendError(res, 400, 'MISSING_SIGNATURE', 'stripe-signature header is required'); return; }
-      // Use raw body buffer preserved by express.json({ verify }) for Stripe signature verification.
-      const rawBody: Buffer | undefined = (req as any).rawBody;
-      const body = rawBody ? rawBody.toString('utf8') : JSON.stringify(req.body);
+      // The raw body buffer is preserved by express.json({ verify }) in container.ts.
+      // Stripe signature verification MUST use the exact bytes that were signed;
+      // JSON.stringify(req.body) may produce a different string, so we fail fast
+      // if the raw buffer is missing rather than silently submitting an invalid payload.
+      const rawBody: Buffer | undefined = req.rawBody;
+      if (!rawBody) {
+        sendError(res, 400, 'MISSING_RAW_BODY', 'Raw request body unavailable — cannot verify Stripe signature');
+        return;
+      }
+      const body = rawBody.toString('utf8');
       await handleStripeWebhook.execute(body, signature);
       res.json({ received: true });
     } catch (e: any) {

@@ -299,7 +299,7 @@ function rasterizePixelateRegion(
 }
 
 export class FlMarkupEditor extends HTMLElement {
-  static readonly tagName = 'fl-markup-editor';
+  static readonly tagName = 'pp-markup-editor';
 
   // --- Public-property backing fields ---
   #imageUrl: string | null = null;
@@ -1287,7 +1287,11 @@ if (
 ) {
   withBoundary(FlMarkupEditor.prototype, 'connectedCallback');
   withBoundary(FlMarkupEditor.prototype, 'disconnectedCallback');
-  customElements.define('fl-markup-editor', FlMarkupEditor);
+  customElements.define('pp-markup-editor', FlMarkupEditor);
+  if (!customElements.get('fl-markup-editor')) {
+    const LegacyMarkupEditor = class extends FlMarkupEditor {};
+    customElements.define('fl-markup-editor', LegacyMarkupEditor);
+  }
 }
 
 declare global {

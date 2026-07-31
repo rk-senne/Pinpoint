@@ -55,7 +55,10 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
   // GET /api/v1/api-keys — list org's API keys
   router.get('/', authMiddleware, async (req: Request, res: Response) => {
     const keys = await apiKeyRepo.listByOrg(req.user!.orgId);
-    res.json({ keys });
+    res.json({
+      data: keys,
+      pagination: { page: 1, pageSize: keys.length, total: keys.length, totalPages: 1 },
+    });
   });
 
   // DELETE /api/v1/api-keys/:id — revoke key (owner/admin only)

@@ -146,7 +146,7 @@ describe('<fl-popover>', () => {
   });
 
   it('is registered as a Custom Element with an open Shadow Root and a <dialog> panel', () => {
-    expect(customElements.get('fl-popover')).toBe(FlPopover);
+    expect(customElements.get('pp-popover')).toBe(FlPopover); expect(customElements.get('fl-popover')).toBeDefined();
     const el = mount();
     expect(el).toBeInstanceOf(HTMLElement);
     expect(el.shadowRoot?.mode).toBe('open');

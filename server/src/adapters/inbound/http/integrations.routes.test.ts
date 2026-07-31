@@ -2,8 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
+import { createHmac } from 'node:crypto';
 import { createIntegrationsRoutes, type IntegrationsRouteDeps } from './integrations.routes.js';
 import type { IntegrationRepo, Integration } from '../../../domain/integration/ports/IntegrationRepo.js';
+
+const TEST_SECRET = 'test-hmac-secret-for-oauth-state';
 
 const CANNED_INTEGRATION: Integration = {
   id: 'int-1',
@@ -29,6 +32,7 @@ function makeDeps(overrides: Partial<IntegrationsRouteDeps> = {}): IntegrationsR
       upsert: vi.fn().mockResolvedValue(CANNED_INTEGRATION),
       delete: vi.fn().mockResolvedValue(true),
     },
+    oauthStateSecret: TEST_SECRET,
     ...overrides,
   };
 }
@@ -42,8 +46,14 @@ function makeApp(deps: IntegrationsRouteDeps): express.Express {
 }
 
 /** Helper: build a signed cookie value for integration_oauth_state */
-function buildStateCookie(payload: { state: string; orgId: string; provider: string }): string {
-  return `integration_oauth_state=${encodeURIComponent(JSON.stringify(payload))}`;
+function buildStateCookie(
+  payload: { state: string; orgId: string; provider: string },
+  secret: string = TEST_SECRET,
+): string {
+  const sig = createHmac('sha256', secret)
+    .update(`${payload.state}.${payload.orgId}.${payload.provider}`)
+    .digest('hex');
+  return `integration_oauth_state=${encodeURIComponent(JSON.stringify({ ...payload, sig }))}`;
 }
 
 describe('integrations.routes — IDOR/CSRF security fix', () => {
@@ -234,6 +244,141 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
       expect(res.status).toBe(400);
       expect(res.body.error.message).toContain('Invalid provider');
       expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('HMAC signature verification — new tests', () => {
+    it('AC-1: connect cookie contains a valid sig field', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/slack/connect')
+        .send({});
+
+      expect(res.status).toBe(200);
+      const cookies = (Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'] : [res.headers['set-cookie']]) as string[];
+      const stateCookieHeader = cookies.find((c: string) => c.includes('integration_oauth_state'))!;
+      const match = stateCookieHeader.match(/integration_oauth_state=([^;]+)/)!;
+      const parsed = JSON.parse(decodeURIComponent(match[1]));
+
+      // sig should be a 64-char hex string (SHA-256 = 32 bytes = 64 hex chars)
+      expect(parsed.sig).toMatch(/^[0-9a-f]{64}$/);
+
+      // Recompute and verify
+      const expectedSig = createHmac('sha256', TEST_SECRET)
+        .update(`${parsed.state}.${parsed.orgId}.${parsed.provider}`)
+        .digest('hex');
+      expect(parsed.sig).toBe(expectedSig);
+    });
+
+    it('AC-3: tampered orgId with valid state is rejected 400', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const nonce = 'd'.repeat(32);
+      // Sign with the legitimate orgId
+      const legitimateSig = createHmac('sha256', TEST_SECRET)
+        .update(`${nonce}.org-123.slack`)
+        .digest('hex');
+
+      // But put a DIFFERENT orgId in the cookie (attacker tampering)
+      const tampered = { state: nonce, orgId: 'org-VICTIM', provider: 'slack', sig: legitimateSig };
+      const cookieStr = `integration_oauth_state=${encodeURIComponent(JSON.stringify(tampered))}`;
+
+      const res = await request(app)
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', cookieStr);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe('OAuth state signature invalid');
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('AC-4: missing sig field rejected 400', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const nonce = 'e'.repeat(32);
+      // Cookie WITHOUT sig (simulates pre-fix cookie)
+      const unsigned = { state: nonce, orgId: 'org-123', provider: 'slack' };
+      const cookieStr = `integration_oauth_state=${encodeURIComponent(JSON.stringify(unsigned))}`;
+
+      const res = await request(app)
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', cookieStr);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe('OAuth state signature invalid');
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('AC-5: altered sig (same length) rejected 400', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const nonce = 'f'.repeat(32);
+      const validSig = createHmac('sha256', TEST_SECRET)
+        .update(`${nonce}.org-123.slack`)
+        .digest('hex');
+
+      // Flip one hex char in sig
+      const alteredSig = validSig[0] === 'a'
+        ? 'b' + validSig.slice(1)
+        : 'a' + validSig.slice(1);
+
+      const tampered = { state: nonce, orgId: 'org-123', provider: 'slack', sig: alteredSig };
+      const cookieStr = `integration_oauth_state=${encodeURIComponent(JSON.stringify(tampered))}`;
+
+      const res = await request(app)
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', cookieStr);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe('OAuth state signature invalid');
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('AC-6: sig computed with WRONG secret rejected 400', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const nonce = '1'.repeat(32);
+      // Sign with a different secret (simulates secret rotation)
+      const wrongSecret = 'totally-different-secret';
+      const wrongSig = createHmac('sha256', wrongSecret)
+        .update(`${nonce}.org-123.slack`)
+        .digest('hex');
+
+      const payload = { state: nonce, orgId: 'org-123', provider: 'slack', sig: wrongSig };
+      const cookieStr = `integration_oauth_state=${encodeURIComponent(JSON.stringify(payload))}`;
+
+      const res = await request(app)
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', cookieStr);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toBe('OAuth state signature invalid');
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('AC-2: valid signed cookie allows upsert with verified orgId', async () => {
+      const deps = makeDeps();
+      const app = makeApp(deps);
+
+      const nonce = '2'.repeat(32);
+      const cookiePayload = { state: nonce, orgId: 'org-123', provider: 'slack' };
+
+      const res = await request(app)
+        .get(`/api/v1/integrations/slack/callback?code=xyz&state=${nonce}`)
+        .set('Cookie', buildStateCookie(cookiePayload));
+
+      expect(res.status).toBe(200);
+      expect(deps.integrationRepo.upsert).toHaveBeenCalledWith(
+        'org-123',
+        'slack',
+        expect.objectContaining({ accessToken: 'exchanged_xyz' }),
+      );
     });
   });
 });

@@ -1,13 +1,20 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { IntegrationRepo } from '../../../domain/integration/ports/IntegrationRepo.js';
 
 const PROVIDERS = ['slack', 'jira', 'linear', 'github'] as const;
 
+/** Constant-time string comparison (prevents timing attacks on HMAC). */
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+}
+
 export interface IntegrationsRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   integrationRepo: IntegrationRepo;
+  oauthStateSecret: string;
 }
 
 const ConnectSchema = z.object({
@@ -17,7 +24,7 @@ const ConnectSchema = z.object({
 });
 
 export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
-  const { authMiddleware, integrationRepo } = deps;
+  const { authMiddleware, integrationRepo, oauthStateSecret } = deps;
   const router = Router();
 
   // GET /api/v1/integrations/:provider/callback — handle OAuth callback
@@ -46,7 +53,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
     const raw = req.cookies?.integration_oauth_state;
     res.clearCookie('integration_oauth_state');
 
-    let stateCookie: { state: string; orgId: string; provider: string } | null = null;
+    let stateCookie: { state: string; orgId: string; provider: string; sig?: string } | null = null;
     if (typeof raw === 'string') {
       try { stateCookie = JSON.parse(raw); } catch { stateCookie = null; }
     }
@@ -54,6 +61,20 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
     // Validate: cookie exists, random state matches, provider matches
     if (!stateCookie || state !== stateCookie.state || provider !== stateCookie.provider) {
       res.status(400).json({ error: { code: 'VALIDATION', message: 'Invalid or expired OAuth state' } });
+      return;
+    }
+
+    // Verify HMAC integrity of the cookie payload
+    const expectedPayload = `${stateCookie.state}.${stateCookie.orgId}.${stateCookie.provider}`;
+    const expectedSig = createHmac('sha256', oauthStateSecret)
+      .update(expectedPayload)
+      .digest('hex');
+
+    if (
+      !stateCookie.sig ||
+      !constantTimeEqual(expectedSig, stateCookie.sig)
+    ) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'OAuth state signature invalid' } });
       return;
     }
 
@@ -106,7 +127,11 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
     // Return placeholder redirect URL with cryptographically-bound state
     const state = randomBytes(16).toString('hex');
-    res.cookie('integration_oauth_state', JSON.stringify({ state, orgId: req.user!.orgId, provider }), {
+    const sigPayload = `${state}.${req.user!.orgId}.${provider}`;
+    const sig = createHmac('sha256', oauthStateSecret)
+      .update(sigPayload)
+      .digest('hex');
+    res.cookie('integration_oauth_state', JSON.stringify({ state, orgId: req.user!.orgId, provider, sig }), {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 600_000, // 10 minutes

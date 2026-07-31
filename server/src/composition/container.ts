@@ -410,6 +410,7 @@ export function buildContainer(config: Config): Container {
     } : undefined,
     integrationsRoutes: {
       integrationRepo: adapters.integrationRepo,
+      oauthStateSecret: config.jwt.secret,
     },
     guestFeedbackRoutes: {
       annotationRepo: adapters.annotationRepo,

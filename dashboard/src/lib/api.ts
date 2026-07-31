@@ -105,3 +105,42 @@ export async function fetchCurrentUser(
   const response = await fetcher<User | { user: User }>('/users/me');
   return (response as { user?: User }).user ?? (response as User);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Annotation suggestions (AI triage + smart suggestions)                     */
+/* -------------------------------------------------------------------------- */
+
+/** AI triage block from `GET /annotations/:id/suggestions`. */
+export interface AnnotationTriage {
+  suggestedSeverity: 'critical' | 'major' | 'minor' | 'informational';
+  suggestedTags: string[];
+  duplicates: Array<{ id: string; body: string; pinNumber: number; similarity: number }>;
+  suggestedAssignee: { userId: string; email: string; reason: string } | null;
+}
+
+/** A smart-suggestion row (past fix / component / assignee). */
+export interface AnnotationSmartSuggestion {
+  type: 'past_fix' | 'related_component' | 'assignee';
+  title: string;
+  detail: string;
+  confidence: number;
+}
+
+/** Combined response of `GET /api/v1/annotations/:id/suggestions`. */
+export interface AnnotationSuggestionsResponse {
+  triage: AnnotationTriage;
+  suggestions: AnnotationSmartSuggestion[];
+}
+
+/**
+ * Fetch AI triage + smart suggestions for an existing annotation. Read-only.
+ * Backed by `GET /api/v1/annotations/:id/suggestions`.
+ */
+export async function getAnnotationSuggestions(
+  annotationId: string,
+  fetcher: typeof apiFetch = apiFetch,
+): Promise<AnnotationSuggestionsResponse> {
+  return fetcher<AnnotationSuggestionsResponse>(
+    `/annotations/${encodeURIComponent(annotationId)}/suggestions`,
+  );
+}

@@ -46,7 +46,8 @@ import { mountReplayPlayer } from '../components/ReplayPlayer';
 import { mountHeatmapOverlay } from '../components/HeatmapOverlay';
 import { createListSkeleton } from '../components/Skeleton';
 import { showToast } from '../components/Toast';
-import { apiFetch as defaultApiFetch } from '../lib/api';
+import { apiFetch as defaultApiFetch, getAnnotationSuggestions } from '../lib/api';
+import { buildSuggestionsPanel } from '../lib/suggestionsFormat';
 import {
   attr,
   bindEvents,
@@ -1098,6 +1099,59 @@ export function mountProjectView(
     renderScreenshot(annotation);
     renderReplayButton(annotation);
     renderCoViewers();
+    void renderSuggestions(annotation.id);
+  }
+
+  /**
+   * Ensure the AI-suggestions panel exists in the detail section (created
+   * once, reused across selections) and return its <ul> list element.
+   */
+  function ensureSuggestionsList(): HTMLElement | null {
+    let panel = detailSection.querySelector<HTMLElement>('[data-role="ai-suggestions"]');
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.dataset.role = 'ai-suggestions';
+      panel.hidden = true;
+      const heading = document.createElement('h4');
+      heading.textContent = 'AI suggestions';
+      const list = document.createElement('ul');
+      list.dataset.role = 'ai-suggestions-list';
+      panel.append(heading, list);
+      detailSection.appendChild(panel);
+    }
+    return panel.querySelector<HTMLElement>('[data-role="ai-suggestions-list"]');
+  }
+
+  /**
+   * Fetch + render AI triage + smart suggestions for the selected annotation.
+   * Best-effort: any failure hides the panel and never interrupts the detail
+   * view. Guards against a stale response if the selection changes mid-fetch.
+   */
+  async function renderSuggestions(annotationId: string): Promise<void> {
+    const listEl = ensureSuggestionsList();
+    const panel = detailSection.querySelector<HTMLElement>('[data-role="ai-suggestions"]');
+    if (!listEl || !panel) return;
+    try {
+      const data = await getAnnotationSuggestions(annotationId);
+      if (selectedAnnotationId.get() !== annotationId) return; // superseded
+      const model = buildSuggestionsPanel(data);
+      if (!model.hasContent) {
+        toggleHidden(panel, true);
+        listEl.replaceChildren();
+        return;
+      }
+      listEl.replaceChildren(
+        ...model.items.map((item) => {
+          const li = document.createElement('li');
+          li.dataset.kind = item.kind;
+          li.textContent = item.text;
+          return li;
+        }),
+      );
+      toggleHidden(panel, false);
+    } catch {
+      toggleHidden(panel, true);
+    }
   }
 
   /**

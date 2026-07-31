@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { IntegrationRepo } from '../../../domain/integration/ports/IntegrationRepo.js';
 
@@ -21,8 +22,8 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
   // GET /api/v1/integrations/:provider/callback — handle OAuth callback
   // This route is NOT behind authMiddleware because OAuth providers redirect
-  // unauthenticated users here. The orgId is extracted from the `state` param
-  // which was set when the OAuth flow started in the connect route.
+  // unauthenticated users here. The orgId is derived from a cryptographically-
+  // bound state cookie set during the connect flow (NOT from the query param).
   router.get('/:provider/callback', async (req: Request, res: Response) => {
     const provider = req.params.provider as string;
     if (!(PROVIDERS as readonly string[]).includes(provider)) {
@@ -41,8 +42,23 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       return;
     }
 
-    // state contains the orgId that was set during the connect flow
-    const orgId = state;
+    // Parse and immediately clear the state cookie
+    const raw = req.cookies?.integration_oauth_state;
+    res.clearCookie('integration_oauth_state');
+
+    let stateCookie: { state: string; orgId: string; provider: string } | null = null;
+    if (typeof raw === 'string') {
+      try { stateCookie = JSON.parse(raw); } catch { stateCookie = null; }
+    }
+
+    // Validate: cookie exists, random state matches, provider matches
+    if (!stateCookie || state !== stateCookie.state || provider !== stateCookie.provider) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'Invalid or expired OAuth state' } });
+      return;
+    }
+
+    // Derive orgId from the COOKIE (never from the query param)
+    const orgId = stateCookie.orgId;
 
     const integration = await integrationRepo.upsert(orgId, provider, {
       accessToken: `exchanged_${code}`,
@@ -88,8 +104,15 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       return;
     }
 
-    // Return placeholder redirect URL
-    const redirectUrl = `https://${provider}.example.com/oauth/authorize?client_id=PLACEHOLDER&state=${req.user!.orgId}`;
+    // Return placeholder redirect URL with cryptographically-bound state
+    const state = randomBytes(16).toString('hex');
+    res.cookie('integration_oauth_state', JSON.stringify({ state, orgId: req.user!.orgId, provider }), {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 600_000, // 10 minutes
+      secure: process.env.NODE_ENV === 'production',
+    });
+    const redirectUrl = `https://${provider}.example.com/oauth/authorize?client_id=PLACEHOLDER&state=${state}`;
     res.json({ redirectUrl });
   });
 

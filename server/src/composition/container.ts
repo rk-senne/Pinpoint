@@ -559,7 +559,7 @@ export function buildContainer(config: Config): Container {
   });
 
   // ---- Inbound WebSocket gateway --------------------------------------
-  installCollabGateway(io, { tokenIssuer: adapters.tokenIssuer });
+  installCollabGateway(io, { tokenIssuer: adapters.tokenIssuer, db });
 
   // ---- Notification worker -------------------------------------------
   const worker = createNotificationWorker({

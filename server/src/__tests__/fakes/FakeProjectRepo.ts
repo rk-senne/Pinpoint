@@ -98,7 +98,35 @@ export class FakeProjectRepo implements ProjectRepo {
       (a, b) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
-    return matching;
+
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? matching.length;
+    return matching.slice(offset, offset + limit);
+  }
+
+  async countSearch(input: Omit<SearchProjectsInput, 'limit' | 'offset'>): Promise<number> {
+    const teamRepo = this.deps.teamMemberRepo;
+    const memberships = teamRepo
+      ? new Set(
+          (await this.collectMemberships(teamRepo, input.userId)).map(
+            (teamId) => teamId,
+          ),
+        )
+      : new Set<string>();
+
+    const search = input.search?.trim().toLowerCase() ?? '';
+
+    let count = 0;
+    for (const project of this.projects.values()) {
+      const accessible =
+        project.ownerId === input.userId ||
+        (project.teamId !== undefined && memberships.has(project.teamId));
+      if (!accessible) continue;
+      if (input.status && project.status !== input.status) continue;
+      if (search.length > 0 && !project.name.toLowerCase().includes(search)) continue;
+      count++;
+    }
+    return count;
   }
 
   async update(id: string, patch: ProjectPatch): Promise<Project> {

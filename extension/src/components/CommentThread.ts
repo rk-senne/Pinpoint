@@ -100,7 +100,7 @@ function extractMentions(body: string): string[] {
 }
 
 export class FlCommentThread extends HTMLElement {
-  static readonly tagName = 'fl-comment-thread';
+  static readonly tagName = 'pp-comment-thread';
 
   #comments: FLComment[] = [];
   #list!: HTMLOListElement;
@@ -238,6 +238,17 @@ if (typeof customElements !== 'undefined' && !customElements.get(FlCommentThread
   withBoundary(FlCommentThread.prototype, 'connectedCallback');
   withBoundary(FlCommentThread.prototype, 'disconnectedCallback');
   customElements.define(FlCommentThread.tagName, FlCommentThread);
+  const flCommentTag = FlCommentThread.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flCommentTag)) {
+    const LegacyComment = class extends FlCommentThread {};
+    customElements.define(flCommentTag, LegacyComment);
+  }
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const legacy_FlCommentThread_tag = FlCommentThread.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(legacy_FlCommentThread_tag)) {
+    const LegacyFlCommentThread = class extends FlCommentThread {};
+    customElements.define(legacy_FlCommentThread_tag, LegacyFlCommentThread);
+  }
 }
 
 declare global {

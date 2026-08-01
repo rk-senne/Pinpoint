@@ -21,6 +21,10 @@ export async function compareScreenshots(
   current: Buffer,
   threshold = 0.05,
 ): Promise<RegressionResult> {
+  if (!baseline.length || !current.length) {
+    return { match: false, diffPercentage: 100, status: 'completely_different' };
+  }
+
   // Dynamic import so this only loads when called
   const sharp = await import('sharp');
 
@@ -61,23 +65,30 @@ export async function compareScreenshots(
   return { match, diffPercentage, status };
 }
 
+// ---------------------------------------------------------------------------
+// Service layer — dependency-injected for testability
+// ---------------------------------------------------------------------------
+
+export interface CheckRegressionDeps {
+  fetchAnnotation: (id: string) => Promise<{ screenshotObjectKey: string | null } | null>;
+  fetchScreenshotBuffer: (objectKey: string) => Promise<Buffer | null>;
+}
+
 /**
  * Endpoint-ready function: given an annotation ID, compare its baseline
  * screenshot with a newly provided capture.
  */
 export async function checkRegression(
-  db: any,
+  deps: CheckRegressionDeps,
   annotationId: string,
   newScreenshot: Buffer,
 ): Promise<RegressionResult & { annotationId: string }> {
-  const annotation = await db('annotations').where('id', annotationId).first();
-  if (!annotation?.screenshot_object_key) {
+  const annotation = await deps.fetchAnnotation(annotationId);
+  if (!annotation?.screenshotObjectKey) {
     return { annotationId, match: false, diffPercentage: 100, status: 'completely_different' };
   }
 
-  // In production, fetch baseline from S3 using screenshot_object_key
-  // For now, return a placeholder result
-  const baseline = annotation.screenshot_buffer;
+  const baseline = await deps.fetchScreenshotBuffer(annotation.screenshotObjectKey);
   if (!baseline) {
     return { annotationId, match: false, diffPercentage: 100, status: 'completely_different' };
   }

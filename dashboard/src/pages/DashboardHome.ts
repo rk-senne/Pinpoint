@@ -27,6 +27,8 @@
 import type { Project } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
+import { createEmptyState } from '../components/EmptyState';
+import { createCardSkeleton } from '../components/Skeleton';
 import {
   attr,
   bind,
@@ -41,6 +43,9 @@ import { projectsStore } from '../lib/stores';
 
 /** How many recent projects to show in the home list. */
 const RECENT_LIMIT = 5;
+
+type HomeView = 'list' | 'cards';
+const VIEW_PREF_KEY = 'pinpoint_home_view';
 
 /**
  * Mount the home page into `rootEl`. The optional `params` argument is
@@ -66,15 +71,29 @@ export function mountDashboardHome(
   // detached DOM alive for the page's lifetime.
   let rowCleanups: Array<() => void> = [];
 
+  let currentView: HomeView =
+    (localStorage.getItem(VIEW_PREF_KEY) as HomeView) || 'list';
+
   const emptySection = requireSection(contentRoot, 'empty');
   const recentSection = requireSection(contentRoot, 'recent');
   const recentList = requireRole(contentRoot, 'recent-list');
+  const cardsGrid = requireRole(contentRoot, 'cards-grid');
+  const loadingSection = requireRole(contentRoot, 'home-loading');
+  const listBtn = contentRoot.querySelector<HTMLButtonElement>('[data-action="selectList"]');
+  const cardsBtn = contentRoot.querySelector<HTMLButtonElement>('[data-action="selectCards"]');
 
-  // Wire page-local actions. `createProject` clicks the sidebar's
-  // create-project button so the home CTA reuses the same dialog flow
-  // rather than re-implementing it. Falls back to navigating to `/`
-  // (a no-op) when the sidebar has not been mounted yet (e.g. unit tests
-  // that exercise the home page in isolation).
+  function paintViewToggle(): void {
+    if (listBtn) {
+      listBtn.style.fontWeight = currentView === 'list' ? '600' : '400';
+      listBtn.style.color = currentView === 'list' ? '#4f46e5' : '#666';
+    }
+    if (cardsBtn) {
+      cardsBtn.style.fontWeight = currentView === 'cards' ? '600' : '400';
+      cardsBtn.style.color = currentView === 'cards' ? '#4f46e5' : '#666';
+    }
+  }
+
+  // Wire page-local actions.
   const cleanupEvents = bindEvents(contentRoot, {
     createProject: (e) => {
       e.preventDefault();
@@ -85,12 +104,31 @@ export function mountDashboardHome(
         trigger.click();
       }
     },
+    selectList: () => {
+      currentView = 'list';
+      localStorage.setItem(VIEW_PREF_KEY, 'list');
+      paintViewToggle();
+      rerender();
+    },
+    selectCards: () => {
+      currentView = 'cards';
+      localStorage.setItem(VIEW_PREF_KEY, 'cards');
+      paintViewToggle();
+      rerender();
+    },
   });
 
+  paintViewToggle();
+
   // Reactive: switch between empty/recent and (re)render the list when
-  // the active projects change. The subscription fires once immediately
-  // with the current value, so initial paint happens here.
+  // the active projects change.
   const unbindRecent = bind(recentList, projectsStore.active, () => {
+    rerender();
+  });
+
+  // Re-render when the loaded flag transitions so the skeleton is
+  // replaced by the real empty state once projects have been fetched.
+  const unbindLoaded = projectsStore.loaded.subscribe(() => {
     rerender();
   });
 
@@ -100,6 +138,7 @@ export function mountDashboardHome(
 
   return () => {
     unbindRecent();
+    unbindLoaded();
     cleanupEvents();
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
@@ -119,9 +158,31 @@ export function mountDashboardHome(
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
     recentList.replaceChildren();
+    cardsGrid.replaceChildren();
+
+    // Show skeleton cards while the project list is still loading.
+    if (!projectsStore.loaded.get()) {
+      loadingSection.hidden = false;
+      loadingSection.replaceChildren();
+      const grid = document.createElement('div');
+      grid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;';
+      for (let i = 0; i < 3; i++) {
+        grid.appendChild(createCardSkeleton());
+      }
+      loadingSection.appendChild(grid);
+      emptySection.hidden = true;
+      recentSection.hidden = true;
+      return;
+    }
+
+    // Data has loaded — hide the skeleton and show the real state.
+    loadingSection.hidden = true;
+    loadingSection.replaceChildren();
 
     if (active.length === 0) {
       emptySection.hidden = false;
+      // Replace template empty-state content with the rich EmptyState component
+      emptySection.replaceChildren(createEmptyState('no-projects'));
       recentSection.hidden = true;
       return;
     }
@@ -129,17 +190,23 @@ export function mountDashboardHome(
     emptySection.hidden = true;
     recentSection.hidden = false;
 
-    // Sort by most recently updated first, falling back to createdAt.
-    // The server returns projects in insertion order today, so the home
-    // page does the ranking client-side rather than depend on server-side
-    // ordering that may change.
     const sorted = active
       .slice()
       .sort((a, b) => recencyKey(b).localeCompare(recencyKey(a)))
       .slice(0, RECENT_LIMIT);
 
-    for (const project of sorted) {
-      recentList.appendChild(renderRow(project));
+    if (currentView === 'list') {
+      recentList.hidden = false;
+      cardsGrid.hidden = true;
+      for (const project of sorted) {
+        recentList.appendChild(renderRow(project));
+      }
+    } else {
+      recentList.hidden = true;
+      cardsGrid.hidden = false;
+      for (const project of sorted) {
+        cardsGrid.appendChild(renderCard(project));
+      }
     }
   }
 
@@ -162,10 +229,6 @@ export function mountDashboardHome(
       if (urlSlot) text(urlSlot, '');
     }
 
-    // Page-level fallback for environments where `data-route` link
-    // interception is not active (unit tests, or when the router has not
-    // been started yet). The router's click handler will run first when
-    // wired and short-circuit this via `e.defaultPrevented`.
     const rowCleanup = bindEvents(row, {
       openProject: (e) => {
         if (e.defaultPrevented) return;
@@ -176,6 +239,33 @@ export function mountDashboardHome(
     rowCleanups.push(rowCleanup);
 
     return row;
+  }
+
+  function renderCard(project: Project): HTMLElement {
+    const cardFragment = cloneTemplate('tpl-dashboard-home-card', {
+      name: project.name,
+      status: project.status,
+      activity: formatRelativeTime(project.updatedAt),
+    });
+    const card = cardFragment.firstElementChild as HTMLElement;
+
+    // Color the status badge
+    const statusBadge = card.querySelector<HTMLElement>('[data-role="status-badge"]');
+    if (statusBadge) {
+      statusBadge.style.background = project.status === 'active' ? '#dcfce7' : '#f3f4f6';
+      statusBadge.style.color = project.status === 'active' ? '#166534' : '#6b7280';
+    }
+
+    const cardCleanup = bindEvents(card, {
+      openProject: (e) => {
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        navigate(`/projects/${project.id}`);
+      },
+    });
+    rowCleanups.push(cardCleanup);
+
+    return card;
   }
 }
 
@@ -190,4 +280,19 @@ export function mountDashboardHome(
  */
 function recencyKey(project: Project): string {
   return project.updatedAt || project.createdAt || project.id;
+}
+
+/** Format an ISO date as a human-friendly relative time string. */
+function formatRelativeTime(iso: string): string {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
 }

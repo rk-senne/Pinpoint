@@ -74,7 +74,7 @@ function mount(): FlClusterListPopover {
 }
 
 beforeAll(() => {
-  expect(customElements.get('fl-cluster-list-popover')).toBe(FlClusterListPopover);
+  expect(customElements.get('pp-cluster-list-popover')).toBe(FlClusterListPopover); expect(customElements.get('fl-cluster-list-popover')).toBeDefined();
 });
 
 afterEach(() => {

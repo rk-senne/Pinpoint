@@ -16,11 +16,10 @@
 //   Locked        → 423   (with `Retry-After` header from `retryAfterSeconds`)
 //   Unavailable   → 503
 //
-// Body shape: `{ error: error.message, ...(error.details ?? {}) }`. The
-// task requires a flat envelope so the `details` keys are spread
-// alongside `error`. `Validation.issues` (Zod-derived issues) and the
-// custom shared-link `attemptsRemaining` / `lockedUntil` fields
-// surface through this helper as part of `details`.
+// Body shape: `{ error: { code: "SNAKE_UPPER_CASE", message: "...", details?: {} } }`.
+// All domain errors now emit a standard envelope matching `ApiErrorEnvelope`
+// from `@pinpoint/shared`. Validation issues surface inside `details.issues`,
+// and lock/attempt metadata lives inside `details` as well.
 
 import type { Response } from 'express';
 import type { DomainError } from '../../../domain/shared/DomainError.js';
@@ -57,9 +56,25 @@ function detailsOf(error: DomainError): Record<string, unknown> | undefined {
   return undefined;
 }
 
+/** Map DomainError kind to a SNAKE_UPPER_CASE code. */
+const CODE_BY_KIND: Record<DomainError['kind'], string> = {
+  NotFound: 'NOT_FOUND',
+  Forbidden: 'FORBIDDEN',
+  Conflict: 'CONFLICT',
+  Validation: 'VALIDATION',
+  Unauthorized: 'UNAUTHORIZED',
+  Locked: 'LOCKED',
+  Unavailable: 'UNAVAILABLE',
+};
+
 /**
  * Render a `DomainError` as the canonical HTTP response and return the
  * `Response` so handlers can `return sendDomainError(...)`.
+ *
+ * Standard shape:
+ * ```json
+ * { "error": { "code": "SNAKE_UPPER_CASE", "message": "Human readable", "details": {} } }
+ * ```
  */
 export function sendDomainError(res: Response, error: DomainError): Response {
   const status = STATUS_BY_KIND[error.kind] ?? 500;
@@ -68,29 +83,39 @@ export function sendDomainError(res: Response, error: DomainError): Response {
     res.setHeader('Retry-After', String(error.retryAfterSeconds));
   }
 
-  const body: Record<string, unknown> = { error: error.message };
-  const details = detailsOf(error);
-  if (details) {
-    for (const [k, v] of Object.entries(details)) {
-      body[k] = v;
+  const code = CODE_BY_KIND[error.kind] ?? 'INTERNAL_ERROR';
+  const details: Record<string, unknown> = {};
+
+  // Surface domain-level details (e.g. Validation.issues).
+  const domainDetails = detailsOf(error);
+  if (domainDetails) {
+    for (const [k, v] of Object.entries(domainDetails)) {
+      details[k] = v;
     }
   }
+
   // Surface lockout metadata when the error is the shared-link variant.
   if (error instanceof Locked) {
     const lockedUntil = (error as unknown as { lockedUntil?: string }).lockedUntil;
-    if (typeof lockedUntil === 'string') body.lockedUntil = lockedUntil;
+    if (typeof lockedUntil === 'string') details.lockedUntil = lockedUntil;
     if (typeof error.retryAfterSeconds === 'number') {
-      body.retryAfterSeconds = error.retryAfterSeconds;
+      details.retryAfterSeconds = error.retryAfterSeconds;
     }
   }
+
   // Surface the remaining-attempts countdown carried by the
-  // shared-link `InvalidPassword` variant (Req 15.4). The base
-  // `Unauthorized` does not declare the field, so we read it
-  // structurally without relying on `instanceof`.
+  // shared-link `InvalidPassword` variant (Req 15.4).
   const attemptsRemaining = (error as unknown as { attemptsRemaining?: number })
     .attemptsRemaining;
   if (typeof attemptsRemaining === 'number') {
-    body.attemptsRemaining = attemptsRemaining;
+    details.attemptsRemaining = attemptsRemaining;
+  }
+
+  const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = {
+    error: { code, message: error.message },
+  };
+  if (Object.keys(details).length > 0) {
+    body.error.details = details;
   }
 
   return res.status(status).json(body);
@@ -100,6 +125,11 @@ export function sendDomainError(res: Response, error: DomainError): Response {
  * Render a Zod `flatten()` payload as a 400 Validation response without
  * needing to construct a `Validation` instance first. Convenience for
  * inbound handlers that want to fail fast on input parsing.
+ *
+ * Standard shape:
+ * ```json
+ * { "error": { "code": "VALIDATION", "message": "...", "details": { "issues": ... } } }
+ * ```
  */
 export function sendZodFailure(
   res: Response,
@@ -107,8 +137,11 @@ export function sendZodFailure(
   zodIssues: unknown,
 ): Response {
   return res.status(400).json({
-    error: message,
-    issues: zodIssues,
+    error: {
+      code: 'VALIDATION',
+      message,
+      details: { issues: zodIssues },
+    },
   });
 }
 
@@ -124,4 +157,18 @@ export function paramString(value: string | string[] | undefined): string {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value[0] ?? '';
   return '';
+}
+
+/**
+ * Validate that a route parameter value is a well-formed UUID.
+ * Returns `true` if valid, `false` (after sending 400) if invalid.
+ * Use as an early guard in handlers that accept UUID path params.
+ */
+export function validateUuidParam(res: Response, paramName: string, value: string): boolean {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(value)) {
+    res.status(400).json({ error: { code: 'VALIDATION', message: `${paramName} must be a valid UUID`, details: {} } });
+    return false;
+  }
+  return true;
 }

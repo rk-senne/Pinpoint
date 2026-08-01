@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { ListUserNotifications } from '../../../domain/notification/usecases/userNotifications.js';
 import type { MarkNotificationRead } from '../../../domain/notification/usecases/userNotifications.js';
 import type { UserNotificationRepo } from '../../../domain/notification/ports/UserNotificationRepo.js';
-import { sendZodFailure } from './errors.js';
+import { sendZodFailure, paramString } from './errors.js';
 
 export interface NotificationsRouteDeps {
   listUserNotifications: ListUserNotifications;
@@ -42,12 +42,12 @@ export function createNotificationsRoutes(deps: NotificationsRouteDeps): Router 
       limit: parsed.data.limit,
       offset: parsed.data.offset,
     });
-    if (!result.ok) { res.status(500).json({ error: 'Internal error' }); return; }
+    if (!result.ok) { res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Internal error' } }); return; }
     res.json(result.value);
   });
 
   router.patch('/:id/read', async (req: Request, res: Response) => {
-    await markNotificationRead.execute({ id: req.params.id, userId: req.user!.userId });
+    await markNotificationRead.execute({ id: paramString(req.params.id), userId: req.user!.userId });
     res.status(204).end();
   });
 

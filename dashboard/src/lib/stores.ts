@@ -91,6 +91,8 @@ export interface ProjectsStore {
   active: Signal<Project[]>;
   /** Projects with `status === 'archived'`. */
   archived: Signal<Project[]>;
+  /** Whether `loadProjects` has been called at least once. */
+  loaded: Signal<boolean>;
 }
 
 export const projectsStore: ProjectsStore = {
@@ -98,6 +100,7 @@ export const projectsStore: ProjectsStore = {
   filter: signal<ProjectListFilter>('active'),
   active: signal<Project[]>([]),
   archived: signal<Project[]>([]),
+  loaded: signal<boolean>(false),
 };
 
 // --- Current annotations surface -------------------------------------
@@ -196,6 +199,7 @@ export function loadProjects(projects: Project[]): void {
   projectsStore.list.set(projects);
   projectsStore.active.set(projects.filter((p) => p.status === 'active'));
   projectsStore.archived.set(projects.filter((p) => p.status === 'archived'));
+  projectsStore.loaded.set(true);
 }
 
 /** Switch between the active and archived sidebar filters. */
@@ -230,6 +234,7 @@ export function resetStores(): void {
   projectsStore.filter.set('active');
   projectsStore.active.set([]);
   projectsStore.archived.set([]);
+  projectsStore.loaded.set(false);
 
   currentAnnotationsStore.list.set([]);
   membersStore.list.set([]);

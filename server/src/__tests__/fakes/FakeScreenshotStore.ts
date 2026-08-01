@@ -59,6 +59,12 @@ export class FakeScreenshotStore implements ScreenshotStore {
     return { objectKey, url: this.buildScreenshotUrl(objectKey) };
   }
 
+  async fetchScreenshot(objectKey: string): Promise<Buffer | null> {
+    const stored = this.objects.get(objectKey);
+    if (!stored) return null;
+    return Buffer.from(stored.body);
+  }
+
   async fetchMarkupDocument(screenshotKey: string): Promise<unknown | null> {
     const objectKey = `${screenshotKey}${MARKUP_KEY_SUFFIX}`;
     const stored = this.objects.get(objectKey);

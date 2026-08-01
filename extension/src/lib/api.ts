@@ -787,3 +787,48 @@ export async function queueCreateComment(
   fireAndForgetSync(d.triggerSync);
   return { localUuid };
 }
+
+/* -------------------------------------------------------------------------- */
+/* AI triage (read-only suggestions — task: user-facing triage)               */
+/* -------------------------------------------------------------------------- */
+
+/** A likely-duplicate annotation returned by the triage endpoint. */
+export interface TriageDuplicate {
+  id: string;
+  body: string;
+  pinNumber: number;
+  /** Trigram Jaccard similarity in [0,1]. */
+  similarity: number;
+}
+
+/** Shape of `POST /api/v1/projects/:id/annotations/triage`'s response. */
+export interface TriageSuggestions {
+  suggestedSeverity: 'critical' | 'major' | 'minor' | 'informational';
+  suggestedTags: string[];
+  duplicates: TriageDuplicate[];
+  suggestedAssignee: { userId: string; email: string; reason: string } | null;
+}
+
+/** Input for {@link requestTriage}. */
+export interface RequestTriageInput {
+  body: string;
+  target?: { cssSelector?: string };
+  /** Exclude this annotation id from duplicate results (when re-triaging). */
+  excludeId?: string;
+}
+
+/**
+ * Request AI triage suggestions for draft feedback. Read-only: the server
+ * endpoint creates/mutates nothing, so this is safe to call speculatively
+ * as the reporter types. Backed by
+ * `POST /api/v1/projects/:id/annotations/triage`.
+ */
+export async function requestTriage(
+  projectId: string,
+  input: RequestTriageInput,
+): Promise<TriageSuggestions> {
+  return apiFetch<TriageSuggestions>(
+    `/projects/${encodeURIComponent(projectId)}/annotations/triage`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}

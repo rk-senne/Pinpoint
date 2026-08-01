@@ -32,6 +32,7 @@ interface CompiledRoute {
 const routes: CompiledRoute[] = [];
 let rootEl: HTMLElement | null = null;
 let activeTeardown: (() => void) | null = null;
+let fallbackHandler: RouteHandler | null = null;
 
 export function defineRoute(pattern: string, handler: RouteHandler): void {
   const keys: string[] = [];
@@ -45,6 +46,10 @@ export function defineRoute(pattern: string, handler: RouteHandler): void {
 export function navigate(path: string): void {
   history.pushState(null, '', path);
   resolve();
+}
+
+export function setFallback(handler: RouteHandler): void {
+  fallbackHandler = handler;
 }
 
 export function start(node: HTMLElement): void {
@@ -86,6 +91,18 @@ function resolve(): void {
     }
     return;
   }
+  // No route matched — invoke fallback (404).
+  if (fallbackHandler) {
+    if (activeTeardown) {
+      try { activeTeardown(); } catch { /* swallow */ }
+      activeTeardown = null;
+    }
+    rootEl.replaceChildren();
+    const result = fallbackHandler(rootEl, {});
+    if (typeof result === 'function') {
+      activeTeardown = result;
+    }
+  }
 }
 
 /** Test-only: clears registered routes, runs any active teardown, and detaches listeners. */
@@ -100,6 +117,7 @@ export function _resetRouterForTests(): void {
   }
   routes.length = 0;
   rootEl = null;
+  fallbackHandler = null;
   window.removeEventListener('popstate', resolve);
   document.removeEventListener('click', onLinkClick);
 }

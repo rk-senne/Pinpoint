@@ -119,7 +119,7 @@ afterEach(() => {
 
 describe('<fl-sync-conflict-tray>', () => {
   it('is registered as a Custom Element with an open Shadow Root', () => {
-    expect(customElements.get('fl-sync-conflict-tray')).toBe(FlSyncConflictTray);
+    expect(customElements.get('pp-sync-conflict-tray')).toBe(FlSyncConflictTray); expect(customElements.get('fl-sync-conflict-tray')).toBeDefined();
     const el = mount();
     expect(el).toBeInstanceOf(HTMLElement);
     expect(el.shadowRoot).not.toBeNull();

@@ -32,6 +32,8 @@ import type { Guideline, NotificationPreferences, User } from '@pinpoint/shared'
 
 import { mountAppLayout } from '../components/AppLayout';
 import { mountTeamManagement, type TeamManagementHandle } from '../components/TeamManagement';
+import { createFormSkeleton } from '../components/Skeleton';
+import { showToast } from '../components/Toast';
 import { apiFetch as defaultApiFetch, fetchCurrentUser } from '../lib/api';
 import {
   attr,
@@ -42,7 +44,7 @@ import {
   text,
 } from '../lib/render';
 
-type SettingsTab = 'profile' | 'notifications' | 'guidelines' | 'teams';
+type SettingsTab = 'profile' | 'notifications' | 'guidelines' | 'teams' | 'appearance';
 
 interface NotificationRow {
   key: keyof NotificationPreferences;
@@ -92,18 +94,41 @@ export function mountSettingsPage(
     ) as HTMLButtonElement,
     guidelines: requireRole(contentRoot, 'tab-guidelines') as HTMLButtonElement,
     teams: requireRole(contentRoot, 'tab-teams') as HTMLButtonElement,
+    appearance: requireRole(contentRoot, 'tab-appearance') as HTMLButtonElement,
   };
   const tabSections: Record<SettingsTab, HTMLElement> = {
     profile: requireSection(contentRoot, 'profile'),
     notifications: requireSection(contentRoot, 'notifications'),
     guidelines: requireSection(contentRoot, 'guidelines'),
     teams: requireSection(contentRoot, 'teams'),
+    appearance: requireSection(contentRoot, 'appearance'),
   };
   const teamsContainer = requireRole(contentRoot, 'teams-container');
+
+  // Theme select (Appearance tab — B5 Dark Mode).
+  const themeSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="theme-select"]');
+  if (themeSelect) {
+    // Sync the select to the stored preference on mount.
+    const stored = localStorage.getItem('pinpoint_theme') || 'system';
+    themeSelect.value = stored;
+    themeSelect.addEventListener('change', () => {
+      const value = themeSelect.value as 'light' | 'dark' | 'system';
+      localStorage.setItem('pinpoint_theme', value);
+      if (value === 'light' || value === 'dark') {
+        document.documentElement.setAttribute('data-theme', value);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    });
+  }
 
   // Profile refs.
   const profileLoading = requireRole(contentRoot, 'profile-loading');
   const profileForm = requireRole(contentRoot, 'profile-form') as HTMLFormElement;
+
+  // Replace static "Loading…" text with form-field skeletons.
+  profileLoading.textContent = '';
+  profileLoading.appendChild(createFormSkeleton(3));
   const profileNameInput = requireRole(
     contentRoot,
     'profile-name',
@@ -128,12 +153,20 @@ export function mountSettingsPage(
   const notificationsContent = requireRole(contentRoot, 'notifications-content');
   const notificationsList = requireRole(contentRoot, 'notifications-list');
 
+  // Replace static "Loading…" text with form-field skeletons.
+  notificationsLoading.textContent = '';
+  notificationsLoading.appendChild(createFormSkeleton(4));
+
   // Guidelines refs.
   const guidelinesLoading = requireRole(contentRoot, 'guidelines-loading');
   const guidelinesError = requireRole(contentRoot, 'guidelines-error');
   const guidelinesContent = requireRole(contentRoot, 'guidelines-content');
   const guidelinesEmpty = requireRole(contentRoot, 'guidelines-empty');
   const guidelinesList = requireRole(contentRoot, 'guidelines-list');
+
+  // Replace static "Loading…" text with form-field skeletons.
+  guidelinesLoading.textContent = '';
+  guidelinesLoading.appendChild(createFormSkeleton(2));
   const guidelineForm = requireRole(contentRoot, 'guideline-form') as HTMLFormElement;
   const guidelineNameInput = requireRole(
     contentRoot,
@@ -234,6 +267,7 @@ export function mountSettingsPage(
         }),
       });
       setProfileMessage('Profile updated.', 'success');
+      showToast({ message: 'Profile updated', variant: 'success' });
     } catch (err) {
       setProfileMessage(
         err instanceof Error ? err.message : 'Failed to save.',
@@ -486,6 +520,10 @@ export function mountSettingsPage(
     selectTeams: (e) => {
       e.preventDefault();
       setActiveTab('teams');
+    },
+    selectAppearance: (e) => {
+      e.preventDefault();
+      setActiveTab('appearance');
     },
     saveProfile: (e) => {
       e.preventDefault();

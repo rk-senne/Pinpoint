@@ -26,6 +26,7 @@
 // import surface.
 
 import { S3Client } from '@aws-sdk/client-s3';
+import { createRequire } from 'node:module';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
@@ -36,113 +37,26 @@ import knex, { type Knex } from 'knex';
 import nodemailer from 'nodemailer';
 import { Server as SocketIoServer } from 'socket.io';
 
-// --- domain (use cases + ports) -----------------------------------------
-import {
-  ComputeAnalytics,
-} from '../domain/analytics/usecases/computeAnalytics.js';
-import {
-  AttachScreenshot,
-} from '../domain/annotation/usecases/attachScreenshot.js';
-import {
-  ChangeAnnotationStatus,
-} from '../domain/annotation/usecases/changeAnnotationStatus.js';
-import {
-  CreateAnnotation,
-} from '../domain/annotation/usecases/createAnnotation.js';
-import {
-  DeleteAnnotation,
-} from '../domain/annotation/usecases/deleteAnnotation.js';
-import {
-  UpdateAnnotation,
-} from '../domain/annotation/usecases/updateAnnotation.js';
-import {
-  CompletePasswordReset,
-} from '../domain/auth/usecases/completePasswordReset.js';
-import { Login } from '../domain/auth/usecases/login.js';
-import { Logout } from '../domain/auth/usecases/logout.js';
-import { RefreshToken } from '../domain/auth/usecases/refreshToken.js';
-import { RegisterUser } from '../domain/auth/usecases/registerUser.js';
-import {
-  RequestPasswordReset,
-} from '../domain/auth/usecases/requestPasswordReset.js';
-import { VerifyEmail } from '../domain/auth/usecases/verifyEmail.js';
-import { CreateComment } from '../domain/comment/usecases/createComment.js';
-import { ListComments } from '../domain/comment/usecases/listComments.js';
-import {
-  CreateCustomGuideline,
-} from '../domain/guideline/usecases/createCustomGuideline.js';
-import {
-  ListGuidelines,
-} from '../domain/guideline/usecases/listGuidelines.js';
-import {
-  DispatchPendingNotifications,
-} from '../domain/notification/usecases/dispatchPendingNotifications.js';
-import {
-  ArchiveProject,
-} from '../domain/project/usecases/archiveProject.js';
-import { CreateProject } from '../domain/project/usecases/createProject.js';
-import { DeletePage } from '../domain/project/usecases/deletePage.js';
-import {
-  DeleteProject,
-} from '../domain/project/usecases/deleteProject.js';
-import {
-  ExportProjectReport,
-} from '../domain/project/usecases/exportProjectReport.js';
-import { GetProject } from '../domain/project/usecases/getProject.js';
-import {
-  ListProjectMembers,
-} from '../domain/project/usecases/listProjectMembers.js';
-import {
-  ResolveProjectByUrl,
-} from '../domain/project/usecases/resolveProjectByUrl.js';
-import {
-  SearchProjects,
-} from '../domain/project/usecases/searchProjects.js';
-import {
-  CreateSharedLink,
-} from '../domain/sharedLink/usecases/createSharedLink.js';
-import {
-  VerifyLinkPassword,
-} from '../domain/sharedLink/usecases/verifyLinkPassword.js';
-import { CreateTeam } from '../domain/team/usecases/createTeam.js';
-import { InviteMember } from '../domain/team/usecases/inviteMember.js';
-import { ListTeams } from '../domain/team/usecases/listTeams.js';
-import { RemoveMember } from '../domain/team/usecases/removeMember.js';
-import {
-  UpdateMemberRole,
-} from '../domain/team/usecases/updateMemberRole.js';
-import { GetCurrentUser } from '../domain/user/usecases/getCurrentUser.js';
-import { UpdateProfile } from '../domain/user/usecases/updateProfile.js';
-import {
-  UpdateNotificationPreferences,
-} from '../domain/user/usecases/updateNotificationPreferences.js';
+// --- extracted composition modules (Mission E2) --------------------------
+import { Config, loadConfigFromEnv } from './config.js';
+import { buildAdapters } from './adapters.js';
+import { buildUseCases } from './usecases.js';
 
-// --- outbound adapters ---------------------------------------------------
-import { PgAnalyticsRepo } from '../adapters/outbound/postgres/PgAnalyticsRepo.js';
-import { PgAnnotationRepo } from '../adapters/outbound/postgres/PgAnnotationRepo.js';
-import { PgAuthTokenRepo } from '../adapters/outbound/postgres/PgAuthTokenRepo.js';
-import { PgMembershipRepo } from '../adapters/outbound/postgres/PgMembershipRepo.js';
-import { PgCommentRepo } from '../adapters/outbound/postgres/PgCommentRepo.js';
-import { PgGuidelineRepo } from '../adapters/outbound/postgres/PgGuidelineRepo.js';
-import { PgNotificationQueue } from '../adapters/outbound/postgres/PgNotificationQueue.js';
-import { PgPageRepo } from '../adapters/outbound/postgres/PgPageRepo.js';
-import { PgProjectPinSequence } from '../adapters/outbound/postgres/PgProjectPinSequence.js';
-import { PgProjectRepo } from '../adapters/outbound/postgres/PgProjectRepo.js';
-import { PgSharedLinkRepo } from '../adapters/outbound/postgres/PgSharedLinkRepo.js';
-import { PgTeamMemberRepo } from '../adapters/outbound/postgres/PgTeamMemberRepo.js';
-import { PgTeamRepo } from '../adapters/outbound/postgres/PgTeamRepo.js';
-import { PgUserRepo } from '../adapters/outbound/postgres/PgUserRepo.js';
+// --- domain (billing — inline because feature-flagged) -------------------
 import {
-  S3ScreenshotStore,
-  type S3ScreenshotStoreConfig,
-} from '../adapters/outbound/s3/S3ScreenshotStore.js';
-import { NodemailerMailer } from '../adapters/outbound/smtp/NodemailerMailer.js';
+  CreateCheckoutSession,
+  HandleStripeWebhook,
+  GetBillingPortal,
+  GetUsageSummary,
+  CheckGracePeriods,
+} from '../domain/billing/usecases/billing.js';
+import { DispatchWebhook } from '../domain/webhook/usecases/webhooks.js';
+
+// --- outbound adapters (only those still directly used here) -------------
 import { SocketIoEventBus } from '../adapters/outbound/socket/SocketIoEventBus.js';
-import { BcryptPasswordHasher } from '../adapters/outbound/bcrypt/BcryptPasswordHasher.js';
-import { JwtTokenIssuer } from '../adapters/outbound/jwt/JwtTokenIssuer.js';
-import { SystemClock } from '../adapters/outbound/clock/SystemClock.js';
+import { WebhookDispatchingEventBus } from '../adapters/outbound/socket/WebhookDispatchingEventBus.js';
+import { StripeBillingProvider } from '../adapters/outbound/stripe/StripeBillingProvider.js';
 import { PinoLogger, pino, pinoHttp } from '../adapters/outbound/logger/PinoLogger.js';
-import { PdfKitReportRenderer } from '../adapters/outbound/report/PdfKitReportRenderer.js';
 
 // --- inbound adapters ----------------------------------------------------
 import { mountInboundHttp, type InboundHttpDeps } from '../adapters/inbound/http/index.js';
@@ -153,128 +67,38 @@ import {
   createNotificationWorker,
   type NotificationWorker,
 } from '../adapters/inbound/workers/notificationWorker.js';
+import {
+  createDigestWorker,
+  type DigestWorker,
+} from '../adapters/inbound/workers/digestWorker.js';
+import {
+  createIntegrationRefreshWorker,
+  type IntegrationRefreshWorker,
+} from '../adapters/inbound/workers/integrationRefreshWorker.js';
 
 // --- request-pipeline middleware ----------------------------------------
-// `authRateLimiter` enforces the per-IP+email cap on auth endpoints
-// (Req 19.1). `csrfMiddleware` is the double-submit-cookie verifier the
-// dashboard's `apiFetch` pairs with `setCsrfToken`. `legacyApiCatchAll`
-// returns 410 Gone for any path under `/api/` that isn't `/api/v1/*`,
-// preserving the URL deprecation policy from Req 25.2.
 import { authRateLimiter } from '../middleware/authRateLimit.js';
 import { csrfMiddleware } from '../middleware/csrf.js';
 import { legacyApiCatchAll } from '../middleware/legacyApi.js';
+import { securityHeaders } from '../middleware/securityHeaders.js';
+import { inputSanitizer } from '../middleware/inputSanitizer.js';
+import { requestId } from '../middleware/requestId.js';
+import { compress } from '../middleware/compress.js';
+import { cacheMiddleware } from '../middleware/cache.js';
+import { createPlanLimitsMiddleware } from '../middleware/planLimits.js';
+import { tenantRateLimit, type RedisRateLimitClient } from '../middleware/tenantRateLimit.js';
+import { createRedisClients, createRedisRateLimitStore } from '../infrastructure/redis.js';
+import { createAdapter } from '@socket.io/redis-adapter';
 
-// --- screenshot redaction helper (used as `applyRedactionBlur`) ---------
+// --- services -----------------------------------------------------------
+import { generateDailyDigest } from '../services/dailyDigest.js';
 import { applyRedactionBlur as applyRedactionBlurImpl } from '../services/screenshotRedaction.js';
 
 // =======================================================================
-// Configuration
+// Re-export config types for backward compatibility
 // =======================================================================
-
-export interface DbConfig {
-  host: string;
-  port: number;
-  database: string;
-  user: string;
-  password: string;
-  poolMin: number;
-  poolMax: number;
-}
-
-export interface S3Config {
-  bucket: string;
-  region: string;
-  endpoint?: string;
-  forcePathStyle: boolean;
-  publicBaseUrl?: string;
-  keyPrefix: string;
-}
-
-export interface SmtpConfig {
-  host: string;
-  port: number;
-  secure: boolean;
-  user?: string;
-  password?: string;
-  fromAddress: string;
-}
-
-export interface JwtConfig {
-  secret: string;
-  accessTtl: string;
-  graceWindowSeconds: number;
-}
-
-export interface Config {
-  nodeEnv: string;
-  port: number;
-  corsOrigin: string;
-  appUrl: string;
-  /** True when cookies should NOT carry the `Secure` flag (test transport). */
-  cookieInsecure: boolean;
-  logLevel: string;
-  notificationIntervalMs: number;
-  notificationBatchSize: number;
-  bcryptSaltRounds: number;
-  db: DbConfig;
-  s3: S3Config;
-  smtp: SmtpConfig;
-  jwt: JwtConfig;
-}
-
-/**
- * Read the runtime configuration from `process.env` with reasonable
- * defaults for development and tests. Production missing-secret
- * validation is delegated to `validateConfig` (see `server/src/config.ts`)
- * which the caller invokes explicitly before `start()`.
- */
-export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
-  const nodeEnv = env.NODE_ENV ?? 'development';
-  const isTest = nodeEnv === 'test';
-
-  return {
-    nodeEnv,
-    port: Number(env.PORT) || 3001,
-    corsOrigin: env.CORS_ORIGIN || '*',
-    appUrl: env.APP_URL || 'http://localhost:5173',
-    cookieInsecure: isTest,
-    logLevel: env.LOG_LEVEL || (isTest ? 'silent' : 'info'),
-    notificationIntervalMs: Number(env.NOTIFICATION_INTERVAL_MS) || 5_000,
-    notificationBatchSize: Number(env.NOTIFICATION_BATCH_SIZE) || 10,
-    bcryptSaltRounds: Number(env.BCRYPT_SALT_ROUNDS) || 10,
-    db: {
-      host: env.DB_HOST || 'localhost',
-      port: Number(env.DB_PORT) || 5432,
-      database: env.DB_NAME || (isTest ? 'pinpoint_test' : 'pinpoint'),
-      user: env.DB_USER || 'postgres',
-      password: env.DB_PASSWORD || 'postgres',
-      poolMin: Number(env.DB_POOL_MIN) || 2,
-      poolMax: Number(env.DB_POOL_MAX) || 10,
-    },
-    s3: {
-      bucket: env.S3_BUCKET || 'pinpoint',
-      region: env.S3_REGION || env.AWS_REGION || 'us-east-1',
-      ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
-      forcePathStyle: env.S3_FORCE_PATH_STYLE === 'true',
-      ...(env.S3_PUBLIC_BASE_URL ? { publicBaseUrl: env.S3_PUBLIC_BASE_URL } : {}),
-      keyPrefix: env.S3_KEY_PREFIX || 'annotations/screenshots',
-    },
-    smtp: {
-      host: env.SMTP_HOST || 'localhost',
-      port: Number(env.SMTP_PORT) || 1025,
-      secure: env.SMTP_SECURE === 'true',
-      ...(env.SMTP_USER ? { user: env.SMTP_USER } : {}),
-      ...(env.SMTP_PASSWORD ? { password: env.SMTP_PASSWORD } : {}),
-      fromAddress: env.SMTP_FROM || 'no-reply@pinpoint.local',
-    },
-    jwt: {
-      secret: env.JWT_SECRET || 'dev-secret-change-in-production',
-      accessTtl: env.JWT_ACCESS_TTL || '24h',
-      graceWindowSeconds:
-        Number(env.JWT_GRACE_WINDOW_SECONDS) || 7 * 24 * 60 * 60,
-    },
-  };
-}
+export type { Config, DbConfig, S3Config, SmtpConfig, JwtConfig } from './config.js';
+export { loadConfigFromEnv } from './config.js';
 
 // =======================================================================
 // Container
@@ -287,6 +111,8 @@ export interface Container {
   readonly io: SocketIoServer;
   readonly db: Knex;
   readonly worker: NotificationWorker;
+  readonly notificationTriggers: import('../domain/notification/usecases/notificationTriggers.js').NotificationTriggers;
+  readonly runDailyDigest: (orgId: string) => Promise<import('../services/dailyDigest.js').DigestData>;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -305,7 +131,15 @@ export function buildContainer(config: Config): Container {
       user: config.db.user,
       password: config.db.password,
     },
-    pool: { min: config.db.poolMin, max: config.db.poolMax },
+    pool: {
+      min: config.db.poolMin,
+      max: config.db.poolMax,
+      afterCreate: (conn: unknown, done: (err: Error | null, conn: unknown) => void) => {
+        (conn as { query: (sql: string, cb: (err: Error | null, conn: unknown) => void) => void })
+          .query('SET statement_timeout = 30000', (err) => done(err, conn));
+      },
+    },
+    acquireConnectionTimeout: 10000,
   });
 
   const s3ClientConfig: ConstructorParameters<typeof S3Client>[0] = {
@@ -326,247 +160,95 @@ export function buildContainer(config: Config): Container {
     ...(smtpAuth ? { auth: smtpAuth } : {}),
   });
 
-  // ---- Outbound adapters ----------------------------------------------
-  const userRepo = new PgUserRepo(db);
-  const projectRepo = new PgProjectRepo(db);
-  const pageRepo = new PgPageRepo(db);
-  const annotationRepo = new PgAnnotationRepo(db);
-  const commentRepo = new PgCommentRepo(db);
-  const teamRepo = new PgTeamRepo(db);
-  const teamMemberRepo = new PgTeamMemberRepo(db);
-  const guidelineRepo = new PgGuidelineRepo(db);
-  const sharedLinkRepo = new PgSharedLinkRepo(db);
-  const analyticsRepo = new PgAnalyticsRepo(db);
-  const authTokenRepo = new PgAuthTokenRepo(db);
-  const membershipRepo = new PgMembershipRepo(db);
-  const notificationQueue = new PgNotificationQueue(db);
-  const pinSequence = new PgProjectPinSequence(db);
-
-  const screenshotStoreConfig: S3ScreenshotStoreConfig = {
-    bucket: config.s3.bucket,
-    region: config.s3.region,
-    forcePathStyle: config.s3.forcePathStyle,
-    keyPrefix: config.s3.keyPrefix,
-  };
-  if (config.s3.endpoint) screenshotStoreConfig.endpoint = config.s3.endpoint;
-  if (config.s3.publicBaseUrl) {
-    screenshotStoreConfig.publicBaseUrl = config.s3.publicBaseUrl;
-  }
-  const screenshotStore = new S3ScreenshotStore(s3Client, screenshotStoreConfig);
-
-  const passwordHasher = new BcryptPasswordHasher(config.bcryptSaltRounds);
-  const tokenIssuer = new JwtTokenIssuer({
-    secret: config.jwt.secret,
-    // `accessTtl` is widened to `string` in the config record; the JWT
-    // adapter expects `SignOptions['expiresIn']`, which accepts the same
-    // human-readable string forms (e.g., `'24h'`).
-    accessTtl: config.jwt.accessTtl as `${number}${'h' | 'm' | 's' | 'd'}` | number,
-    graceWindowSeconds: config.jwt.graceWindowSeconds,
-  });
-  const clock = new SystemClock();
-  const mailer = new NodemailerMailer(transporter, {
-    fromAddress: config.smtp.fromAddress,
-  });
-
-  const reportRenderer = new PdfKitReportRenderer(db, s3Client, {
-    bucket: config.s3.bucket,
-    buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
-  });
+  // ---- Build outbound adapters (delegated to adapters.ts) -------------
+  const adapters = buildAdapters(config, db, s3Client, transporter);
 
   // ---- HTTP / Socket.IO infrastructure (so we can build EventBus) -----
   const app = express();
   const httpServer = createServer(app);
+  // When corsOrigin is '*', use `true` to reflect the request's Origin header back.
+  // A literal '*' with credentials is invalid per the Fetch spec — browsers reject
+  // credentialed requests to a wildcard origin. Using `true` mirrors the incoming
+  // Origin, which is functionally equivalent but spec-compliant. Credentials are
+  // always enabled because both the Dashboard (cookie auth) and Extension (bearer)
+  // send credentialed requests.
+  const corsOriginResolved: string | boolean = config.corsOrigin === '*' ? true : config.corsOrigin;
   const io = new SocketIoServer(httpServer, {
-    cors: { origin: config.corsOrigin, credentials: true },
+    cors: { origin: corsOriginResolved, credentials: true },
   });
-  const eventBus = new SocketIoEventBus(io);
 
-  // ---- Helper closures ------------------------------------------------
-  const runInTransaction = async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
-    db.transaction((trx) => fn(trx));
+  // Wire Redis adapter for multi-instance Socket.IO when REDIS_URL is configured (D1).
+  const redisClients = createRedisClients(config.redisUrl, logger);
+  if (redisClients) {
+    io.adapter(createAdapter(redisClients.primary, redisClients.subscriber));
+  }
 
-  const buildVerifyEmailLink = (rawToken: string): string =>
-    `${trimSlash(config.appUrl)}/verify-email/${rawToken}`;
+  const socketEventBus = new SocketIoEventBus(io);
 
-  const buildResetLink = (rawToken: string): string =>
-    `${trimSlash(config.appUrl)}/reset-password/${rawToken}`;
+  // Wrap the Socket.IO bus with webhook dispatch + activity recording.
+  const dispatchWebhook = new DispatchWebhook({ webhookRepo: adapters.webhookRepo });
+  const eventBus = new WebhookDispatchingEventBus(socketEventBus, dispatchWebhook, logger, db);
 
+  // ---- Build domain use cases (delegated to usecases.ts) --------------
+  const useCases = buildUseCases({ adapters, config, eventBus, logger, db });
+
+  // ---- Helper closures (still needed for inbound deps) ----------------
   const resolvePageUrls = async (
     annotations: { pageId: string }[],
     projectId: string,
   ): Promise<Map<string, string>> => {
     const map = new Map<string, string>();
     if (annotations.length === 0) return map;
-    const pages = await pageRepo.listByProject(projectId);
+    const pages = await adapters.pageRepo.listByProject(projectId);
     for (const p of pages) map.set(p.id, p.url);
     return map;
   };
 
-  // ---- Use cases ------------------------------------------------------
-  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo });
-  const registerUser = new RegisterUser({
-    userRepo,
-    authTokenRepo,
-    passwordHasher,
-    notificationQueue,
-    clock,
-    buildVerifyEmailLink,
-  });
-  const refreshToken = new RefreshToken({ tokenIssuer, clock });
-  const verifyEmail = new VerifyEmail({ authTokenRepo, userRepo, clock });
-  const requestPasswordReset = new RequestPasswordReset({
-    userRepo,
-    authTokenRepo,
-    mailer,
-    clock,
-    buildResetLink,
-  });
-  const completePasswordReset = new CompletePasswordReset({
-    userRepo,
-    authTokenRepo,
-    passwordHasher,
-    clock,
-  });
-  const logout = new Logout({ authTokenRepo });
-
-  const createProject = new CreateProject({
-    projectRepo,
-    pageRepo,
-    runInTransaction,
-  });
-  const searchProjects = new SearchProjects({ projectRepo });
-  const getProject = new GetProject({ projectRepo, teamMemberRepo });
-  const archiveProject = new ArchiveProject({ projectRepo, teamMemberRepo });
-  const deleteProject = new DeleteProject({
-    projectRepo,
-    teamMemberRepo,
-    eventBus,
-  });
-  const deletePage = new DeletePage({
-    projectRepo,
-    pageRepo,
-    annotationRepo,
-    teamMemberRepo,
-  });
-  const listProjectMembers = new ListProjectMembers({
-    projectRepo,
-    teamMemberRepo,
-  });
-  const resolveProjectByUrl = new ResolveProjectByUrl({
-    projectRepo,
-    pageRepo,
-    teamMemberRepo,
-  });
-  const exportProjectReport = new ExportProjectReport({
-    projectRepo,
-    teamMemberRepo,
-    reportRenderer,
-    eventBus,
-  });
-
-  const computeAnalytics = new ComputeAnalytics({
-    projectRepo,
-    teamMemberRepo,
-    analyticsRepo,
-  });
-
-  const createAnnotation = new CreateAnnotation({
-    annotationRepo,
-    projectRepo,
-    pageRepo,
-    teamMemberRepo,
-    pinSequence,
-    runInTransaction,
-    clock,
-    eventBus,
-  });
-  const updateAnnotation = new UpdateAnnotation({
-    annotationRepo,
-    projectRepo,
-    teamMemberRepo,
-  });
-  const changeAnnotationStatus = new ChangeAnnotationStatus({
-    annotationRepo,
-    projectRepo,
-    teamMemberRepo,
-  });
-  const deleteAnnotation = new DeleteAnnotation({
-    annotationRepo,
-    projectRepo,
-    teamMemberRepo,
-  });
-  const attachScreenshot = new AttachScreenshot({
-    annotationRepo,
-    projectRepo,
-    teamMemberRepo,
-    screenshotStore,
-  });
-
-  const createComment = new CreateComment({
-    commentRepo,
-    annotationRepo,
-    eventBus,
-  });
-  const listComments = new ListComments({ commentRepo, annotationRepo });
-
-  const createTeam = new CreateTeam({ teamRepo, teamMemberRepo });
-  const listTeams = new ListTeams({ teamRepo, teamMemberRepo });
-  const inviteMember = new InviteMember({
-    teamRepo,
-    teamMemberRepo,
-    userRepo,
-    eventBus,
-  });
-  const updateMemberRole = new UpdateMemberRole({
-    teamRepo,
-    teamMemberRepo,
-    eventBus,
-  });
-  const removeMember = new RemoveMember({ teamRepo, teamMemberRepo });
-
-  const createSharedLink = new CreateSharedLink({
-    projectRepo,
-    sharedLinkRepo,
-    passwordHasher,
-  });
-  const verifyLinkPassword = new VerifyLinkPassword({
-    sharedLinkRepo,
-    passwordHasher,
-    clock,
-  });
-
-  const listGuidelines = new ListGuidelines({ guidelineRepo });
-  const createCustomGuideline = new CreateCustomGuideline({ guidelineRepo });
-
-  const getCurrentUser = new GetCurrentUser({ userRepo });
-  const updateProfile = new UpdateProfile({ userRepo });
-  const updateNotificationPreferences = new UpdateNotificationPreferences({
-    userRepo,
-  });
-
-  const dispatchPendingNotifications = new DispatchPendingNotifications({
-    notificationQueue,
-    userRepo,
-    mailer,
-    clock,
-    logger,
-  });
+  // ---- Billing (feature-flagged on STRIPE_SECRET_KEY) ----------------
+  let billingRouteDeps: import('../adapters/inbound/http/billing.routes.js').BillingRouteDeps | undefined;
+  if (config.stripe) {
+    const esmRequire = createRequire(__filename);
+    const Stripe = esmRequire('stripe');
+    const stripeInstance = new Stripe(config.stripe.secretKey);
+    const billingProvider = new StripeBillingProvider(stripeInstance, config.stripe.webhookSecret);
+    const billingDeps = { db, billingProvider, proPriceId: config.stripe.proPriceId };
+    const createCheckoutSessionUc = new CreateCheckoutSession(billingDeps);
+    const handleStripeWebhookUc = new HandleStripeWebhook(billingDeps);
+    const getBillingPortalUc = new GetBillingPortal(billingDeps);
+    const getUsageSummaryUc = new GetUsageSummary({ db });
+    billingRouteDeps = {
+      authMiddleware: (_req, _res, next) => next(),
+      createCheckoutSession: createCheckoutSessionUc,
+      handleStripeWebhook: handleStripeWebhookUc,
+      getBillingPortal: getBillingPortalUc,
+      getUsageSummary: getUsageSummaryUc,
+      db,
+    };
+  }
 
   // ---- Express middleware --------------------------------------------
   const httpLogger = pinoHttp({ logger: pinoInstance });
   app.use(httpLogger);
   app.use(helmet({
-    contentSecurityPolicy: false, // CSP managed per-route if needed
-    crossOriginEmbedderPolicy: false, // Allow extension to embed
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
   }));
   app.use(
     cors({
-      origin: config.corsOrigin,
+      origin: corsOriginResolved,
       credentials: true,
     }),
   );
-  app.use(express.json());
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      (req as express.Request).rawBody = buf;
+    },
+  }));
   app.use(cookieParser());
+  app.use(compress(1024));
+  app.use(requestId);
+  app.use(securityHeaders);
+  app.use(inputSanitizer);
 
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -584,6 +266,16 @@ export function buildContainer(config: Config): Container {
 
   app.use('/api/v1', csrfMiddleware);
 
+  const redisRateLimitClient: RedisRateLimitClient | undefined = redisClients
+    ? createRedisRateLimitStore(redisClients.primary)
+    : undefined;
+  app.use('/api/v1', tenantRateLimit({}, redisRateLimitClient));
+
+  // Response caching on hot read-only endpoints (Enhancement 3).
+  app.use('/api/v1/projects/:id/analytics', cacheMiddleware(60_000));
+  app.use('/api/v1/guidelines', cacheMiddleware(300_000));
+  app.use('/api/v1/docs.json', cacheMiddleware(3_600_000));
+
   // Strict per-IP+email limiter for auth-sensitive endpoints (Req 19.1).
   app.post('/api/v1/auth/login', authRateLimiter);
   app.post('/api/v1/auth/register', authRateLimiter);
@@ -591,70 +283,246 @@ export function buildContainer(config: Config): Container {
   app.post('/api/v1/auth/resend-verification', authRateLimiter);
   app.post('/api/v1/shared/:linkId/verify', authRateLimiter);
 
+  // Plan-limit checks on annotation creation and project creation.
+  app.post('/api/v1/projects/:id/annotations', createPlanLimitsMiddleware(db, 'annotations'));
+  app.post('/api/v1/projects', createPlanLimitsMiddleware(db, 'projects'));
+
   // ---- Mount inbound HTTP adapter ------------------------------------
   const inboundHttpDeps: InboundHttpDeps = {
-    auth: { tokenIssuer },
+    auth: { tokenIssuer: adapters.tokenIssuer },
     authRoutes: {
-      login,
-      registerUser,
-      refreshToken,
-      verifyEmail,
-      requestPasswordReset,
-      completePasswordReset,
-      logout,
+      login: useCases.login,
+      registerUser: useCases.registerUser,
+      refreshToken: useCases.refreshToken,
+      verifyEmail: useCases.verifyEmail,
+      requestPasswordReset: useCases.requestPasswordReset,
+      completePasswordReset: useCases.completePasswordReset,
+      logout: useCases.logout,
       cookieInsecure: config.cookieInsecure,
     },
     projectsRoutes: {
-      createProject,
-      searchProjects,
-      getProject,
-      archiveProject,
-      deleteProject,
-      deletePage,
-      listProjectMembers,
-      resolveProjectByUrl,
-      exportProjectReport,
-      computeAnalytics,
+      createProject: useCases.createProject,
+      searchProjects: useCases.searchProjects,
+      getProject: useCases.getProject,
+      archiveProject: useCases.archiveProject,
+      deleteProject: useCases.deleteProject,
+      deletePage: useCases.deletePage,
+      listProjectMembers: useCases.listProjectMembers,
+      resolveProjectByUrl: useCases.resolveProjectByUrl,
+      exportProjectReport: useCases.exportProjectReport,
+      computeAnalytics: useCases.computeAnalytics,
+      db,
     },
     annotationsRoutes: {
-      createAnnotation,
-      updateAnnotation,
-      changeAnnotationStatus,
-      deleteAnnotation,
-      attachScreenshot,
-      annotationRepo,
+      createAnnotation: useCases.createAnnotation,
+      updateAnnotation: useCases.updateAnnotation,
+      changeAnnotationStatus: useCases.changeAnnotationStatus,
+      deleteAnnotation: useCases.deleteAnnotation,
+      attachScreenshot: useCases.attachScreenshot,
+      annotationRepo: adapters.annotationRepo,
       resolvePageUrls,
-      buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
+      buildScreenshotUrl: (key) => adapters.screenshotStore.buildScreenshotUrl(key),
+      fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
       applyRedactionBlur: (buffer, rects) => applyRedactionBlurImpl(buffer, rects),
+      db,
     },
     commentsRoutes: {
-      createComment,
-      listComments,
+      createComment: useCases.createComment,
+      listComments: useCases.listComments,
+      db,
     },
     teamsRoutes: {
-      createTeam,
-      listTeams,
-      inviteMember,
-      updateMemberRole,
-      removeMember,
+      createTeam: useCases.createTeam,
+      listTeams: useCases.listTeams,
+      inviteMember: useCases.inviteMember,
+      updateMemberRole: useCases.updateMemberRole,
+      removeMember: useCases.removeMember,
+      db,
     },
     sharedLinkRoutes: {
-      createSharedLink,
-      verifyLinkPassword,
+      createSharedLink: useCases.createSharedLink,
+      verifyLinkPassword: useCases.verifyLinkPassword,
     },
     guidelinesRoutes: {
-      listGuidelines,
-      createCustomGuideline,
+      listGuidelines: useCases.listGuidelines,
+      createCustomGuideline: useCases.createCustomGuideline,
     },
     usersRoutes: {
-      getCurrentUser,
-      updateProfile,
-      updateNotificationPreferences,
+      getCurrentUser: useCases.getCurrentUser,
+      updateProfile: useCases.updateProfile,
+      updateNotificationPreferences: useCases.updateNotificationPreferences,
+    },
+    webhooksRoutes: {
+      registerWebhook: useCases.registerWebhook,
+      deleteWebhook: useCases.deleteWebhook,
+      webhookRepo: adapters.webhookRepo,
+      db,
+    },
+    notificationsRoutes: {
+      listUserNotifications: useCases.listUserNotifications,
+      markNotificationRead: useCases.markNotificationRead,
+      userNotificationRepo: adapters.userNotificationRepo,
+    },
+    orgRoutes: {
+      inviteToOrg: useCases.inviteToOrg,
+      acceptInvitation: useCases.acceptInvitation,
+      membershipRepo: adapters.membershipRepo,
+      orgRepo: adapters.orgRepo,
+      userRepo: adapters.userRepo,
+      tokenIssuer: adapters.tokenIssuer,
+      db,
+    },
+    apiKeysRoutes: {
+      apiKeyRepo: adapters.apiKeyRepo,
+      db,
+    },
+    feedbackRoutes: {
+      annotationRepo: adapters.annotationRepo,
+      db,
+    },
+    heatmapRoutes: {
+      db,
+    },
+    premiumRoutes: {
+      db,
+    },
+    clientPortalRoutes: {
+      db,
+    },
+    workflowRoutes: {
+      db,
+    },
+    reportingRoutes: {
+      db,
+    },
+    oauthRoutes: Object.keys(adapters.oauthProviders).length > 0 ? {
+      oauthLogin: useCases.oauthLogin,
+      providers: adapters.oauthProviders,
+      callbackBaseUrl: config.oauth.callbackBaseUrl,
+      appUrl: config.appUrl,
+      cookieInsecure: config.cookieInsecure,
+    } : undefined,
+    billingRoutes: billingRouteDeps ? {
+      createCheckoutSession: billingRouteDeps.createCheckoutSession,
+      handleStripeWebhook: billingRouteDeps.handleStripeWebhook,
+      getBillingPortal: billingRouteDeps.getBillingPortal,
+      getUsageSummary: billingRouteDeps.getUsageSummary,
+      db,
+    } : undefined,
+    integrationsRoutes: {
+      integrationRepo: adapters.integrationRepo,
+      oauthStateSecret: config.jwt.secret,
+    },
+    guestFeedbackRoutes: {
+      annotationRepo: adapters.annotationRepo,
+      sharedLinkRepo: adapters.sharedLinkRepo,
+      pageRepo: adapters.pageRepo,
+    },
+    activityRoutes: {
+      db,
+    },
+    bulkRoutes: {
+      db,
+    },
+    triageRoutes: {
+      db,
+    },
+    auditLogRoutes: {
+      db,
     },
   };
   mountInboundHttp(app, inboundHttpDeps);
 
-  // ---- Health endpoints ----------------------------------------------
+  // ---- Health endpoints (Mission D2: Enhanced Health & Readiness) ------
+
+  let isShuttingDown = false;
+  process.on('SIGTERM', () => { isShuttingDown = true; });
+  process.on('SIGINT', () => { isShuttingDown = true; });
+
+  const esmRequireHealth = createRequire(__filename);
+  const pkgJson = esmRequireHealth('../../package.json') as { version: string };
+
+  async function performReadinessCheck(): Promise<{
+    status: 'ok' | 'degraded' | 'unhealthy';
+    checks: Record<string, string>;
+    info: {
+      version: string;
+      nodeVersion: string;
+      uptime: number;
+      memoryUsage: { rss: number; heapUsed: number };
+    };
+    httpStatus: number;
+  }> {
+    const checks: Record<string, string> = {};
+
+    try {
+      await db.raw('SELECT 1');
+      checks.database = 'ok';
+    } catch {
+      checks.database = 'error';
+    }
+
+    checks.redis = config.redisUrl ? 'configured' : 'not_configured';
+    if (redisClients) {
+      try {
+        await redisClients.primary.ping();
+        checks.redis = 'ok';
+      } catch {
+        checks.redis = 'error';
+      }
+    }
+    checks.s3 = 'configured';
+
+    const requiredOk = checks.database === 'ok';
+    let status: 'ok' | 'degraded' | 'unhealthy';
+    if (!requiredOk) {
+      status = 'unhealthy';
+    } else {
+      const optionalValues = [checks.redis, checks.s3];
+      const optionalOk = optionalValues.every(
+        (v) => v === 'ok' || v === 'configured' || v === 'not_configured',
+      );
+      status = optionalOk ? 'ok' : 'degraded';
+    }
+
+    const mem = process.memoryUsage();
+    const info = {
+      version: pkgJson.version,
+      nodeVersion: process.version,
+      uptime: Math.floor(process.uptime()),
+      memoryUsage: { rss: mem.rss, heapUsed: mem.heapUsed },
+    };
+
+    const httpStatus = status === 'unhealthy' ? 503 : 200;
+    return { status, checks, info, httpStatus };
+  }
+
+  app.get('/health/live', (_req, res) => {
+    if (isShuttingDown) {
+      res.status(503).json({ status: 'shutting_down' });
+      return;
+    }
+    res.status(200).json({ status: 'ok' });
+  });
+
+  app.get('/health/ready', async (_req, res) => {
+    const result = await performReadinessCheck();
+    res.status(result.httpStatus).json({
+      status: result.status,
+      checks: result.checks,
+      info: result.info,
+    });
+  });
+
+  app.get('/health', async (_req, res) => {
+    const result = await performReadinessCheck();
+    res.status(result.httpStatus).json({
+      status: result.status,
+      checks: result.checks,
+      info: result.info,
+    });
+  });
+
   app.get('/api/v1/health', async (_req, res) => {
     const checks: Record<string, string> = {};
     try {
@@ -663,16 +531,14 @@ export function buildContainer(config: Config): Container {
     } catch {
       checks.database = 'error';
     }
-    const allOk = Object.values(checks).every((v) => v === 'ok');
-    res.status(allOk ? 200 : 503).json({ status: allOk ? 'ok' : 'degraded', checks, uptime: process.uptime() });
-  });
-  app.get('/health', async (_req, res) => {
-    try {
-      await db.raw('SELECT 1');
-      res.json({ status: 'ok' });
-    } catch {
-      res.status(503).json({ status: 'error', message: 'Database unreachable' });
+
+    checks.redis = config.redisUrl ? 'configured' : 'not_configured';
+    if (redisClients) {
+      try { await redisClients.primary.ping(); checks.redis = 'ok'; } catch { checks.redis = 'error'; }
     }
+
+    const allOk = Object.values(checks).every((v) => v === 'ok' || v === 'configured' || v === 'not_configured');
+    res.status(allOk ? 200 : 503).json({ status: allOk ? 'ok' : 'degraded', checks, uptime: process.uptime() });
   });
 
   // ---- Legacy /api/* catch-all (Req 25.2) ----------------------------
@@ -693,14 +559,31 @@ export function buildContainer(config: Config): Container {
   });
 
   // ---- Inbound WebSocket gateway --------------------------------------
-  installCollabGateway(io, { tokenIssuer });
+  installCollabGateway(io, { tokenIssuer: adapters.tokenIssuer, db });
 
   // ---- Notification worker -------------------------------------------
   const worker = createNotificationWorker({
-    dispatchPendingNotifications,
+    dispatchPendingNotifications: useCases.dispatchPendingNotifications,
     logger,
     intervalMs: config.notificationIntervalMs,
     batchSize: config.notificationBatchSize,
+  });
+
+  // ---- Digest worker (feature-flagged) --------------------------------
+  let digestWorker: DigestWorker | null = null;
+  if (config.digestEnabled) {
+    digestWorker = createDigestWorker({
+      db,
+      notificationQueue: adapters.notificationQueue,
+      generateDailyDigest,
+      logger,
+    });
+  }
+
+  // ---- Integration refresh worker (feature-flagged on integrations) ---
+  const integrationRefreshWorker: IntegrationRefreshWorker = createIntegrationRefreshWorker({
+    db,
+    logger,
   });
 
   // ---- Lifecycle ------------------------------------------------------
@@ -725,12 +608,16 @@ export function buildContainer(config: Config): Container {
       httpServer.listen(config.port);
     });
     worker.start();
+    digestWorker?.start();
+    integrationRefreshWorker.start();
   };
 
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
     await worker.stop();
+    if (digestWorker) await digestWorker.stop();
+    await integrationRefreshWorker.stop();
     await new Promise<void>((resolve) => {
       io.close(() => resolve());
     });
@@ -747,15 +634,9 @@ export function buildContainer(config: Config): Container {
     io,
     db,
     worker,
+    notificationTriggers: useCases.notificationTriggers,
+    runDailyDigest: (orgId: string) => generateDailyDigest(db, orgId),
     start,
     stop,
   };
-}
-
-// ----------------------------------------------------------------------
-// helpers
-// ----------------------------------------------------------------------
-
-function trimSlash(s: string): string {
-  return s.replace(/\/+$/, '');
 }

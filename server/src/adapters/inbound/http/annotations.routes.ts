@@ -24,8 +24,12 @@ import {
   DOMTargetSchema,
   EnvironmentMetadataSchema,
   MarkupDocumentSchema,
+  PaginationParamsSchema,
+  paginationMeta,
   SeveritySchema,
 } from '@pinpoint/shared';
+
+import type { Knex } from 'knex';
 
 import type { CreateAnnotation } from '../../../domain/annotation/usecases/createAnnotation.js';
 import type { UpdateAnnotation } from '../../../domain/annotation/usecases/updateAnnotation.js';
@@ -35,6 +39,9 @@ import type { AttachScreenshot } from '../../../domain/annotation/usecases/attac
 import type { AnnotationRepo } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { AnnotationPatch } from '../../../domain/annotation/Annotation.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
+import { invalidateCache } from '../../../middleware/cache.js';
+import { createTriageService } from '../../../services/triage.js';
+import { getSuggestions } from '../../../services/smartSuggestions.js';
 
 export interface AnnotationRouteDeps {
   createAnnotation: CreateAnnotation;
@@ -59,6 +66,8 @@ export interface AnnotationRouteDeps {
   ) => Promise<Map<string, string>>;
   /** Per-port screenshot URL builder (composition root supplies). */
   buildScreenshotUrl: (objectKey: string) => string;
+  /** Fetches a screenshot PNG from the store by its object key. */
+  fetchScreenshotBuffer: (objectKey: string) => Promise<Buffer | null>;
   /** Optional pre-upload buffer transform (e.g., redaction blur). */
   applyRedactionBlur?: (
     buffer: Buffer,
@@ -67,6 +76,8 @@ export interface AnnotationRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   /** Maximum allowed screenshot size in bytes. Defaults to 10 MB. */
   screenshotMaxBytes?: number;
+  /** Knex instance for premium feature queries (triage + suggestions). */
+  db?: Knex;
 }
 
 const SCREENSHOT_MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
@@ -185,6 +196,7 @@ export function createAnnotationRoutes(
     applyRedactionBlur,
     authMiddleware,
     screenshotMaxBytes = SCREENSHOT_MAX_BYTES_DEFAULT,
+    db,
   } = deps;
 
   const screenshotUpload = multer({
@@ -246,6 +258,7 @@ export function createAnnotationRoutes(
       res.status(200).json({ annotation: formatAnnotation(annotation, pageUrl) });
       return;
     }
+    invalidateCache(`/api/v1/projects/${projectId}/analytics`);
     res.status(201).json({ annotation: formatAnnotation(annotation, pageUrl) });
   });
 
@@ -262,20 +275,25 @@ export function createAnnotationRoutes(
       statusFilter = statusResult.data;
     }
 
-    // The list path is a thin projection — no domain logic beyond
-    // owner/team-membership scoping (already enforced by future use cases).
-    // Until a `ListAnnotations` use case lands, fall back to the repo
-    // directly and let the composition root layer in access checks via a
-    // wrapper if it wants to.
-    const annotations = await annotationRepo.listByProject(
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
+    const total = await annotationRepo.countByProject(
       projectId,
       statusFilter !== undefined ? { status: statusFilter } : undefined,
     );
+
+    const annotations = await annotationRepo.listByProject(
+      projectId,
+      { ...(statusFilter !== undefined ? { status: statusFilter } : {}), limit: pageSize, offset },
+    );
     const pageUrlByPageId = await resolvePageUrls(annotations, projectId);
     res.status(200).json({
-      annotations: annotations.map((a) =>
+      data: annotations.map((a) =>
         formatAnnotation(a, pageUrlByPageId.get(a.pageId)),
       ),
+      pagination: paginationMeta(total, page, pageSize),
     });
   });
 
@@ -304,6 +322,7 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
   });
 
@@ -316,6 +335,8 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    // Invalidate analytics cache; projectId isn't returned by delete, so clear all analytics.
+    invalidateCache('/api/v1/projects/');
     res.status(200).json({ message: 'Annotation deleted successfully.' });
   });
 
@@ -334,6 +355,7 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
+    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
   });
 
@@ -352,7 +374,7 @@ export function createAnnotationRoutes(
       if (file.mimetype !== 'image/png') {
         res
           .status(400)
-          .json({ error: 'Image must be a PNG (Content-Type: image/png).' });
+          .json({ error: { code: 'VALIDATION', message: 'Image must be a PNG (Content-Type: image/png).' } });
         return;
       }
 
@@ -367,7 +389,7 @@ export function createAnnotationRoutes(
           } catch {
             res
               .status(400)
-              .json({ error: 'redactionRects must be a JSON-encoded array.' });
+              .json({ error: { code: 'VALIDATION', message: 'redactionRects must be a JSON-encoded array.' } });
             return;
           }
         } else {
@@ -435,6 +457,76 @@ export function createAnnotationRoutes(
       });
     },
   );
+
+  // --- Suggestions endpoint (premium feature: triage + smart suggestions) ---
+  annotationRouter.get('/:id/suggestions', async (req: Request, res: Response) => {
+    if (!db) {
+      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Suggestions not available.' } });
+      return;
+    }
+    const annotationId = paramString(req.params.id);
+    const annotation = await annotationRepo.findById(annotationId);
+    if (!annotation) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    const triageService = createTriageService(db);
+    const [triageResult, suggestions] = await Promise.all([
+      triageService.triage(annotation.projectId, {
+        body: annotation.body,
+        target: annotation.target,
+        excludeId: annotationId,
+      }),
+      getSuggestions(db, annotationId),
+    ]);
+    res.json({ triage: triageResult, suggestions });
+  });
+
+  // --- Visual regression check (premium feature) ---
+  annotationRouter.post('/:id/check-regression', async (req: Request, res: Response) => {
+    if (!db) {
+      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Visual regression not available.' } });
+      return;
+    }
+    const annotationId = paramString(req.params.id);
+    const annotation = await annotationRepo.findById(annotationId);
+    if (!annotation) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    // Verify annotation belongs to the caller's org (prevent cross-tenant IDOR)
+    const annotationRow = await db('annotations').where({ id: annotationId, org_id: req.user!.orgId }).first();
+    if (!annotationRow) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Annotation not found.' } });
+      return;
+    }
+    // Expect base64-encoded screenshot in body
+    const { screenshot } = req.body as { screenshot?: string };
+    if (!screenshot) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'screenshot (base64 PNG) required.' } });
+      return;
+    }
+    const buffer = Buffer.from(screenshot, 'base64');
+    const { checkRegression } = await import('../../../services/visualRegression.js');
+    const result = await checkRegression(
+      {
+        fetchAnnotation: async (id) => {
+          const row = await db!('annotations').where('id', id).first('screenshot_object_key');
+          return row ? { screenshotObjectKey: row.screenshot_object_key as string | null } : null;
+        },
+        fetchScreenshotBuffer: deps.fetchScreenshotBuffer,
+      },
+      annotationId,
+      buffer,
+    );
+    res.json(result);
+  });
 
   return { projectAnnotationsRouter, annotationRouter };
 }

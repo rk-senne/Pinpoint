@@ -4,14 +4,29 @@
 // `lib/router.ts`. React, ReactDOM, and react-router-dom have been removed
 // along with the legacy `App.tsx` fallback.
 
+import './styles/theme.css';
+import './styles/a11y.css';
+import './styles/accessibility.css';
+import './styles/responsive.css';
+import './styles/skeleton.css';
+import './styles/toast.css';
+import './styles/empty-state.css';
 import { themeCss } from '@pinpoint/shared';
-import { defineRoute, start } from './lib/router';
+import { defineRoute, setFallback, start } from './lib/router';
 import { mountAuthPage } from './pages/AuthPage';
+import { mountClientPortalPage } from './pages/ClientPortalPage';
 import { mountDashboardHome } from './pages/DashboardHome';
+import { mountNotFoundPage } from './pages/NotFoundPage';
 import { mountProjectView } from './pages/ProjectView';
 import { mountSettingsPage } from './pages/SettingsPage';
 import { mountSharedProjectView } from './pages/SharedProjectView';
 import { mountVerifyEmailPage } from './pages/VerifyEmailPage';
+import { mountOnboardingWizard } from './pages/OnboardingWizard';
+import { mountReportingPage } from './pages/ReportingPage';
+import { mountWorkflowsPage } from './pages/WorkflowsPage';
+import { mountIntegrationsPage } from './pages/IntegrationsPage';
+import { mountCommandPalette } from './components/CommandPalette';
+import { initToastContainer } from './components/Toast';
 
 // Populate the `<style id="fl-theme">` tag declared in `index.html` with the
 // shared Severity_Colors / Status_Labels custom properties (Requirement 26.3,
@@ -22,6 +37,35 @@ if (themeStyle && !themeStyle.textContent) {
   themeStyle.textContent = themeCss();
 }
 
+
+// Apply the user's stored theme preference (B5 Dark Mode). If the user
+// previously selected 'light' or 'dark' explicitly, we honour that choice
+// by setting `data-theme` on `<html>`. If 'system' (or no value), we remove
+// the attribute so the CSS `@media (prefers-color-scheme: dark)` rule takes
+// effect naturally.
+type ThemePreference = 'light' | 'dark' | 'system';
+const storedTheme = localStorage.getItem('pinpoint_theme') as ThemePreference | null;
+
+function applyTheme(preference: ThemePreference | null): void {
+  if (preference === 'light' || preference === 'dark') {
+    document.documentElement.setAttribute('data-theme', preference);
+  } else {
+    // 'system' or null — remove attribute so @media prefers-color-scheme drives it
+    document.documentElement.removeAttribute('data-theme');
+  }
+}
+
+applyTheme(storedTheme);
+
+// Listen for system theme changes so UI updates live when preference is 'system'
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  const current = localStorage.getItem('pinpoint_theme') as ThemePreference | null;
+  if (!current || current === 'system') {
+    // No data-theme attribute needed; CSS @media handles it. But we
+    // re-confirm removal in case something else set it.
+    document.documentElement.removeAttribute('data-theme');
+  }
+});
 const root = document.getElementById('root');
 if (!root) {
   throw new Error('Dashboard root element (#root) not found in index.html');
@@ -37,4 +81,18 @@ defineRoute('/projects/:id', mountProjectView);
 defineRoute('/settings', mountSettingsPage);
 defineRoute('/shared/:linkId', mountSharedProjectView);
 defineRoute('/verify-email/:token', mountVerifyEmailPage);
+defineRoute('/onboarding', mountOnboardingWizard);
+defineRoute('/reports', mountReportingPage);
+defineRoute('/workflows', mountWorkflowsPage);
+defineRoute('/integrations', mountIntegrationsPage);
+defineRoute('/portals', mountClientPortalPage);
+setFallback(mountNotFoundPage);
 start(root);
+
+// Mount the global command palette (Ctrl+K / Cmd+K) — always available
+// regardless of route.
+mountCommandPalette(document.body);
+
+// Initialize the toast notification container (B6). Always available so any
+// page or module can fire feedback toasts via `showToast()`.
+initToastContainer();

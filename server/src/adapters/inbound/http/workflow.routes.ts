@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Knex } from 'knex';
-import { sendZodFailure } from './errors.js';
+import { sendZodFailure, validateUuidParam } from './errors.js';
 
 export interface WorkflowRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -41,6 +41,15 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
     const parsed = CreateRuleSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid rule.', parsed.error.flatten()); return; }
 
+    // Verify project belongs to the caller's org when provided (prevent cross-tenant IDOR)
+    if (parsed.data.projectId) {
+      const project = await db('projects').where({ id: parsed.data.projectId, org_id: req.user!.orgId }).first();
+      if (!project) {
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Project not in your organization' } });
+        return;
+      }
+    }
+
     const [rule] = await db('automation_rules').insert({
       org_id: req.user!.orgId,
       project_id: parsed.data.projectId,
@@ -55,6 +64,7 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
   });
 
   router.patch('/rules/:id', async (req: Request, res: Response) => {
+    if (!validateUuidParam(res, 'id', req.params.id as string)) return;
     const { active, priority, name } = req.body;
     const updated = await db('automation_rules')
       .where({ id: req.params.id, org_id: req.user!.orgId })
@@ -65,6 +75,7 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
   });
 
   router.delete('/rules/:id', async (req: Request, res: Response) => {
+    if (!validateUuidParam(res, 'id', req.params.id as string)) return;
     const deleted = await db('automation_rules').where({ id: req.params.id, org_id: req.user!.orgId }).del();
     if (!deleted) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Rule not found' } }); return; }
     res.status(204).end();
@@ -92,6 +103,7 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
   });
 
   router.delete('/sla/:id', async (req: Request, res: Response) => {
+    if (!validateUuidParam(res, 'id', req.params.id as string)) return;
     await db('sla_policies').where({ id: req.params.id, org_id: req.user!.orgId }).del();
     res.status(204).end();
   });

@@ -1,0 +1,87 @@
+/* Empty State — Mission B8
+ *
+ * Styles for the reusable empty-state component (EmptyState.ts).
+ * Uses project CSS custom properties from theme.css for consistency
+ * with the rest of the dashboard.
+ */
+
+.pp-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  border: 1px dashed var(--pp-border-medium);
+  border-radius: 8px;
+  background: var(--pp-bg-secondary);
+}
+
+.pp-empty-state__illustration {
+  width: 120px;
+  height: 120px;
+  margin-bottom: 16px;
+  color: var(--pp-text-tertiary);
+}
+
+.pp-empty-state__illustration svg {
+  width: 100%;
+  height: 100%;
+}
+
+.pp-empty-state__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--pp-text-primary);
+}
+
+.pp-empty-state__description {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: var(--pp-text-secondary);
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.pp-empty-state__cta {
+  padding: 8px 16px;
+  background: var(--pp-accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.pp-empty-state__cta:hover {
+  background: var(--pp-accent-hover);
+}
+
+.pp-empty-state__cta:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 2px;
+}
+
+/* Responsive — smaller SVG on mobile */
+@media (max-width: 640px) {
+  .pp-empty-state {
+    padding: 32px 16px;
+  }
+
+  .pp-empty-state__illustration {
+    width: 80px;
+    height: 80px;
+    margin-bottom: 12px;
+  }
+
+  .pp-empty-state__title {
+    font-size: 15px;
+  }
+
+  .pp-empty-state__description {
+    font-size: 13px;
+  }
+}

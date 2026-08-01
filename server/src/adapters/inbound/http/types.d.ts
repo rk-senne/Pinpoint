@@ -20,6 +20,8 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthPayload;
+      /** Raw request body buffer preserved by express.json({ verify }) for Stripe webhook signature verification. */
+      rawBody?: Buffer;
     }
   }
 }

@@ -1,0 +1,102 @@
+/* Pinpoint Dashboard — Accessibility (Mission B7)
+ *
+ * Provides :focus-visible indicators, reduced-motion support, skip-to-content
+ * link styling, and high contrast adjustments for severity badges.
+ */
+
+/* ─── Focus-visible indicators ─── */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="switch"]:focus-visible,
+[role="tab"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 2px;
+}
+
+/* ─── Skip-to-content link ─── */
+.pp-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  z-index: 10000;
+  padding: 12px 20px;
+  background: var(--pp-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 6px 0;
+  white-space: nowrap;
+}
+
+.pp-skip-link:focus {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: auto;
+  height: auto;
+  overflow: visible;
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ─── High contrast adjustments for severity badges ─── */
+@media (forced-colors: active) {
+  [data-slot="severity"],
+  .pp-severity-badge {
+    border: 1px solid ButtonText;
+    forced-color-adjust: none;
+  }
+}
+
+/*
+ * Severity badge high-contrast fallback for users who don't trigger
+ * forced-colors but may have vision needs. Ensures badges have sufficient
+ * border and text contrast in both light and dark modes.
+ */
+[data-slot="severity"] {
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* Critical severity */
+[data-slot="severity"][data-severity="critical"] {
+  background: var(--pp-severity-critical-bg);
+  color: var(--pp-severity-critical-text);
+  border: 1px solid var(--pp-severity-critical);
+}
+
+/* Major severity */
+[data-slot="severity"][data-severity="major"] {
+  background: var(--pp-severity-major-bg);
+  color: var(--pp-severity-major-text);
+  border: 1px solid var(--pp-severity-major);
+}
+
+/* Minor severity */
+[data-slot="severity"][data-severity="minor"] {
+  background: var(--pp-severity-minor-bg);
+  color: var(--pp-severity-minor-text);
+  border: 1px solid var(--pp-severity-minor);
+}
+
+/* Informational severity */
+[data-slot="severity"][data-severity="informational"],
+[data-slot="severity"][data-severity="info"] {
+  background: var(--pp-severity-info-bg);
+  color: var(--pp-severity-info-text);
+  border: 1px solid var(--pp-severity-info);
+}

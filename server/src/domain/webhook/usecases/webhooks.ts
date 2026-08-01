@@ -35,6 +35,38 @@ export class RegisterWebhook {
   }
 }
 
+// --- Retry helpers (pure, exported for testing) ---
+
+/**
+ * Returns true when the failure is transient and worth retrying.
+ * Retryable: network/timeout error (no status), HTTP 429, or 5xx.
+ * Non-retryable: any other 4xx (400, 401, 403, 404, 409, 422…) or success.
+ */
+export function isRetryableStatus(statusCode: number | undefined, errored: boolean): boolean {
+  if (errored && statusCode === undefined) return true;
+  if (statusCode === undefined) return false;
+  if (statusCode === 429) return true;
+  if (statusCode >= 500) return true;
+  return false;
+}
+
+/**
+ * Exponential backoff with deterministic linear jitter, capped.
+ * Formula: min(cap, baseMs * 2^attempt) + (attempt * jitterStepMs)
+ * attempt is 0-indexed (first retry = attempt 0).
+ */
+export function backoffDelayMs(
+  attempt: number,
+  baseMs = 1000,
+  cap = 30_000,
+  jitterStepMs = 200,
+): number {
+  const exponential = Math.min(cap, baseMs * Math.pow(2, attempt));
+  return exponential + attempt * jitterStepMs;
+}
+
+// --- DispatchWebhook use case ---
+
 export interface DispatchWebhookInput {
   orgId: string;
   eventType: WebhookEventType;
@@ -43,10 +75,22 @@ export interface DispatchWebhookInput {
 
 export interface DispatchWebhookDeps {
   webhookRepo: WebhookRepo;
+  /** Max delivery attempts per endpoint (default 3). */
+  maxAttempts?: number;
+  /** Injectable delay function (default: real setTimeout-based sleep). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
+const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export class DispatchWebhook {
-  constructor(private readonly deps: DispatchWebhookDeps) {}
+  private readonly maxAttempts: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(private readonly deps: DispatchWebhookDeps) {
+    this.maxAttempts = deps.maxAttempts ?? 3;
+    this.sleep = deps.sleep ?? defaultSleep;
+  }
 
   async execute(input: DispatchWebhookInput): Promise<void> {
     const endpoints = await this.deps.webhookRepo.findByOrgAndEvent(input.orgId, input.eventType);
@@ -59,22 +103,38 @@ export class DispatchWebhook {
       let responseBody: string | undefined;
       let success = false;
 
-      try {
-        const resp = await fetch(ep.url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Pinpoint-Signature': signature,
-            'X-Pinpoint-Event': input.eventType,
-          },
-          body,
-          signal: AbortSignal.timeout(10_000),
-        });
-        statusCode = resp.status;
-        responseBody = await resp.text().catch(() => '');
-        success = resp.ok;
-      } catch (e: any) {
-        responseBody = e.message;
+      for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+        statusCode = undefined;
+        responseBody = undefined;
+        success = false;
+        let errored = false;
+
+        try {
+          const resp = await fetch(ep.url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Pinpoint-Signature': signature,
+              'X-Pinpoint-Event': input.eventType,
+            },
+            body,
+            signal: AbortSignal.timeout(10_000),
+          });
+          statusCode = resp.status;
+          responseBody = await resp.text().catch(() => '');
+          success = resp.ok;
+        } catch (e: any) {
+          responseBody = e.message;
+          errored = true;
+        }
+
+        // Stop: success or non-retryable failure
+        if (success || !isRetryableStatus(statusCode, errored)) break;
+
+        // If attempts remain, backoff before next retry
+        if (attempt < this.maxAttempts) {
+          await this.sleep(backoffDelayMs(attempt - 1));
+        }
       }
 
       await this.deps.webhookRepo.insertDelivery({

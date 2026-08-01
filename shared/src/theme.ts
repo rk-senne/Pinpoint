@@ -18,6 +18,18 @@ export const SEVERITY_COLORS = {
 } as const satisfies Record<Severity, string>;
 
 /**
+ * Severity_Shapes: maps each Severity to a Unicode shape indicator.
+ * Used alongside color to communicate severity non-visually (WCAG 1.4.1).
+ * ▲ = critical, ● = major, ◆ = minor, ○ = informational.
+ */
+export const SEVERITY_SHAPES = {
+  critical: '▲',
+  major: '●',
+  minor: '◆',
+  informational: '○',
+} as const satisfies Record<Severity, string>;
+
+/**
  * Status_Labels: maps each annotation status value to its human-readable label.
  */
 export const STATUS_LABELS = {

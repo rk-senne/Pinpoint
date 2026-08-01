@@ -36,6 +36,10 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
     const parsed = CreatePortalSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid portal config.', parsed.error.flatten()); return; }
 
+    // Verify project belongs to the authenticated user's org (prevent IDOR)
+    const project = await db('projects').where({ id: parsed.data.projectId, org_id: req.user!.orgId }).first();
+    if (!project) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found' } }); return; }
+
     const [portal] = await db('client_portals').insert({
       org_id: req.user!.orgId,
       project_id: parsed.data.projectId,
@@ -104,7 +108,7 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
     if (!session) { res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' } }); return; }
 
     const portal = await db('client_portals').where({ id: session.portal_id, active: true }).first();
-    if (!portal) { res.status(404).end(); return; }
+    if (!portal) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Portal not found' } }); return; }
 
     const annotations = await db('annotations')
       .where({ project_id: portal.project_id, org_id: portal.org_id })

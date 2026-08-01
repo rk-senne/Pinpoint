@@ -61,6 +61,7 @@ export { signal, type Signal } from './signal.js';
 
 export {
   SEVERITY_COLORS,
+  SEVERITY_SHAPES,
   STATUS_LABELS,
   sharedStyleSheet,
   themeCss,
@@ -72,3 +73,10 @@ export {
   getCommonPasswordCount,
   type PasswordValidation,
 } from './passwordPolicy.js';
+
+export {
+  PaginationParamsSchema,
+  type PaginationParams,
+  type PaginatedResponse,
+  paginationMeta,
+} from './pagination.js';

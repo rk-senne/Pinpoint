@@ -19,6 +19,8 @@ export interface CreateSharedLinkInput {
   projectId: string;
   /** Optional plaintext password; falsy / empty creates an open link. */
   password?: string | null;
+  /** Whether guests can submit feedback through this shared link. */
+  allowFeedback?: boolean;
 }
 
 export interface CreateSharedLinkDeps {
@@ -58,6 +60,7 @@ export class CreateSharedLink {
         passwordHash,
         failedAttempts: 0,
         lockedUntil: null,
+        allowFeedback: input.allowFeedback ?? existing.allowFeedback,
       });
       return ok(updated);
     }
@@ -65,6 +68,7 @@ export class CreateSharedLink {
     const created = await sharedLinkRepo.insert({
       projectId: input.projectId,
       passwordHash,
+      allowFeedback: input.allowFeedback ?? false,
     });
     return ok(created);
   }

@@ -194,7 +194,7 @@ const ROW_TEMPLATE = (() => {
 })();
 
 export class FlSyncConflictTray extends HTMLElement {
-  static readonly tagName = 'fl-sync-conflict-tray';
+  static readonly tagName = 'pp-sync-conflict-tray';
 
   #conflicts: SyncConflict[] = [];
   #section!: HTMLElement;
@@ -412,6 +412,17 @@ if (
   withBoundary(FlSyncConflictTray.prototype, 'connectedCallback');
   withBoundary(FlSyncConflictTray.prototype, 'disconnectedCallback');
   customElements.define(FlSyncConflictTray.tagName, FlSyncConflictTray);
+  const flSyncTag = FlSyncConflictTray.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flSyncTag)) {
+    const LegacySync = class extends FlSyncConflictTray {};
+    customElements.define(flSyncTag, LegacySync);
+  }
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const legacy_FlSyncConflictTray_tag = FlSyncConflictTray.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(legacy_FlSyncConflictTray_tag)) {
+    const LegacyFlSyncConflictTray = class extends FlSyncConflictTray {};
+    customElements.define(legacy_FlSyncConflictTray_tag, LegacyFlSyncConflictTray);
+  }
 }
 
 // NOTE: We intentionally use the `conflict-` prefix on the event names

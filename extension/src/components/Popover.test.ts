@@ -30,6 +30,7 @@ import {
   type PopoverScreenshotErrorDetail,
   type PopoverSubmitDetail,
   type PopoverTarget,
+  type PopoverTriageRequestDetail,
 } from './Popover';
 import type {
   Annotation,
@@ -146,7 +147,7 @@ describe('<fl-popover>', () => {
   });
 
   it('is registered as a Custom Element with an open Shadow Root and a <dialog> panel', () => {
-    expect(customElements.get('fl-popover')).toBe(FlPopover);
+    expect(customElements.get('pp-popover')).toBe(FlPopover); expect(customElements.get('fl-popover')).toBeDefined();
     const el = mount();
     expect(el).toBeInstanceOf(HTMLElement);
     expect(el.shadowRoot?.mode).toBe('open');
@@ -3300,5 +3301,72 @@ describe('<fl-popover> capture-buffer attachment (Req 36.2, task 27.3)', () => {
     const annotation = await submitWith(el, 'a critical bug, no logs');
     expect(annotation!.capturedConsole).toEqual([]);
     expect(annotation!.capturedNetwork).toEqual([]);
+  });
+});
+
+describe('FlPopover — AI triage integration', () => {
+  it('emits a debounced triage-request while typing in create mode', () => {
+    vi.useFakeTimers();
+    try {
+      const el = mount();
+      el.target = makeTarget(); // create mode (a target is set)
+      const details: PopoverTriageRequestDetail[] = [];
+      el.addEventListener('triage-request', (e) =>
+        details.push((e as CustomEvent<PopoverTriageRequestDetail>).detail),
+      );
+
+      const ta = el.shadowRoot!.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
+      ta.value = 'the button is broken';
+      ta.dispatchEvent(new Event('input'));
+
+      // Debounced: nothing fires immediately.
+      expect(details).toHaveLength(0);
+      vi.advanceTimersByTime(400);
+
+      expect(details).toHaveLength(1);
+      expect(details[0]!.body).toBe('the button is broken');
+      expect(details[0]!.target).toEqual({ cssSelector: 'main > article' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not emit triage-request for very short input', () => {
+    vi.useFakeTimers();
+    try {
+      const el = mount();
+      el.target = makeTarget();
+      const details: PopoverTriageRequestDetail[] = [];
+      el.addEventListener('triage-request', () => details.push({ body: '' }));
+
+      const ta = el.shadowRoot!.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
+      ta.value = 'hi';
+      ta.dispatchEvent(new Event('input'));
+      vi.advanceTimersByTime(400);
+
+      expect(details).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renders and clears the triage hint via showTriageSuggestions', () => {
+    const el = mount();
+    const hintEl = el.shadowRoot!.querySelector('.fl-triage-hint') as HTMLElement;
+    expect(hintEl.hidden).toBe(true);
+
+    el.showTriageSuggestions({
+      suggestedSeverity: 'critical',
+      suggestedTags: ['mobile'],
+      duplicates: [{ id: 'a', body: 'x', pinNumber: 12, similarity: 0.9 }],
+      suggestedAssignee: null,
+    });
+    expect(hintEl.hidden).toBe(false);
+    expect(hintEl.textContent).toContain('#12');
+    expect(hintEl.textContent).toContain('Critical');
+
+    el.showTriageSuggestions(null);
+    expect(hintEl.hidden).toBe(true);
+    expect(hintEl.textContent).toBe('');
   });
 });

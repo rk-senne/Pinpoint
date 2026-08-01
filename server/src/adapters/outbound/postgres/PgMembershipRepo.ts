@@ -1,5 +1,5 @@
 import type { Knex } from 'knex';
-import type { Membership, MembershipRepo } from '../../../domain/auth/ports/MembershipRepo.js';
+import type { Membership, MemberWithUser, MembershipRepo } from '../../../domain/auth/ports/MembershipRepo.js';
 
 export class PgMembershipRepo implements MembershipRepo {
   constructor(private readonly db: Knex) {}
@@ -31,6 +31,19 @@ export class PgMembershipRepo implements MembershipRepo {
   async listByOrg(orgId: string): Promise<Membership[]> {
     const rows = await this.db('memberships').where({ org_id: orgId });
     return rows.map((r: any) => ({ orgId: r.org_id, userId: r.user_id, role: r.role }));
+  }
+
+  async listByOrgWithUsers(orgId: string): Promise<MemberWithUser[]> {
+    const rows = await this.db('memberships as m')
+      .join('users as u', 'u.id', 'm.user_id')
+      .where('m.org_id', orgId)
+      .select('m.user_id', 'm.role', 'u.email', 'u.name');
+    return rows.map((r: any) => ({
+      userId: r.user_id,
+      role: r.role,
+      email: r.email,
+      name: r.name,
+    }));
   }
 
   async removeByOrgAndUser(orgId: string, userId: string): Promise<void> {

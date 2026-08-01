@@ -45,6 +45,7 @@ const TEMPLATES: Record<string, string> = {
         <button type="button" data-action="selectNotifications" data-role="tab-notifications">Notifications</button>
         <button type="button" data-action="selectGuidelines" data-role="tab-guidelines">Guidelines</button>
         <button type="button" data-action="selectTeams" data-role="tab-teams">Teams</button>
+        <button type="button" data-action="selectAppearance" data-role="tab-appearance">Appearance</button>
       </div>
       <section data-section="profile" hidden>
         <p data-role="profile-loading">Loading…</p>
@@ -80,6 +81,13 @@ const TEMPLATES: Record<string, string> = {
       </section>
       <section data-section="teams" hidden>
         <div data-role="teams-container"></div>
+      </section>
+      <section data-section="appearance" hidden>
+        <select data-role="theme-select">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
       </section>
     </div>
   `,

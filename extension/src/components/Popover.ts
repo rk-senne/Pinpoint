@@ -121,6 +121,14 @@ import type { FlCommentThread, CommentThreadSubmitDetail } from './CommentThread
 import type { FlScreenshotViewer } from './ScreenshotViewer';
 import type { FlDisclosureModal } from './DisclosureModal';
 import type { MentionCandidate } from '../lib/mentionFilter';
+import { formatTriageHint } from '../lib/triageSuggestions';
+import type { TriageSuggestions } from '../lib/api';
+
+/** Detail for the `triage-request` event emitted as the reporter types. */
+export interface PopoverTriageRequestDetail {
+  body: string;
+  target?: { cssSelector: string };
+}
 import { apiFetch, apiFetchRaw } from '../lib/api';
 import { deleteDraft, loadDraft, saveDraft } from '../lib/draftStore';
 import {
@@ -373,6 +381,18 @@ dialog.fl-popover::backdrop { background: transparent; }
   color: #333;
   margin-right: 6px;
 }
+.fl-triage-hint {
+  display: block;
+  margin: 4px 0;
+  padding: 4px 8px;
+  background: #fffbea;
+  color: #744210;
+  border: 1px solid #f6e05e;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.fl-triage-hint[hidden] { display: none; }
 /* Co-viewer presence row (Req 6.6, 6.7). Rendered in the popover view-mode
    header beside the type/severity summary. Hidden when no other members
    are viewing the same annotation. */
@@ -502,6 +522,13 @@ const TEMPLATE = (() => {
           <span class="fl-environment-summary-label">Will attach:</span>
           <span class="fl-environment-summary-text"></span>
         </div>
+        <div
+          class="fl-triage-hint"
+          part="triage-hint"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
         <div class="fl-btn-row">
           <button
             type="button"
@@ -731,10 +758,14 @@ function isFocusable(el: HTMLElement | null): el is HTMLElement {
 }
 
 export class FlPopover extends HTMLElement {
-  static readonly tagName = 'fl-popover';
+  static readonly tagName = 'pp-popover';
 
   // --- Public-property backing fields ---
   #target: PopoverTarget | null = null;
+  /** Container for the AI triage hint shown below the textarea (create mode). */
+  #triageHint: HTMLElement | null = null;
+  /** Debounce timer for `triage-request` emission on textarea input. */
+  #triageDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   #annotation: Annotation | null = null;
   #comments: FLComment[] = [];
   #members: MentionCandidate[] = [];
@@ -957,6 +988,7 @@ export class FlPopover extends HTMLElement {
     this.#captureCheckbox = root.querySelector(
       'input.fl-popover-capture-checkbox',
     ) as HTMLInputElement;
+    this.#triageHint = root.querySelector<HTMLElement>('.fl-triage-hint');
     this.#resolveBtn = root.querySelector(
       'button[data-action="resolve"]',
     ) as HTMLButtonElement;
@@ -2093,6 +2125,60 @@ export class FlPopover extends HTMLElement {
     this.#syncMentionAria();
     this.#syncSubmitEnabled();
     this.#scheduleDraftSave();
+    this.#scheduleTriageRequest();
+  };
+
+  /**
+   * Debounced emission of a `triage-request` event as the reporter types,
+   * so `<fl-overlay-host>` can fetch AI triage suggestions (severity, tags,
+   * likely-duplicate pins) without blocking input. Fires only in create
+   * mode (a target is set) once the body has some signal; clears the hint
+   * when the body is emptied. The server endpoint is read-only, so calling
+   * it speculatively as the user types is safe.
+   */
+  #scheduleTriageRequest = (): void => {
+    if (this.#triageDebounceTimer !== null) {
+      clearTimeout(this.#triageDebounceTimer);
+      this.#triageDebounceTimer = null;
+    }
+    const body = this.#textarea.value.trim();
+    if (this.#target === null || body.length < 8) {
+      this.showTriageSuggestions(null);
+      return;
+    }
+    const cssSelector = this.#target.domTarget?.cssSelector;
+    this.#triageDebounceTimer = setTimeout(() => {
+      this.#triageDebounceTimer = null;
+      this.dispatchEvent(
+        new CustomEvent<PopoverTriageRequestDetail>('triage-request', {
+          detail: { body, target: cssSelector ? { cssSelector } : undefined },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }, 400);
+  };
+
+  /**
+   * Render AI triage suggestions in the hint slot below the textarea. Pass
+   * `null` (or suggestions with no meaningful signal) to clear/hide it. All
+   * presentation rules live in the pure `formatTriageHint` helper so they
+   * can be unit-tested without the DOM.
+   */
+  showTriageSuggestions = (suggestions: TriageSuggestions | null): void => {
+    const el = this.#triageHint;
+    if (!el) return;
+    const hint = formatTriageHint(suggestions);
+    if (!hint.hasContent) {
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }
+    const parts = [hint.duplicateHint, hint.severityHint, hint.tagsHint].filter(
+      (s) => s.length > 0,
+    );
+    el.textContent = parts.join(' · ');
+    el.hidden = false;
   };
 
   /**
@@ -2210,6 +2296,10 @@ export class FlPopover extends HTMLElement {
     if (this.#draftSaveTimer !== null) {
       clearTimeout(this.#draftSaveTimer);
       this.#draftSaveTimer = null;
+    }
+    if (this.#triageDebounceTimer !== null) {
+      clearTimeout(this.#triageDebounceTimer);
+      this.#triageDebounceTimer = null;
     }
     void this.#dispatchSubmit({ body, target, activeTab, severity, pinNumber });
     this.#resetCreateForm();
@@ -2712,6 +2802,12 @@ if (
   withBoundary(FlPopover.prototype, 'connectedCallback');
   withBoundary(FlPopover.prototype, 'disconnectedCallback');
   customElements.define(FlPopover.tagName, FlPopover);
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const flPopoverTag = FlPopover.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flPopoverTag)) {
+    const LegacyPopover = class extends FlPopover {};
+    customElements.define(flPopoverTag, LegacyPopover);
+  }
 }
 
 declare global {

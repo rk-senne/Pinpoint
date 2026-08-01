@@ -83,6 +83,7 @@ function buildHarness(): Harness {
     insert: () => Promise.reject(new Error('not used')),
     findById: () => Promise.resolve(null),
     search: () => Promise.resolve([]),
+    countSearch: () => Promise.resolve(0),
     update: () => Promise.reject(new Error('not used')),
     delete: () => Promise.reject(new Error('not used')),
     countAnnotations: () => Promise.resolve(0),

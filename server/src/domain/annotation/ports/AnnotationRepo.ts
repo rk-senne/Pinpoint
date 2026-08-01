@@ -12,6 +12,15 @@ import type {
 
 export interface ListAnnotationsFilter {
   status?: AnnotationStatus;
+  /** DB-level pagination — maximum rows to return. */
+  limit?: number;
+  /** DB-level pagination — rows to skip. */
+  offset?: number;
+}
+
+export interface PaginatedAnnotations {
+  rows: Annotation[];
+  total: number;
 }
 
 export interface AnnotationRepo {
@@ -21,11 +30,17 @@ export interface AnnotationRepo {
   /** Look up by primary key. Returns null when the row does not exist. */
   findById(id: string): Promise<Annotation | null>;
 
-  /** Project-scoped list, ordered by pin number ascending. */
+  /** Project-scoped list, ordered by pin number ascending. Supports optional limit/offset. */
   listByProject(
     projectId: string,
     filter?: ListAnnotationsFilter,
   ): Promise<Annotation[]>;
+
+  /** Count annotations matching a filter (for pagination totals). */
+  countByProject(
+    projectId: string,
+    filter?: Pick<ListAnnotationsFilter, 'status'>,
+  ): Promise<number>;
 
   /** Apply a partial update; returns the updated row. */
   update(id: string, patch: AnnotationPatch): Promise<Annotation>;

@@ -1,0 +1,157 @@
+/* Toast Notifications — B6
+ *
+ * Styling for the toast/snackbar notification system. Uses CSS custom
+ * properties from theme.css for dark mode compatibility.
+ */
+
+/* ─── Container ─── */
+.pp-toast-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  width: 100%;
+  pointer-events: none;
+}
+
+/* ─── Toast element ─── */
+.pp-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border-left: 4px solid var(--pp-toast-accent, var(--pp-accent));
+  background: var(--pp-surface-raised, #ffffff);
+  color: var(--pp-text-primary, #1a1a1a);
+  box-shadow: var(--pp-shadow-lg, 0 4px 16px rgba(0, 0, 0, 0.12));
+  font-size: 14px;
+  line-height: 1.4;
+  pointer-events: auto;
+
+  /* Entry animation: slide up from below + fade in */
+  opacity: 0;
+  transform: translateY(100%);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.pp-toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pp-toast--dismissed {
+  opacity: 0;
+  transform: translateX(100%);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+/* ─── Variant accent colors ─── */
+.pp-toast--success {
+  --pp-toast-accent: var(--pp-success, #16a34a);
+}
+
+.pp-toast--error {
+  --pp-toast-accent: var(--pp-error, #dc2626);
+}
+
+.pp-toast--warning {
+  --pp-toast-accent: #eab308;
+}
+
+.pp-toast--info {
+  --pp-toast-accent: var(--pp-link, #3182ce);
+}
+
+/* ─── Message ─── */
+.pp-toast__message {
+  flex: 1;
+  word-break: break-word;
+}
+
+/* ─── Action button ─── */
+.pp-toast__action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--pp-accent-text, #4f46e5);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.pp-toast__action:hover {
+  background: var(--pp-accent-light, #e0e7ff);
+}
+
+.pp-toast__action:focus-visible {
+  outline: 2px solid var(--pp-accent, #4f46e5);
+  outline-offset: 2px;
+}
+
+/* ─── Close button ─── */
+.pp-toast__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--pp-text-secondary, #6b7280);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pp-toast__close:hover {
+  background: var(--pp-bg-tertiary, #f3f4f6);
+}
+
+.pp-toast__close:focus-visible {
+  outline: 2px solid var(--pp-accent, #4f46e5);
+  outline-offset: 2px;
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  .pp-toast {
+    transition: none;
+  }
+
+  .pp-toast--visible {
+    /* Still show immediately — just skip the animation */
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .pp-toast--dismissed {
+    transition: none;
+    opacity: 0;
+  }
+}
+
+/* ─── Small screens — full width toasts ─── */
+@media (max-width: 480px) {
+  .pp-toast-container {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    max-width: none;
+  }
+}

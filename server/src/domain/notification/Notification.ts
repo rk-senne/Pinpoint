@@ -10,7 +10,10 @@ export type NotificationStatus = 'pending' | 'sent' | 'failed';
 export type NotificationKind =
   | 'annotation_created'
   | 'comment_created'
+  | 'comment_on_own'
   | 'mention'
+  | 'status_change'
+  | 'daily_digest'
   | 'promoted_to_owner'
   | 'project_deleted'
   | 'verify_email';

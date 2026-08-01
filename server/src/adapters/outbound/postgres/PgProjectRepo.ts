@@ -82,8 +82,41 @@ export class PgProjectRepo implements ProjectRepo {
       query = query.andWhereRaw('LOWER(projects.name) LIKE ?', [needle]);
     }
 
-    const rows = await query.orderBy('projects.updated_at', 'desc');
+    query = query.orderBy('projects.updated_at', 'desc');
+
+    if (input.limit !== undefined) {
+      query = query.limit(input.limit);
+    }
+    if (input.offset !== undefined) {
+      query = query.offset(input.offset);
+    }
+
+    const rows = await query;
     return rows.map((r) => this.mapRow(r));
+  }
+
+  async countSearch(input: Omit<SearchProjectsInput, 'limit' | 'offset'>): Promise<number> {
+    let query = this.db('projects')
+      .where(function () {
+        this.where('projects.owner_id', input.userId).orWhereIn(
+          'projects.team_id',
+          function () {
+            this.select('team_id').from('team_members').where('user_id', input.userId);
+          },
+        );
+      });
+
+    if (input.status) {
+      query = query.andWhere('projects.status', input.status);
+    }
+
+    if (input.search && input.search.trim().length > 0) {
+      const needle = `%${input.search.toLowerCase()}%`;
+      query = query.andWhereRaw('LOWER(projects.name) LIKE ?', [needle]);
+    }
+
+    const [{ count }] = await query.count('* as count');
+    return Number(count);
   }
 
   async update(id: string, patch: ProjectPatch): Promise<Project> {

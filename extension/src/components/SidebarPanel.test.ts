@@ -67,7 +67,7 @@ describe('<fl-sidebar-panel>', () => {
   });
 
   it('is registered as a Custom Element with an open Shadow Root', () => {
-    expect(customElements.get('fl-sidebar-panel')).toBe(FlSidebarPanel);
+    expect(customElements.get('pp-sidebar-panel')).toBe(FlSidebarPanel); expect(customElements.get('fl-sidebar-panel')).toBeDefined();
     const el = mount();
     expect(el).toBeInstanceOf(HTMLElement);
     expect(el.shadowRoot).not.toBeNull();

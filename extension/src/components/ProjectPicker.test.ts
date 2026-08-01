@@ -72,7 +72,7 @@ describe('<fl-project-picker>', () => {
   });
 
   it('is registered as a Custom Element', () => {
-    expect(customElements.get('fl-project-picker')).toBe(FlProjectPicker);
+    expect(customElements.get('pp-project-picker')).toBe(FlProjectPicker); expect(customElements.get('fl-project-picker')).toBeDefined();
   });
 
   it('extends HTMLElement and attaches an open Shadow Root', () => {

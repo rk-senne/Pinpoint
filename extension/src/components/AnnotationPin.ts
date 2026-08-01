@@ -181,7 +181,12 @@ if (
   !customElements.get('fl-annotation-pin')
 ) {
   withBoundary(AnnotationPin.prototype, 'connectedCallback');
-  customElements.define('fl-annotation-pin', AnnotationPin);
+  customElements.define('pp-annotation-pin', AnnotationPin);
+  // Legacy alias for backwards compatibility (Mission E4)
+  if (!customElements.get('fl-annotation-pin')) {
+    const LegacyAnnotationPin = class extends AnnotationPin {};
+    customElements.define('fl-annotation-pin', LegacyAnnotationPin);
+  }
 }
 
 declare global {

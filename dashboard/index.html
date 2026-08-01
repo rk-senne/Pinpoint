@@ -15,6 +15,7 @@
     <style id="fl-theme"></style>
   </head>
   <body>
+    <a href="#main-content" class="pp-skip-link">Skip to content</a>
     <div id="root"></div>
 
     <!--
@@ -34,7 +35,7 @@
     -->
     <template id="app-layout">
       <div class="fl-app-layout" style="display: flex; flex-direction: column; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
-        <header style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; background: #fff;">
+        <header style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--pp-border); background: var(--pp-bg-primary);">
           <a
             data-route
             data-action="goHome"
@@ -43,17 +44,18 @@
             style="font-weight: 600; color: inherit; text-decoration: none; font-size: 16px;"
           >Pinpoint</a>
           <div style="display: flex; align-items: center; gap: 12px;">
-            <span data-slot="currentUser" style="font-size: 13px; color: #444;"></span>
+            <div data-slot="notifications"></div>
+            <span data-slot="currentUser" style="font-size: 13px; color: var(--pp-text-primary);"></span>
             <button
               type="button"
               data-action="logout"
-              style="padding: 6px 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+              style="padding: 6px 12px; background: var(--pp-bg-tertiary); border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; font-size: 13px;"
             >Logout</button>
           </div>
         </header>
         <div class="fl-app-layout__body" style="display: flex; flex: 1; min-height: 0;">
-          <aside data-slot="sidebar" style="width: 260px; border-right: 1px solid #e5e7eb; background: #fafafa; overflow-y: auto;"></aside>
-          <main data-slot="content" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
+          <aside data-slot="sidebar" role="navigation" aria-label="Main navigation" style="width: 260px; border-right: 1px solid var(--pp-border); background: var(--pp-bg-secondary); overflow-y: auto;"></aside>
+          <main data-slot="content" id="main-content" role="main" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
         </div>
       </div>
     </template>
@@ -70,13 +72,13 @@
             type="button"
             data-action="selectActive"
             data-role="tab-active"
-            style="flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px;"
+            style="flex: 1; padding: 6px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; background: var(--pp-bg-primary); cursor: pointer; font-size: 13px;"
           >Active</button>
           <button
             type="button"
             data-action="selectArchived"
             data-role="tab-archived"
-            style="flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px;"
+            style="flex: 1; padding: 6px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; background: var(--pp-bg-primary); cursor: pointer; font-size: 13px;"
           >Archived</button>
         </div>
         <input
@@ -84,14 +86,15 @@
           data-action="input:search"
           data-role="search"
           placeholder="Search projects"
-          style="width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px;"
+          aria-label="Search projects"
+          style="width: 100%; padding: 6px 8px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px;"
         />
         <div data-role="list" style="flex: 1; overflow-y: auto;"></div>
         <button
           type="button"
           data-action="openCreate"
           data-role="create"
-          style="margin-top: 8px; padding: 8px 12px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+          style="margin-top: 8px; padding: 8px 12px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
         >+ Create Project</button>
       </div>
     </template>
@@ -111,7 +114,7 @@
           <div
             data-slot="url"
             data-role="url"
-            style="font-size: 11px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+            style="font-size: 11px; color: var(--pp-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
           ></div>
         </div>
         <button
@@ -119,7 +122,7 @@
           data-action="menu"
           data-role="menu-button"
           aria-label="Actions"
-          style="background: none; border: none; cursor: pointer; padding: 4px 6px; font-size: 14px; color: #666;"
+          style="background: none; border: none; cursor: pointer; padding: 4px 6px; font-size: 14px; color: var(--pp-text-secondary);"
         >⋯</button>
       </div>
     </template>
@@ -128,11 +131,11 @@
     <template id="tpl-project-list-menu">
       <div
         data-role="menu"
-        style="position: fixed; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px 0; min-width: 180px; z-index: 10;"
+        style="position: fixed; background: var(--pp-bg-primary); border: 1px solid var(--pp-border-heavy); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px 0; min-width: 180px; z-index: 10;"
       >
         <button type="button" data-action="rename" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Rename</button>
         <button type="button" data-action="archive" data-slot="archiveLabel" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Archive</button>
-        <button type="button" data-action="delete" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px; color: #dc2626;">Delete</button>
+        <button type="button" data-action="delete" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px; color: var(--pp-error);">Delete</button>
         <button type="button" data-action="delete-page" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Delete page</button>
         <button type="button" data-action="details" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Project details</button>
         <button type="button" data-action="copy-link" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Copy link</button>
@@ -146,11 +149,11 @@
       <div
         data-role="overlay"
         data-action="closeOverlay"
-        style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 100;"
+        style="position: fixed; inset: 0; background: var(--pp-surface-overlay); display: flex; justify-content: center; align-items: center; z-index: 100;"
       >
         <div
           data-role="panel"
-          style="background: #fff; padding: 24px; border-radius: 8px; width: 360px;"
+          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px;"
         >
           <h2 style="margin: 0 0 16px; font-size: 16px;">Create Project</h2>
           <form data-action="submit:submit" data-role="form">
@@ -159,7 +162,7 @@
               <input
                 type="text"
                 data-role="name"
-                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 13px;"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; box-sizing: border-box; font-size: 13px;"
               />
             </label>
             <label style="display: block; font-size: 13px; margin-bottom: 12px;">
@@ -167,20 +170,20 @@
               <input
                 type="text"
                 data-role="url"
-                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; box-sizing: border-box; font-size: 13px;"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; box-sizing: border-box; font-size: 13px;"
               />
             </label>
-            <p data-role="error" hidden style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"></p>
+            <p data-role="error" hidden style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"></p>
             <div style="display: flex; gap: 8px; justify-content: flex-end;">
               <button
                 type="button"
                 data-action="cancel"
-                style="padding: 6px 12px; background: #fff; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                style="padding: 6px 12px; background: var(--pp-bg-primary); border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; font-size: 13px;"
               >Cancel</button>
               <button
                 type="submit"
                 data-role="submit"
-                style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                style="padding: 6px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
               >Create</button>
             </div>
           </form>
@@ -193,43 +196,43 @@
       <div
         data-role="overlay"
         data-action="closeOverlay"
-        style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 100;"
+        style="position: fixed; inset: 0; background: var(--pp-surface-overlay); display: flex; justify-content: center; align-items: center; z-index: 100;"
       >
         <div
           data-role="panel"
-          style="background: #fff; padding: 24px; border-radius: 8px; width: 360px;"
+          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px;"
         >
           <h2 style="margin: 0 0 8px; font-size: 16px;">Export project</h2>
-          <p data-slot="projectName" data-role="project-name" style="color: #666; font-size: 13px; margin: 0 0 16px;"></p>
+          <p data-slot="projectName" data-role="project-name" style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 16px;"></p>
           <div style="display: flex; gap: 8px; margin-bottom: 12px;">
             <button
               type="button"
               data-action="formatPdf"
               data-role="format-pdf"
-              style="flex: 1; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: #fff; font-size: 13px;"
+              style="flex: 1; padding: 6px 12px; border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; background: var(--pp-bg-primary); font-size: 13px;"
             >PDF</button>
             <button
               type="button"
               data-action="formatCsv"
               data-role="format-csv"
-              style="flex: 1; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; background: #fff; font-size: 13px;"
+              style="flex: 1; padding: 6px 12px; border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; background: var(--pp-bg-primary); font-size: 13px;"
             >CSV</button>
           </div>
-          <p data-role="error" hidden style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"></p>
+          <p data-role="error" hidden style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"></p>
           <div data-role="download" hidden style="margin-bottom: 12px;">
-            <a data-role="download-link" style="color: #4f46e5; font-size: 13px;">Download</a>
+            <a data-role="download-link" style="color: var(--pp-accent-text); font-size: 13px;">Download</a>
           </div>
           <div style="display: flex; gap: 8px; justify-content: flex-end;">
             <button
               type="button"
               data-action="close"
-              style="padding: 6px 12px; background: #fff; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 13px;"
+              style="padding: 6px 12px; background: var(--pp-bg-primary); border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; font-size: 13px;"
             >Close</button>
             <button
               type="button"
               data-action="export"
               data-role="export-button"
-              style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+              style="padding: 6px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
             >Export</button>
           </div>
         </div>
@@ -242,14 +245,14 @@
         <!-- Password prompt -->
         <section
           data-section="prompt"
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
         >
           <div
-            style="background: #fff; border-radius: 8px; padding: 32px; width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); text-align: center;"
+            style="background: var(--pp-bg-primary); border-radius: 8px; padding: 32px; width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); text-align: center;"
           >
             <div style="font-size: 32px; margin-bottom: 8px;">🔗</div>
             <h2 style="margin: 0 0 4px; font-size: 18px;">Shared Project</h2>
-            <p style="color: #666; font-size: 13px; margin: 0 0 20px;">
+            <p style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 20px;">
               Enter the password to view this project.
             </p>
             <form data-action="submit:verify" novalidate>
@@ -258,17 +261,17 @@
                 type="password"
                 placeholder="Password"
                 autofocus
-                style="width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;"
+                style="width: 100%; padding: 8px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;"
               />
               <p
                 data-slot="prompt-error"
                 hidden
-                style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+                style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"
               ></p>
               <button
                 type="submit"
                 data-slot="submit-btn"
-                style="width: 100%; padding: 8px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
+                style="width: 100%; padding: 8px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
               >
                 Unlock
               </button>
@@ -280,12 +283,12 @@
         <section
           data-section="locked"
           hidden
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
         >
           <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 12px;">🔒</div>
             <h2 style="margin: 0 0 8px; font-size: 18px;">Access Locked</h2>
-            <p data-slot="locked-message" style="color: #666; font-size: 14px;"></p>
+            <p data-slot="locked-message" style="color: var(--pp-text-secondary); font-size: 14px;"></p>
           </div>
         </section>
 
@@ -293,12 +296,12 @@
         <section
           data-section="not_found"
           hidden
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: #f9fafb;"
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
         >
           <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 12px;">🔗</div>
             <h2 style="margin: 0 0 8px; font-size: 18px;">Link Not Found</h2>
-            <p style="color: #666; font-size: 14px;">
+            <p style="color: var(--pp-text-secondary); font-size: 14px;">
               This shared link does not exist or has been revoked.
             </p>
           </div>
@@ -311,12 +314,12 @@
           style="max-width: 800px; margin: 0 auto; padding: 24px;"
         >
           <h1 style="font-size: 20px; margin: 0 0 4px;">Shared Project</h1>
-          <p style="color: #888; font-size: 13px; margin: 0 0 20px;">Read-only view</p>
+          <p style="color: var(--pp-text-tertiary); font-size: 13px; margin: 0 0 20px;">Read-only view</p>
 
           <p
             data-slot="empty-state"
             hidden
-            style="color: #888;"
+            style="color: var(--pp-text-tertiary);"
           >No annotations in this project.</p>
 
           <table
@@ -325,7 +328,7 @@
             style="width: 100%; border-collapse: collapse; font-size: 13px;"
           >
             <thead>
-              <tr style="border-bottom: 2px solid #e0e0e0; text-align: left;">
+              <tr style="border-bottom: 2px solid var(--pp-border-heavy); text-align: left;">
                 <th style="padding: 8px 6px;">#</th>
                 <th style="padding: 8px 6px;">Type</th>
                 <th style="padding: 8px 6px;">Severity</th>
@@ -341,7 +344,7 @@
 
     <!-- One row of the shared-project annotation table. -->
     <template id="tpl-shared-project-view-row">
-      <tr style="border-bottom: 1px solid #eee;">
+      <tr style="border-bottom: 1px solid var(--pp-border-light);">
         <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
         <td data-slot="type" style="padding: 8px 6px;"></td>
         <td style="padding: 8px 6px;">
@@ -370,7 +373,7 @@
           justify-content: center;
           align-items: center;
           height: 100vh;
-          background: #f5f5f5;
+          background: var(--pp-bg-page);
         "
       >
         <form
@@ -378,7 +381,7 @@
           data-action="submit:submit"
           novalidate
           style="
-            background: #fff;
+            background: var(--pp-bg-primary);
             padding: 32px;
             border-radius: 8px;
             width: 360px;
@@ -397,8 +400,8 @@
             role="alert"
             hidden
             style="
-              background: #fdecea;
-              color: #b71c1c;
+              background: var(--pp-error-bg);
+              color: var(--pp-error-text);
               padding: 8px 12px;
               border-radius: 4px;
               margin-bottom: 16px;
@@ -425,7 +428,7 @@
                 width: 100%;
                 padding: 8px;
                 border-radius: 4px;
-                border: 1px solid #ccc;
+                border: 1px solid var(--pp-input-border);
                 box-sizing: border-box;
               "
             />
@@ -446,7 +449,7 @@
                 width: 100%;
                 padding: 8px;
                 border-radius: 4px;
-                border: 1px solid #ccc;
+                border: 1px solid var(--pp-input-border);
                 box-sizing: border-box;
               "
             />
@@ -467,7 +470,7 @@
                 width: 100%;
                 padding: 8px;
                 border-radius: 4px;
-                border: 1px solid #ccc;
+                border: 1px solid var(--pp-input-border);
                 box-sizing: border-box;
               "
             />
@@ -482,7 +485,7 @@
               padding: 10px;
               border-radius: 4px;
               border: none;
-              background: #1976d2;
+              background: var(--pp-link-alt);
               color: #fff;
               font-size: 16px;
               cursor: pointer;
@@ -502,7 +505,7 @@
               style="
                 background: none;
                 border: none;
-                color: #1976d2;
+                color: var(--pp-link-alt);
                 cursor: pointer;
                 padding: 0;
                 font-size: 14px;
@@ -527,13 +530,13 @@
           justify-content: center;
           align-items: center;
           min-height: 100vh;
-          background: #f5f5f5;
+          background: var(--pp-bg-page);
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         "
       >
         <div
           style="
-            background: #fff;
+            background: var(--pp-bg-primary);
             padding: 32px;
             border-radius: 8px;
             width: 360px;
@@ -543,7 +546,7 @@
         >
           <section data-section="verifying" aria-live="polite">
             <h1 style="margin: 0 0 12px; font-size: 20px;">Verifying your email…</h1>
-            <p style="color: #666; font-size: 14px; margin: 0;">
+            <p style="color: var(--pp-text-secondary); font-size: 14px; margin: 0;">
               Hang tight while we confirm your address.
             </p>
           </section>
@@ -558,7 +561,7 @@
                 href="/login"
                 data-route
                 data-action="goLogin"
-                style="color: #1976d2; text-decoration: none; font-size: 14px; font-weight: 500;"
+                style="color: var(--pp-link-alt); text-decoration: none; font-size: 14px; font-weight: 500;"
               >Go to login</a>
             </p>
           </section>
@@ -568,7 +571,7 @@
             <h1 style="margin: 0 0 8px; font-size: 20px;">Verification failed</h1>
             <p
               data-slot="message"
-              style="color: #b71c1c; font-size: 14px; margin: 0 0 16px;"
+              style="color: var(--pp-error-text); font-size: 14px; margin: 0 0 16px;"
             ></p>
 
             <form
@@ -577,7 +580,7 @@
               novalidate
               style="display: flex; flex-direction: column; gap: 8px; text-align: left;"
             >
-              <label style="font-size: 13px; color: #333;">
+              <label style="font-size: 13px; color: var(--pp-text-primary);">
                 Email address
                 <input
                   type="email"
@@ -587,7 +590,7 @@
                   style="
                     width: 100%;
                     padding: 8px;
-                    border: 1px solid #ccc;
+                    border: 1px solid var(--pp-input-border);
                     border-radius: 4px;
                     box-sizing: border-box;
                     margin-top: 4px;
@@ -599,7 +602,7 @@
                 type="submit"
                 style="
                   padding: 8px 12px;
-                  background: #1976d2;
+                  background: var(--pp-link-alt);
                   color: #fff;
                   border: none;
                   border-radius: 4px;
@@ -614,7 +617,7 @@
               data-slot="resendStatus"
               role="status"
               aria-live="polite"
-              style="color: #555; font-size: 13px; margin: 12px 0 0;"
+              style="color: var(--pp-text-secondary); font-size: 13px; margin: 12px 0 0;"
             ></p>
           </section>
         </div>
@@ -632,12 +635,12 @@
         <p
           data-role="error"
           hidden
-          style="color: #dc2626; font-size: 13px; margin: 0 0 8px;"
+          style="color: var(--pp-error); font-size: 13px; margin: 0 0 8px;"
         ></p>
 
         <p
           data-role="loading"
-          style="color: #888; font-size: 13px;"
+          style="color: var(--pp-text-tertiary); font-size: 13px;"
         >Loading…</p>
 
         <section data-role="content" hidden>
@@ -650,19 +653,19 @@
               data-role="new-team-name"
               type="text"
               placeholder="New team name"
-              style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;"
+              style="flex: 1; padding: 6px 8px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px;"
             />
             <button
               type="submit"
               data-role="create-submit"
-              style="padding: 6px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+              style="padding: 6px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
             >Create Team</button>
           </form>
 
           <p
             data-role="empty"
             hidden
-            style="color: #888; font-size: 13px;"
+            style="color: var(--pp-text-tertiary); font-size: 13px;"
           >No teams yet.</p>
 
           <div data-role="list"></div>
@@ -674,7 +677,7 @@
     <template id="tpl-team-management-team">
       <article
         data-role="team"
-        style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin-bottom: 12px;"
+        style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px; margin-bottom: 12px;"
       >
         <header
           style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;"
@@ -699,12 +702,12 @@
             data-role="invite-email"
             type="email"
             placeholder="Invite by email"
-            style="flex: 1; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;"
+            style="flex: 1; padding: 6px 8px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px;"
           />
           <button
             type="submit"
             data-role="invite-submit"
-            style="padding: 6px 14px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+            style="padding: 6px 14px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
           >Invite</button>
         </form>
       </article>
@@ -714,14 +717,14 @@
     <template id="tpl-team-management-member">
       <div
         data-role="member"
-        style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px;"
+        style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--pp-border-light); font-size: 13px;"
       >
         <div>
           <span data-slot="display-name" style="font-weight: 500;"></span>
           <span
             data-role="email"
             data-slot="email"
-            style="color: #888; margin-left: 6px;"
+            style="color: var(--pp-text-tertiary); margin-left: 6px;"
           ></span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
@@ -733,7 +736,7 @@
           <select
             data-role="role-select"
             hidden
-            style="font-size: 12px; padding: 2px 4px; border-radius: 3px; border: 1px solid #d1d5db;"
+            style="font-size: 12px; padding: 2px 4px; border-radius: 3px; border: 1px solid var(--pp-border-medium);"
           >
             <option value="owner">Owner</option>
             <option value="admin">Admin</option>
@@ -744,7 +747,7 @@
             data-role="remove"
             data-action="remove"
             hidden
-            style="background: none; border: none; color: #dc2626; cursor: pointer; font-size: 12px;"
+            style="background: none; border: none; color: var(--pp-error); cursor: pointer; font-size: 12px;"
           >Remove</button>
         </div>
       </div>
@@ -763,38 +766,52 @@
         style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;"
       >
         <h1 style="margin: 0 0 4px; font-size: 22px;">Dashboard</h1>
-        <p style="color: #666; font-size: 14px; margin: 0 0 24px;">
+        <p style="color: var(--pp-text-secondary); font-size: 14px; margin: 0 0 24px;">
           Pick a project from the sidebar to start reviewing feedback.
         </p>
+
+        <!-- Skeleton loading state. Visible before projects data arrives. -->
+        <div data-role="home-loading" aria-busy="true" aria-label="Loading projects" role="status"></div>
 
         <!-- Empty-state CTA. Visible when the user has no active projects. -->
         <section
           data-section="empty"
           hidden
-          style="border: 1px dashed #d1d5db; border-radius: 8px; padding: 32px; text-align: center; background: #fafafa;"
+          style="border: 1px dashed var(--pp-border-medium); border-radius: 8px; padding: 32px; text-align: center; background: var(--pp-bg-secondary);"
         >
           <div style="font-size: 32px; margin-bottom: 8px;">📋</div>
           <h2 style="margin: 0 0 8px; font-size: 16px;">No projects yet</h2>
-          <p style="color: #666; font-size: 13px; margin: 0 0 16px;">
+          <p style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 16px;">
             Create your first project to start collecting feedback on a page.
           </p>
           <button
             type="button"
             data-action="createProject"
             data-role="empty-cta"
-            style="padding: 8px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
+            style="padding: 8px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
           >+ Create Project</button>
         </section>
 
         <!-- Recent active projects. Visible when at least one exists. -->
         <section data-section="recent" hidden>
-          <h2 style="margin: 0 0 8px; font-size: 14px; color: #444; text-transform: uppercase; letter-spacing: 0.04em;">
-            Recent projects
-          </h2>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h2 style="margin: 0; font-size: 14px; color: var(--pp-text-primary); text-transform: uppercase; letter-spacing: 0.04em;">
+              Recent projects
+            </h2>
+            <div style="display: flex; gap: 4px;">
+              <button type="button" data-action="selectList" style="background: none; border: none; cursor: pointer; font-size: 13px; padding: 4px 8px;">List</button>
+              <button type="button" data-action="selectCards" style="background: none; border: none; cursor: pointer; font-size: 13px; padding: 4px 8px;">Cards</button>
+            </div>
+          </div>
           <ul
             data-role="recent-list"
-            style="list-style: none; padding: 0; margin: 0; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff;"
+            style="list-style: none; padding: 0; margin: 0; border: 1px solid var(--pp-border); border-radius: 6px; background: var(--pp-bg-primary);"
           ></ul>
+          <div
+            data-role="cards-grid"
+            hidden
+            style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;"
+          ></div>
         </section>
       </div>
     </template>
@@ -803,7 +820,7 @@
     <template id="tpl-dashboard-home-recent-item">
       <li
         data-role="recent-item"
-        style="border-bottom: 1px solid #f0f0f0;"
+        style="border-bottom: 1px solid var(--pp-border-light);"
       >
         <a
           data-route
@@ -812,9 +829,27 @@
           style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; text-decoration: none; color: inherit;"
         >
           <span data-slot="name" style="font-weight: 500; font-size: 14px;"></span>
-          <span data-slot="url" style="color: #888; font-size: 12px; margin-left: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;"></span>
+          <span data-slot="url" style="color: var(--pp-text-tertiary); font-size: 12px; margin-left: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;"></span>
         </a>
       </li>
+    </template>
+
+    <!-- One card in the cards-grid view of the home page. -->
+    <template id="tpl-dashboard-home-card">
+      <div
+        data-action="openProject"
+        style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; background: var(--pp-bg-primary); cursor: pointer; transition: box-shadow .15s;"
+      >
+        <div data-slot="name" style="font-weight: 600; font-size: 14px; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span
+            data-role="status-badge"
+            data-slot="status"
+            style="font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; text-transform: capitalize;"
+          ></span>
+        </div>
+        <div data-slot="activity" style="font-size: 12px; color: var(--pp-text-tertiary);"></div>
+      </div>
     </template>
 
     <!--
@@ -835,7 +870,7 @@
         <div
           data-section="reconnecting"
           hidden
-          style="background: #fefcbf; color: #744210; padding: 8px 16px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;"
+          style="background: var(--pp-warning-bg); color: var(--pp-warning-text); padding: 8px 16px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;"
         >
           <span>⟳</span>
           <span>Reconnecting to real-time updates…</span>
@@ -860,16 +895,78 @@
                 type="button"
                 data-action="select-list"
                 data-role="toggle-list"
-                style="padding: 6px 14px; border: 1px solid #ccc; cursor: pointer; font-size: 13px; border-radius: 4px 0 0 4px;"
+                style="padding: 6px 14px; border: 1px solid var(--pp-input-border); cursor: pointer; font-size: 13px; border-radius: 4px 0 0 4px;"
               >List</button>
               <button
                 type="button"
                 data-action="select-kanban"
                 data-role="toggle-kanban"
-                style="padding: 6px 14px; border: 1px solid #ccc; cursor: pointer; font-size: 13px; border-radius: 0 4px 4px 0; border-left: none;"
+                style="padding: 6px 14px; border: 1px solid var(--pp-input-border); cursor: pointer; font-size: 13px; border-radius: 0 4px 4px 0; border-left: none;"
               >Kanban</button>
             </div>
           </header>
+
+          <!-- Filter bar (Mission B3: Search, Filter & Sort). -->
+          <div
+            data-role="filter-bar"
+            style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; padding: 12px; background: var(--pp-bg-secondary); border: 1px solid var(--pp-border); border-radius: 6px;"
+          >
+            <input
+              type="text"
+              data-role="filter-search"
+              placeholder="Search annotations…"
+              aria-label="Search annotations by body text"
+              style="flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            />
+            <select
+              data-role="filter-severity"
+              aria-label="Filter by severity"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="">All Severities</option>
+              <option value="critical">Critical</option>
+              <option value="major">Major</option>
+              <option value="minor">Minor</option>
+              <option value="informational">Informational</option>
+            </select>
+            <select
+              data-role="filter-status"
+              aria-label="Filter by status"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+            <select
+              data-role="filter-sort"
+              aria-label="Sort annotations"
+              style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; background: var(--pp-bg-primary);"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="severity">Severity High→Low</option>
+              <option value="pin">Pin Number</option>
+            </select>
+            <button
+              type="button"
+              data-action="clear-filters"
+              data-role="clear-filters-btn"
+              hidden
+              style="padding: 6px 12px; background: var(--pp-bg-tertiary); border: 1px solid var(--pp-border-medium); border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--pp-text-secondary);"
+            >Clear filters</button>
+          </div>
+
+          <!-- Empty state when filters match no annotations. -->
+          <div
+            data-role="filter-empty"
+            hidden
+            style="padding: 32px; text-align: center; color: var(--pp-text-tertiary); font-size: 14px; border: 1px dashed var(--pp-border-medium); border-radius: 6px; margin-bottom: 16px;"
+          >
+            <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+            <p style="margin: 0;">No annotations match the current filters.</p>
+          </div>
 
           <!-- Analytics panel (severity, type, status, byBrowser). One
                container element per dimension; rows inside each are
@@ -880,27 +977,33 @@
             hidden
             style="display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;"
           >
-            <div data-role="analytics-card" data-dim="bySeverity" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+            <div data-role="analytics-card" data-dim="bySeverity" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
               <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Severity</div>
               <div data-role="rows"></div>
             </div>
-            <div data-role="analytics-card" data-dim="byType" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+            <div data-role="analytics-card" data-dim="byType" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
               <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Type</div>
               <div data-role="rows"></div>
             </div>
-            <div data-role="analytics-card" data-dim="byStatus" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+            <div data-role="analytics-card" data-dim="byStatus" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
               <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Status</div>
               <div data-role="rows"></div>
             </div>
-            <div data-role="analytics-card" data-dim="byBrowser" style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
+            <div data-role="analytics-card" data-dim="byBrowser" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
               <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Browser</div>
               <div data-role="rows"></div>
             </div>
           </div>
 
+          <!-- Heatmap toggle (premium). -->
+          <div style="margin-bottom: 16px;">
+            <button type="button" data-action="toggle-heatmap" data-role="heatmap-btn" style="background: var(--pp-kanban-bg); border: 1px solid var(--pp-input-border); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;">🗺 Heatmap</button>
+          </div>
+          <div data-role="heatmap-container" hidden></div>
+
           <!-- List subview. -->
           <section data-section="list" hidden>
-            <p data-role="list-empty" hidden style="color: #888; padding: 16px;">
+            <p data-role="list-empty" hidden style="color: var(--pp-text-tertiary); padding: 16px;">
               No annotations yet.
             </p>
             <table
@@ -909,7 +1012,8 @@
               style="width: 100%; border-collapse: collapse; font-size: 13px;"
             >
               <thead>
-                <tr style="border-bottom: 2px solid #e0e0e0; text-align: left;">
+                <tr style="border-bottom: 2px solid var(--pp-border-heavy); text-align: left;">
+                  <th style="padding: 8px 6px; width: 32px;"><input type="checkbox" data-role="select-all" aria-label="Select all annotations" /></th>
                   <th style="padding: 8px 6px;">#</th>
                   <th style="padding: 8px 6px;">Type</th>
                   <th style="padding: 8px 6px;">Severity</th>
@@ -927,7 +1031,7 @@
             <div
               data-role="kanban-column"
               data-status="active"
-              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+              style="flex: 1; min-width: 200px; background: var(--pp-kanban-bg); border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
             >
               <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
               <div data-role="kanban-cards"></div>
@@ -935,7 +1039,7 @@
             <div
               data-role="kanban-column"
               data-status="in_progress"
-              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+              style="flex: 1; min-width: 200px; background: var(--pp-kanban-bg); border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
             >
               <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
               <div data-role="kanban-cards"></div>
@@ -943,12 +1047,21 @@
             <div
               data-role="kanban-column"
               data-status="resolved"
-              style="flex: 1; min-width: 200px; background: #f7f7f7; border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
+              style="flex: 1; min-width: 200px; background: var(--pp-kanban-bg); border-radius: 6px; padding: 10px; border: 2px solid transparent; transition: background 0.15s, border 0.15s;"
             >
               <div data-slot="column-header" style="font-weight: 600; font-size: 13px; margin-bottom: 8px;"></div>
               <div data-role="kanban-cards"></div>
             </div>
           </section>
+
+          <!-- Bulk actions bar (shown when items are selected). -->
+          <div data-role="bulk-actions" hidden style="position: sticky; bottom: 0; background: var(--pp-bg-primary, #fff); border-top: 1px solid var(--pp-border, #e5e7eb); padding: 12px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 -2px 8px rgba(0,0,0,0.1);">
+            <span data-role="bulk-count" style="font-size: 14px; font-weight: 500;"></span>
+            <button data-action="bulk-resolve" style="padding: 6px 12px; background: #10b981; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Resolve</button>
+            <button data-action="bulk-in-progress" style="padding: 6px 12px; background: #f59e0b; color: #fff; border: none; border-radius: 4px; cursor: pointer;">In Progress</button>
+            <button data-action="bulk-delete" style="padding: 6px 12px; background: #ef4444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Delete</button>
+            <button data-action="bulk-clear" style="padding: 6px 12px; background: var(--pp-bg-tertiary, #f3f4f6); border: 1px solid var(--pp-border, #d1d5db); border-radius: 4px; cursor: pointer;">Clear</button>
+          </div>
 
           <!-- Detail subview. Inline rather than a separate template
                because every field is bound from a single annotation row;
@@ -958,10 +1071,10 @@
             <button
               type="button"
               data-action="back"
-              style="background: none; border: none; cursor: pointer; color: #3182ce; font-size: 13px; margin-bottom: 12px; padding: 0;"
+              style="background: none; border: none; cursor: pointer; color: var(--pp-link); font-size: 13px; margin-bottom: 12px; padding: 0;"
             >← Back to list</button>
 
-            <div style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px;">
+            <div style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px;">
               <div style="display: flex; justify-content: space-between; margin-bottom: 12px; align-items: flex-start; gap: 12px;">
                 <h2 style="margin: 0; font-size: 16px;">
                   #<span data-slot="detail-pin"></span> — <span data-slot="detail-type"></span>
@@ -1002,7 +1115,7 @@
                 <img
                   data-role="screenshot-img"
                   alt="Annotation screenshot"
-                  style="display: block; max-width: 100%; height: auto; border: 1px solid #e0e0e0; border-radius: 6px; background: #f5f5f5;"
+                  style="display: block; max-width: 100%; height: auto; border: 1px solid var(--pp-border-heavy); border-radius: 6px; background: var(--pp-bg-page);"
                 />
                 <div
                   data-role="screenshot-overlay"
@@ -1011,7 +1124,7 @@
                 ></div>
               </div>
 
-              <div style="font-size: 12px; color: #888; margin-bottom: 12px;">
+              <div style="font-size: 12px; color: var(--pp-text-tertiary); margin-bottom: 12px;">
                 Status: <span data-slot="detail-status"></span>
                 · Page: <span data-slot="detail-page-url"></span>
               </div>
@@ -1024,23 +1137,23 @@
                 full per-field breakdown (browser, OS, device, viewport,
                 DPR) and a separately collapsible raw User-Agent string.
               -->
-              <div data-role="env-panel" hidden style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px;">
+              <div data-role="env-panel" hidden style="border-top: 1px solid var(--pp-border-light); padding-top: 8px; margin-top: 8px;">
                 <div
                   data-role="env-summary"
                   data-slot="env-summary"
-                  style="font-size: 12px; color: #555; margin-bottom: 6px;"
+                  style="font-size: 12px; color: var(--pp-text-secondary); margin-bottom: 6px;"
                 ></div>
                 <button
                   type="button"
                   data-action="toggle-env"
                   data-role="env-toggle"
                   aria-expanded="false"
-                  style="background: none; border: none; cursor: pointer; font-size: 13px; color: #3182ce; padding: 0; font-weight: 500;"
+                  style="background: none; border: none; cursor: pointer; font-size: 13px; color: var(--pp-link); padding: 0; font-weight: 500;"
                 ><span data-slot="env-arrow">▸</span> Environment details</button>
                 <div
                   data-role="env-details"
                   hidden
-                  style="margin-top: 8px; font-size: 12px; color: #555; line-height: 1.8;"
+                  style="margin-top: 8px; font-size: 12px; color: var(--pp-text-secondary); line-height: 1.8;"
                 >
                   <div><span style="font-weight: 500;">Browser:</span> <span data-slot="env-browser"></span></div>
                   <div><span style="font-weight: 500;">OS:</span> <span data-slot="env-os"></span></div>
@@ -1059,12 +1172,12 @@
                       data-action="toggle-ua"
                       data-role="env-ua-toggle"
                       aria-expanded="false"
-                      style="background: none; border: none; cursor: pointer; font-size: 12px; color: #3182ce; padding: 0; font-weight: 500;"
+                      style="background: none; border: none; cursor: pointer; font-size: 12px; color: var(--pp-link); padding: 0; font-weight: 500;"
                     ><span data-slot="env-ua-arrow">▸</span> User Agent</button>
                     <div
                       data-role="env-ua-value"
                       hidden
-                      style="margin-top: 4px; font-size: 11px; color: #555; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: #f7fafc; border: 1px solid #edf2f7; border-radius: 3px; padding: 4px 6px;"
+                      style="margin-top: 4px; font-size: 11px; color: var(--pp-text-secondary); word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: var(--pp-code-bg); border: 1px solid var(--pp-code-border); border-radius: 3px; padding: 4px 6px;"
                       data-slot="env-ua"
                     ></div>
                   </div>
@@ -1078,7 +1191,7 @@
               <details
                 data-role="console-panel"
                 hidden
-                style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; font-size: 12px; color: #555;"
+                style="border-top: 1px solid var(--pp-border-light); padding-top: 8px; margin-top: 8px; font-size: 12px; color: var(--pp-text-secondary);"
               >
                 <summary style="cursor: pointer; font-weight: 500;">
                   Console (<span data-slot="console-count">0</span>)
@@ -1092,7 +1205,7 @@
               <details
                 data-role="network-panel"
                 hidden
-                style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; font-size: 12px; color: #555;"
+                style="border-top: 1px solid var(--pp-border-light); padding-top: 8px; margin-top: 8px; font-size: 12px; color: var(--pp-text-secondary);"
               >
                 <summary style="cursor: pointer; font-weight: 500;">
                   Network (<span data-slot="network-count">0</span>)
@@ -1108,31 +1221,31 @@
               <div
                 data-role="assignment-panel"
                 hidden
-                style="border-top: 1px solid #eee; padding-top: 12px; margin-top: 12px;"
+                style="border-top: 1px solid var(--pp-border-light); padding-top: 12px; margin-top: 12px;"
               >
                 <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">Assignment</div>
                 <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
                   <div>
-                    <label style="font-size: 12px; color: #555; display: block; margin-bottom: 4px;">Assignee</label>
+                    <label style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Assignee</label>
                     <select
                       data-role="assignee-select"
-                      style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 240px; background: #fff;"
+                      style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; width: 240px; background: var(--pp-bg-primary);"
                     >
                       <option value="">Unassigned</option>
                     </select>
                   </div>
                   <div>
-                    <label style="font-size: 12px; color: #555; display: block; margin-bottom: 4px;">Due Date</label>
+                    <label style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Due Date</label>
                     <input
                       type="date"
                       data-role="due-date"
-                      style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;"
+                      style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;"
                     />
                   </div>
                   <button
                     type="button"
                     data-action="save-assignment"
-                    style="padding: 6px 16px; background: #3182ce; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                    style="padding: 6px 16px; background: var(--pp-link); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
                   >Save</button>
                 </div>
               </div>
@@ -1144,7 +1257,8 @@
 
     <!-- One row of the project-view annotation list. -->
     <template id="tpl-project-view-list-row">
-      <tr style="border-bottom: 1px solid #eee; cursor: pointer;">
+      <tr style="border-bottom: 1px solid var(--pp-border-light); cursor: pointer;">
+        <td style="padding: 8px 6px; width: 32px;"><input type="checkbox" data-role="row-checkbox" aria-label="Select annotation" /></td>
         <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
         <td data-slot="type" style="padding: 8px 6px;"></td>
         <td style="padding: 8px 6px;">
@@ -1162,13 +1276,13 @@
     <template id="tpl-project-view-kanban-card">
       <div
         draggable="true"
-        style="background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 8px; margin-bottom: 6px; cursor: grab; font-size: 13px;"
+        style="background: var(--pp-bg-primary); border: 1px solid var(--pp-border-heavy); border-radius: 4px; padding: 8px; margin-bottom: 6px; cursor: grab; font-size: 13px;"
       >
         <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
           <span style="font-weight: 600;">#<span data-slot="pin-number"></span></span>
           <span data-slot="severity" style="font-size: 11px; font-weight: 500;"></span>
         </div>
-        <div data-slot="type" style="color: #555; margin-bottom: 4px;"></div>
+        <div data-slot="type" style="color: var(--pp-text-secondary); margin-bottom: 4px;"></div>
         <div data-slot="body" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
       </div>
     </template>
@@ -1189,39 +1303,45 @@
 
         <div
           data-role="tabs"
-          style="display: flex; gap: 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 20px;"
+          style="display: flex; gap: 0; border-bottom: 1px solid var(--pp-border-heavy); margin-bottom: 20px;"
         >
           <button
             type="button"
             data-action="selectProfile"
             data-role="tab-profile"
-            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
           >Profile</button>
           <button
             type="button"
             data-action="selectNotifications"
             data-role="tab-notifications"
-            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
           >Notifications</button>
           <button
             type="button"
             data-action="selectGuidelines"
             data-role="tab-guidelines"
-            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
           >Guidelines</button>
           <button
             type="button"
             data-action="selectTeams"
             data-role="tab-teams"
-            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: #666; font-weight: 400; cursor: pointer; font-size: 14px;"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
           >Teams</button>
+          <button
+            type="button"
+            data-action="selectAppearance"
+            data-role="tab-appearance"
+            style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
+          >Appearance</button>
         </div>
 
         <!-- Profile tab. -->
         <section data-section="profile" hidden>
           <p
             data-role="profile-loading"
-            style="color: #888; font-size: 13px;"
+            style="color: var(--pp-text-tertiary); font-size: 13px;"
           >Loading…</p>
           <form
             data-action="submit:saveProfile"
@@ -1234,7 +1354,7 @@
               <input
                 type="text"
                 data-role="profile-name"
-                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
               />
             </label>
             <label style="display: block; margin-bottom: 12px; font-size: 13px;">
@@ -1242,7 +1362,7 @@
               <input
                 type="email"
                 data-role="profile-email"
-                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
               />
             </label>
             <label style="display: block; margin-bottom: 12px; font-size: 13px;">
@@ -1251,7 +1371,7 @@
                 type="text"
                 data-role="profile-avatar"
                 placeholder="https://…"
-                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
               />
             </label>
             <p
@@ -1262,7 +1382,7 @@
             <button
               type="submit"
               data-role="profile-submit"
-              style="padding: 8px 20px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
+              style="padding: 8px 20px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
             >Save</button>
           </form>
         </section>
@@ -1271,15 +1391,15 @@
         <section data-section="notifications" hidden>
           <p
             data-role="notifications-loading"
-            style="color: #888; font-size: 13px;"
+            style="color: var(--pp-text-tertiary); font-size: 13px;"
           >Loading…</p>
           <p
             data-role="notifications-error"
             hidden
-            style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+            style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"
           ></p>
           <div data-role="notifications-content" hidden style="max-width: 400px;">
-            <p style="font-size: 13px; color: #666; margin-bottom: 16px;">
+            <p style="font-size: 13px; color: var(--pp-text-secondary); margin-bottom: 16px;">
               Toggle email notifications for each event type.
             </p>
             <div data-role="notifications-list"></div>
@@ -1290,12 +1410,12 @@
         <section data-section="guidelines" hidden>
           <p
             data-role="guidelines-loading"
-            style="color: #888; font-size: 13px;"
+            style="color: var(--pp-text-tertiary); font-size: 13px;"
           >Loading…</p>
           <p
             data-role="guidelines-error"
             hidden
-            style="color: #dc2626; font-size: 13px; margin: 0 0 12px;"
+            style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"
           ></p>
           <div
             data-role="guidelines-content"
@@ -1306,7 +1426,7 @@
             <p
               data-role="guidelines-empty"
               hidden
-              style="color: #888; font-size: 13px;"
+              style="color: var(--pp-text-tertiary); font-size: 13px;"
             >No guidelines found.</p>
             <div data-role="guidelines-list" style="margin-bottom: 24px;"></div>
 
@@ -1320,7 +1440,7 @@
                 <input
                   type="text"
                   data-role="guideline-name"
-                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
                 />
               </label>
               <label style="display: block; margin-bottom: 12px; font-size: 13px;">
@@ -1328,14 +1448,14 @@
                 <textarea
                   data-role="guideline-desc"
                   rows="3"
-                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; box-sizing: border-box; resize: vertical;"
+                  style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box; resize: vertical;"
                 ></textarea>
               </label>
               <button
                 type="submit"
                 data-role="guideline-submit"
                 disabled
-                style="padding: 8px 20px; background: #4f46e5; color: #fff; border: none; border-radius: 4px; cursor: not-allowed; font-size: 13px; font-weight: 500; opacity: 0.6;"
+                style="padding: 8px 20px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: not-allowed; font-size: 13px; font-weight: 500; opacity: 0.6;"
               >Create Guideline</button>
             </form>
           </div>
@@ -1347,6 +1467,27 @@
         <section data-section="teams" hidden>
           <div data-role="teams-container"></div>
         </section>
+
+        <!-- Appearance tab (B5 Dark Mode). -->
+        <section data-section="appearance" hidden>
+          <div style="max-width: 400px;">
+            <h3 style="font-size: 14px; margin: 0 0 12px;">Theme</h3>
+            <p style="font-size: 13px; color: var(--pp-text-secondary); margin: 0 0 16px;">
+              Choose how Pinpoint looks to you. Select a theme or sync with your system settings.
+            </p>
+            <label style="display: block; font-size: 13px;">
+              Color scheme
+              <select
+                data-role="theme-select"
+                style="display: block; width: 100%; padding: 8px 12px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px; box-sizing: border-box; background: var(--pp-input-bg); color: var(--pp-text-primary);"
+              >
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+          </div>
+        </section>
       </div>
     </template>
 
@@ -1354,7 +1495,7 @@
     <template id="tpl-settings-notification-row">
       <div
         data-role="notification-row"
-        style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #f0f0f0;"
+        style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--pp-border-light);"
       >
         <span data-slot="label" style="font-size: 13px;"></span>
         <button
@@ -1363,11 +1504,11 @@
           data-role="notification-toggle"
           role="switch"
           aria-checked="false"
-          style="width: 40px; height: 22px; border-radius: 11px; border: none; background: #d1d5db; position: relative; cursor: pointer; transition: background 0.2s;"
+          style="width: 40px; height: 22px; border-radius: 11px; border: none; background: var(--pp-toggle-off); position: relative; cursor: pointer; transition: background 0.2s;"
         >
           <span
             data-role="notification-knob"
-            style="position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"
+            style="position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--pp-bg-primary); transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);"
           ></span>
         </button>
       </div>
@@ -1377,22 +1518,231 @@
     <template id="tpl-settings-guideline-row">
       <div
         data-role="guideline-row"
-        style="padding: 8px 12px; border: 1px solid #e0e0e0; border-radius: 4px; margin-bottom: 6px; font-size: 13px;"
+        style="padding: 8px 12px; border: 1px solid var(--pp-border-heavy); border-radius: 4px; margin-bottom: 6px; font-size: 13px;"
       >
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <span data-slot="name" style="font-weight: 500;"></span>
           <span
             data-role="default-badge"
             hidden
-            style="font-size: 11px; background: #e0e7ff; color: #4338ca; padding: 2px 6px; border-radius: 3px;"
+            style="font-size: 11px; background: var(--pp-accent-light); color: var(--pp-accent-text); padding: 2px 6px; border-radius: 3px;"
           >Default</span>
         </div>
         <div
           data-role="description"
           data-slot="description"
           hidden
-          style="color: #666; margin-top: 4px;"
+          style="color: var(--pp-text-secondary); margin-top: 4px;"
         ></div>
+      </div>
+    </template>
+
+    <!-- Notification bell dropdown (in-app notifications). -->
+    <template id="notification-bell">
+      <div data-role="notification-bell" style="position: relative;">
+        <button
+          type="button"
+          data-action="toggleDropdown"
+          aria-label="Notifications"
+          style="position: relative; background: none; border: none; cursor: pointer; font-size: 18px; padding: 4px 6px; line-height: 1;"
+        >🔔<span
+            data-role="badge"
+            hidden
+            style="position: absolute; top: -2px; right: -2px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 600; min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px;"
+          ></span></button>
+        <div
+          data-role="dropdown"
+          hidden
+          style="position: absolute; right: 0; top: 100%; margin-top: 6px; width: 320px; max-height: 400px; overflow-y: auto; background: var(--pp-bg-primary); border: 1px solid var(--pp-border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 50;"
+        >
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--pp-border-light);">
+            <span style="font-weight: 600; font-size: 13px;">Notifications</span>
+            <button
+              type="button"
+              data-action="markAllRead"
+              style="background: none; border: none; color: var(--pp-accent-text); cursor: pointer; font-size: 12px;"
+            >Mark all read</button>
+          </div>
+          <div data-role="list"></div>
+          <div
+            data-role="empty"
+            hidden
+            style="padding: 24px; text-align: center; color: var(--pp-text-tertiary); font-size: 13px;"
+          >No notifications</div>
+        </div>
+      </div>
+    </template>
+
+    <!-- One notification item row. -->
+    <template id="notification-bell-item">
+      <div
+        data-role="item"
+        data-action="markRead"
+        style="padding: 10px 12px; border-bottom: 1px solid var(--pp-border-light); cursor: pointer; font-size: 13px;"
+      >
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+          <div style="flex: 1; min-width: 0;">
+            <div data-slot="title" style="font-weight: 500; margin-bottom: 2px;"></div>
+            <div data-slot="body" style="color: var(--pp-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+          </div>
+          <span data-slot="time" style="color: var(--pp-text-tertiary); font-size: 11px; white-space: nowrap;"></span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Reporting page -->
+    <template id="reporting-page">
+      <div class="reporting-page">
+        <h1>Reports</h1>
+        <div class="reporting-grid" data-slot="cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;"></div>
+      </div>
+    </template>
+    <template id="reporting-card">
+      <div class="reporting-card" style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; background: var(--pp-bg-primary);">
+        <h3 data-slot="title" style="margin: 0 0 8px; font-size: 14px; color: var(--pp-text-secondary);"></h3>
+        <div data-slot="value" class="reporting-value" style="font-size: 24px; font-weight: 600; margin-bottom: 8px;"></div>
+        <div data-slot="detail" class="reporting-detail" style="color: var(--pp-text-secondary); font-size: 13px;"></div>
+      </div>
+    </template>
+
+    <!-- 404 Not Found page (catch-all fallback). -->
+    <template id="not-found-page">
+      <div style="display: flex; justify-content: center; align-items: center; min-height: 80vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-align: center;">
+        <div>
+          <h1 style="font-size: 48px; margin: 0 0 8px; color: var(--pp-text-heading);">404</h1>
+          <p style="color: var(--pp-text-secondary); font-size: 16px; margin: 0 0 24px;">Page not found</p>
+          <a href="/" data-route style="color: var(--pp-accent-text); text-decoration: none; font-weight: 500; font-size: 14px;">← Back to Dashboard</a>
+        </div>
+      </div>
+    </template>
+
+    <!-- Session Replay Player (mounts inside annotation detail). -->
+    <template id="replay-player">
+      <div data-role="replay-root" style="border:1px solid var(--pp-border-heavy);border-radius:6px;padding:12px;margin-top:12px;background:var(--pp-bg-secondary);">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Session Replay</div>
+        <div data-role="replay-viewport" style="position:relative;width:100%;height:200px;background:var(--pp-bg-primary);border:1px solid var(--pp-border-light);border-radius:4px;overflow:hidden;">
+          <div data-role="replay-cursor" hidden style="position:absolute;width:10px;height:10px;border-radius:50%;background:var(--pp-accent);transform:translate(-50%,-50%);pointer-events:none;transition:left 0.05s linear,top 0.05s linear;"></div>
+          <div data-role="replay-scroll" hidden style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:18px;color:var(--pp-text-tertiary);">↕</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <button type="button" data-role="replay-play" style="background:var(--pp-accent);color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:13px;">▶</button>
+          <input type="range" data-role="replay-scrubber" min="0" value="0" style="flex:1;" />
+          <span data-role="replay-time" style="font-size:11px;color:var(--pp-text-tertiary);min-width:80px;text-align:right;">0.0s / 0.0s</span>
+        </div>
+      </div>
+    </template>
+
+    <!-- Heatmap Overlay (premium feature — mounted inside project analytics). -->
+    <template id="tpl-heatmap-overlay">
+      <div style="margin-top: 16px;">
+        <p data-slot="heatmap-status" style="font-size: 13px; color: var(--pp-text-secondary); margin: 0 0 8px;"></p>
+        <div data-role="heatmap-grid" style="position: relative; overflow: auto; border: 1px solid var(--pp-border-heavy); border-radius: 6px; background: var(--pp-bg-secondary); min-height: 100px;"></div>
+      </div>
+    </template>
+
+    <!-- Workflows Page. -->
+    <template id="tpl-workflows-page">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px;">
+        <h1 style="font-size: 20px; margin: 0 0 20px;">Workflow Automation</h1>
+
+        <!-- Automation Rules -->
+        <section style="margin-bottom: 32px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h2 style="font-size: 16px; margin: 0;">Automation Rules</h2>
+            <button type="button" data-action="create-rule" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;">+ Create Rule</button>
+          </div>
+          <div data-role="rules-list" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; overflow: hidden;"></div>
+          <div data-role="rule-form" hidden style="margin-top: 12px; border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px;">
+            <div style="display: grid; gap: 10px;">
+              <input data-role="rule-name" type="text" placeholder="Rule name" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <select data-role="rule-trigger" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
+                <option value="annotation.created">Annotation Created</option>
+                <option value="annotation.status_changed">Status Changed</option>
+                <option value="comment.created">Comment Created</option>
+              </select>
+              <select data-role="rule-action" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
+                <option value="assign">Assign</option>
+                <option value="set_status">Set Status</option>
+                <option value="set_due_date">Set Due Date</option>
+                <option value="notify">Notify</option>
+              </select>
+              <textarea data-role="rule-params" placeholder='Action params (JSON), e.g. {"assigneeId":"..."}' rows="3" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; font-family: monospace;"></textarea>
+              <button type="button" data-action="submit-rule" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 8px 14px; cursor: pointer; font-size: 13px; justify-self: start;">Save Rule</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- SLA Policies -->
+        <section>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h2 style="font-size: 16px; margin: 0;">SLA Policies</h2>
+            <button type="button" data-action="create-sla" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;">+ Create SLA</button>
+          </div>
+          <div data-role="sla-list" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; overflow: hidden;"></div>
+          <div data-role="sla-form" hidden style="margin-top: 12px; border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px;">
+            <div style="display: grid; gap: 10px;">
+              <input data-role="sla-name" type="text" placeholder="Policy name" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <select data-role="sla-severity" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
+                <option value="critical">Critical</option>
+                <option value="major">Major</option>
+                <option value="minor">Minor</option>
+              </select>
+              <input data-role="sla-response" type="number" placeholder="Response time (hours)" min="1" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <input data-role="sla-resolution" type="number" placeholder="Resolution time (hours)" min="1" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <button type="button" data-action="submit-sla" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 8px 14px; cursor: pointer; font-size: 13px; justify-self: start;">Save SLA</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <!-- Client Portal page (task: final-polish). -->
+    <template id="tpl-client-portal-page">
+      <div style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h1 style="margin: 0; font-size: 22px;">Client Portals</h1>
+          <button type="button" data-action="showCreate" style="padding: 8px 14px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">+ Create Portal</button>
+        </div>
+        <p data-role="error" hidden style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"></p>
+        <div data-role="portal-form" hidden style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; margin-bottom: 20px; background: var(--pp-bg-secondary);">
+          <form data-role="create-form" data-action="submit:submitPortal" novalidate>
+            <div style="display: grid; gap: 10px;">
+              <select name="projectId" data-role="project-select" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
+                <option value="">Select a project</option>
+              </select>
+              <input name="title" type="text" placeholder="Portal title" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <input name="slug" type="text" placeholder="Slug (URL path)" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <input name="welcomeMessage" type="text" placeholder="Welcome message" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <input name="brandColor" type="color" value="#4f46e5" style="width: 48px; height: 32px; border: 1px solid var(--pp-input-border); border-radius: 4px; cursor: pointer;" />
+              <input name="logoUrl" type="url" placeholder="Logo URL (optional)" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
+              <button type="submit" style="padding: 8px 14px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; justify-self: start;">Create</button>
+            </div>
+          </form>
+        </div>
+        <div data-role="portal-list" style="display: grid; gap: 10px;"></div>
+      </div>
+    </template>
+
+    <!-- Integrations Page (Task 5). -->
+    <template id="tpl-integrations-page">
+      <div style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <h1 style="font-size: 20px; margin: 0 0 20px;">Integrations</h1>
+        <div data-role="integrations-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"></div>
+      </div>
+    </template>
+
+    <!-- Command Palette (C3 Global Search). -->
+    <template id="tpl-command-palette">
+      <div data-role="backdrop" style="position: fixed; inset: 0; background: var(--pp-surface-overlay); z-index: 9999; display: flex; align-items: flex-start; justify-content: center; padding-top: 20vh;">
+        <div data-role="panel" role="dialog" aria-modal="true" aria-label="Command palette" style="background: var(--pp-bg-primary, #fff); border-radius: 12px; width: 100%; max-width: 560px; box-shadow: 0 25px 50px rgba(0,0,0,0.25); overflow: hidden;">
+          <div style="padding: 12px 16px; border-bottom: 1px solid var(--pp-border, #e5e7eb);">
+            <input data-role="search-input" type="text" placeholder="Search projects, actions..." style="width: 100%; border: none; outline: none; font-size: 16px; background: transparent; color: var(--pp-text-primary, #1a1a1a);" />
+          </div>
+          <div data-role="results" style="max-height: 360px; overflow-y: auto; padding: 8px;"></div>
+          <div style="padding: 8px 16px; border-top: 1px solid var(--pp-border, #e5e7eb); font-size: 12px; color: var(--pp-text-secondary, #6b7280);">
+            <kbd>↑↓</kbd> navigate · <kbd>↵</kbd> select · <kbd>esc</kbd> close
+          </div>
+        </div>
       </div>
     </template>
 

@@ -68,7 +68,7 @@ export interface ScreenshotEditRequestDetail {
 }
 
 export class FlScreenshotViewer extends HTMLElement {
-  static readonly tagName = 'fl-screenshot-viewer';
+  static readonly tagName = 'pp-screenshot-viewer';
 
   #imageUrl: string | null = null;
   #annotationId: string | null = null;
@@ -215,6 +215,17 @@ if (
   withBoundary(FlScreenshotViewer.prototype, 'connectedCallback');
   withBoundary(FlScreenshotViewer.prototype, 'disconnectedCallback');
   customElements.define(FlScreenshotViewer.tagName, FlScreenshotViewer);
+  const flScreenshotTag = FlScreenshotViewer.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flScreenshotTag)) {
+    const LegacyScreenshot = class extends FlScreenshotViewer {};
+    customElements.define(flScreenshotTag, LegacyScreenshot);
+  }
+  // Legacy fl- alias for backwards compatibility (Mission E4)
+  const legacy_FlScreenshotViewer_tag = FlScreenshotViewer.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(legacy_FlScreenshotViewer_tag)) {
+    const LegacyFlScreenshotViewer = class extends FlScreenshotViewer {};
+    customElements.define(legacy_FlScreenshotViewer_tag, LegacyFlScreenshotViewer);
+  }
 }
 
 declare global {

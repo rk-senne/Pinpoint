@@ -16,6 +16,8 @@ export interface SearchProjectsInput {
   userId: string;
   search?: string;
   status?: 'active' | 'archived';
+  limit?: number;
+  offset?: number;
 }
 
 export interface ProjectRepo {
@@ -23,6 +25,8 @@ export interface ProjectRepo {
   findById(id: string): Promise<Project | null>;
   /** Owner + team membership scoped list with optional search/status filter. */
   search(input: SearchProjectsInput): Promise<Project[]>;
+  /** Count projects matching search criteria (for pagination totals). */
+  countSearch(input: Omit<SearchProjectsInput, 'limit' | 'offset'>): Promise<number>;
   update(id: string, patch: ProjectPatch): Promise<Project>;
   delete(id: string): Promise<void>;
 

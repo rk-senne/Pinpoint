@@ -182,7 +182,7 @@ const ROW_TEMPLATE = (() => {
 })();
 
 export class FlSidebarPanel extends HTMLElement {
-  static readonly tagName = 'fl-sidebar-panel';
+  static readonly tagName = 'pp-sidebar-panel';
 
   #annotations: Annotation[] = [];
   #tab: SidebarTab = 'active';
@@ -457,6 +457,11 @@ if (
   withBoundary(FlSidebarPanel.prototype, 'connectedCallback');
   withBoundary(FlSidebarPanel.prototype, 'disconnectedCallback');
   customElements.define(FlSidebarPanel.tagName, FlSidebarPanel);
+  const flSidebarTag = FlSidebarPanel.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flSidebarTag)) {
+    const LegacySidebar = class extends FlSidebarPanel {};
+    customElements.define(flSidebarTag, LegacySidebar);
+  }
 }
 
 declare global {

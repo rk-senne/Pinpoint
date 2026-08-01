@@ -1,0 +1,39 @@
+name: Activity
+
+on:
+  schedule:
+    # Monday 11:38 UTC
+    - cron: '38 11 * * 1'
+    # Tuesday 08:05 UTC
+    - cron: '5 8 * * 2'
+    # Tuesday 17:42 UTC
+    - cron: '42 17 * * 2'
+    # Wednesday 14:19 UTC
+    - cron: '19 14 * * 3'
+    # Thursday 09:56 UTC
+    - cron: '56 9 * * 4'
+    # Friday 13:27 UTC
+    - cron: '27 13 * * 5'
+    # Sunday 10:08 UTC
+    - cron: '8 10 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  activity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+
+      - name: Push activity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC') — automated activity" >> .activity
+          git add .activity
+          git commit --allow-empty -m "chore: activity [skip ci]"
+          git push

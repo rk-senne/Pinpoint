@@ -92,7 +92,21 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
 
     eventBus = new SocketIoEventBus(ioServer);
 
-    installCollabGateway(ioServer, { tokenIssuer });
+    // Mock db that approves any project join for org-test (the org all
+    // test tokens use). The gateway only calls db('projects').where({...}).first('id')
+    // and db('annotations').where({...}).first('id').
+    const mockDb = ((table: string) => ({
+      where: (filter: Record<string, string>) => ({
+        first: () => {
+          if (filter.org_id === 'org-test') {
+            return Promise.resolve({ id: filter.id });
+          }
+          return Promise.resolve(undefined);
+        },
+      }),
+    })) as unknown as import('knex').Knex;
+
+    installCollabGateway(ioServer, { tokenIssuer, db: mockDb });
 
     await new Promise<void>((resolve) => {
       httpServer.listen(0, () => {

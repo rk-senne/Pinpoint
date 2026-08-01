@@ -1,4 +1,4 @@
-import type { Membership, MembershipRepo } from '../../domain/auth/ports/MembershipRepo.js';
+import type { Membership, MemberWithUser, MembershipRepo } from '../../domain/auth/ports/MembershipRepo.js';
 
 export class FakeMembershipRepo implements MembershipRepo {
   private memberships: Membership[] = [];
@@ -21,6 +21,12 @@ export class FakeMembershipRepo implements MembershipRepo {
 
   async listByOrg(orgId: string): Promise<Membership[]> {
     return this.memberships.filter((m) => m.orgId === orgId);
+  }
+
+  async listByOrgWithUsers(orgId: string): Promise<MemberWithUser[]> {
+    return this.memberships
+      .filter((m) => m.orgId === orgId)
+      .map((m) => ({ userId: m.userId, role: m.role, email: '', name: '' }));
   }
 
   async removeByOrgAndUser(orgId: string, userId: string): Promise<void> {

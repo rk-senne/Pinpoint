@@ -245,6 +245,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
         return map;
       },
       buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
+      fetchScreenshotBuffer: (key) => screenshotStore.fetchScreenshot(key),
       authMiddleware,
     });
 

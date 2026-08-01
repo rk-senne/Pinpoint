@@ -69,7 +69,7 @@ const ROW_TEMPLATE = (() => {
 })();
 
 export class FlMentionAutocomplete extends HTMLElement {
-  static readonly tagName = 'fl-mention-autocomplete';
+  static readonly tagName = 'pp-mention-autocomplete';
 
   #members: MentionCandidate[] = [];
   #query = '';
@@ -355,6 +355,11 @@ if (
 ) {
   withBoundary(FlMentionAutocomplete.prototype, 'connectedCallback');
   customElements.define(FlMentionAutocomplete.tagName, FlMentionAutocomplete);
+  const flMentionTag = FlMentionAutocomplete.tagName.replace('pp-', 'fl-');
+  if (!customElements.get(flMentionTag)) {
+    const LegacyMention = class extends FlMentionAutocomplete {};
+    customElements.define(flMentionTag, LegacyMention);
+  }
 }
 
 declare global {

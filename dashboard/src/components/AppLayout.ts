@@ -23,6 +23,7 @@ import { authStore, resetStores } from '../lib/stores';
 import { apiFetch } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { mountProjectListSidebar } from './ProjectListSidebar';
+import { mountNotificationBell } from './NotificationBell';
 
 /**
  * Mount the AppLayout shell into `rootEl` and place `contentNode` in the
@@ -44,12 +45,64 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
 
   // Sidebar slot — mount the vanilla `ProjectListSidebar` (task 18.6). It
   // owns its own DOM lifecycle and fetches the project list on mount.
+  //
+  // Accessibility: `aria-current="page"` is set on the active project row
+  // inside `ProjectListSidebar.ts`. On initial render, the row matching
+  // `location.pathname` receives the attribute. On click navigation, the
+  // previous current row's attribute is removed and the clicked row gains it.
+  // This lets assistive technology announce which project is currently active.
   const sidebarSlot = layoutRoot.querySelector<HTMLElement>('[data-slot="sidebar"]');
   let sidebarHandle: { dispose: () => void } | null = null;
+
+  // Backdrop overlay for mobile sidebar (Mission B1). Sits behind the
+  // sidebar in z-index stacking; tapping it closes the sidebar.
+  const backdrop = document.createElement('div');
+  backdrop.className = 'fl-sidebar-backdrop';
+  backdrop.setAttribute('aria-hidden', 'true');
+  layoutRoot.appendChild(backdrop);
+
+  /** Opens the mobile sidebar. */
+  function openSidebar(): void {
+    sidebarSlot?.classList.add('sidebar--open');
+    backdrop.classList.add('fl-sidebar-backdrop--visible');
+  }
+
+  /** Closes the mobile sidebar. */
+  function closeSidebar(): void {
+    sidebarSlot?.classList.remove('sidebar--open');
+    backdrop.classList.remove('fl-sidebar-backdrop--visible');
+  }
+
   if (sidebarSlot) {
     sidebarSlot.replaceChildren();
     sidebarHandle = mountProjectListSidebar(sidebarSlot, {
-      navigate: (path) => navigate(path),
+      navigate: (path) => {
+        closeSidebar();
+        navigate(path);
+      },
+    });
+
+    // Mobile hamburger toggle for the sidebar (Mission B1).
+    const header = layoutRoot.querySelector('header');
+    if (header) {
+      const hamburger = document.createElement('button');
+      hamburger.type = 'button';
+      hamburger.className = 'fl-hamburger';
+      hamburger.setAttribute('aria-label', 'Toggle navigation');
+      hamburger.textContent = '☰';
+      hamburger.addEventListener('click', () => {
+        if (sidebarSlot.classList.contains('sidebar--open')) {
+          closeSidebar();
+        } else {
+          openSidebar();
+        }
+      });
+      header.insertBefore(hamburger, header.firstChild);
+    }
+
+    // Close sidebar when backdrop is tapped/clicked.
+    backdrop.addEventListener('click', () => {
+      closeSidebar();
     });
   }
 
@@ -59,6 +112,13 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
     throw new Error('mountAppLayout: template is missing the content slot');
   }
   contentSlot.replaceChildren(contentNode);
+
+  // Notification bell — mount into the header notification slot.
+  const notificationsSlot = layoutRoot.querySelector<HTMLElement>('[data-slot="notifications"]');
+  let bellDispose: (() => void) | null = null;
+  if (notificationsSlot) {
+    bellDispose = mountNotificationBell(notificationsSlot);
+  }
 
   // Bind the top-bar current-user label to the auth store. The label shows
   // the user's name when present, falls back to the email, and renders
@@ -89,6 +149,7 @@ export function mountAppLayout(rootEl: Element, contentNode: Node): () => void {
   mount(rootEl, fragment);
 
   return () => {
+    bellDispose?.();
     sidebarHandle?.dispose();
     unbindUser();
     cleanupEvents();

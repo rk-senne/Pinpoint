@@ -113,6 +113,52 @@ export class S3ScreenshotStore implements ScreenshotStore {
     return { objectKey, url: this.buildScreenshotUrl(objectKey) };
   }
 
+  async fetchScreenshot(objectKey: string): Promise<Buffer | null> {
+    try {
+      const result = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.config.bucket,
+          Key: objectKey,
+        }),
+      );
+      const body = result.Body;
+      if (!body) return null;
+
+      const maybeHelper = body as {
+        transformToByteArray?: () => Promise<Uint8Array>;
+      };
+      if (typeof maybeHelper.transformToByteArray === 'function') {
+        const bytes = await maybeHelper.transformToByteArray();
+        return Buffer.from(bytes);
+      }
+
+      // Fallback: manual chunk concat for older SDK shims
+      const chunks: Buffer[] = [];
+      const stream = body as NodeJS.ReadableStream;
+      for await (const chunk of stream) {
+        chunks.push(
+          typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk),
+        );
+      }
+      return Buffer.concat(chunks);
+    } catch (err) {
+      const e = err as {
+        name?: string;
+        Code?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      if (
+        e?.name === 'NoSuchKey' ||
+        e?.Code === 'NoSuchKey' ||
+        e?.name === 'NotFound' ||
+        e?.$metadata?.httpStatusCode === 404
+      ) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async fetchMarkupDocument(screenshotKey: string): Promise<unknown | null> {
     const objectKey = this.buildMarkupKey(screenshotKey);
 

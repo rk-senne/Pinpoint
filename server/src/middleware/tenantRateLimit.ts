@@ -22,6 +22,12 @@ interface Bucket {
   lastRefill: number;
 }
 
+/** Generic Redis-like interface — no dependency on a specific Redis package. */
+export interface RedisRateLimitClient {
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<void>;
+}
+
 const DEFAULT_CONFIG: BucketConfig = {
   maxTokens: 1000,
   refillRate: 1000 / (60 * 60 * 1000), // 1000 tokens/hour
@@ -70,15 +76,43 @@ function consume(bucket: Bucket): boolean {
  * Express middleware: extracts `orgId` from `req.user` (set by auth
  * middleware) and applies the per-tenant bucket. Unauthenticated
  * requests pass through (they're covered by the IP-based limiter).
+ *
+ * When a `redis` client is provided, uses Redis INCR + EXPIRE for
+ * multi-instance consistency. Falls back to in-memory when omitted.
  */
 export function tenantRateLimit(
   config: Partial<BucketConfig> = {},
+  redis?: RedisRateLimitClient,
 ): (req: Request, res: Response, next: NextFunction) => void {
   const cfg = { ...DEFAULT_CONFIG, ...config };
+  const windowSec = Math.ceil(cfg.windowMs / 1000);
 
   return (req: Request, res: Response, next: NextFunction) => {
     const orgId = req.user?.orgId;
     if (!orgId) { next(); return; }
+
+    if (redis) {
+      const key = `rl:${orgId}`;
+      redis.incr(key).then((count) => {
+        if (count === 1) redis.expire(key, windowSec);
+        if (count <= cfg.maxTokens) {
+          res.setHeader('X-RateLimit-Remaining', (cfg.maxTokens - count).toString());
+          next();
+        } else {
+          res.setHeader('Retry-After', windowSec.toString());
+          res.status(429).json({
+            error: {
+              code: 'TENANT_RATE_LIMIT',
+              message: 'Rate limit exceeded for your organization. Please retry later.',
+            },
+          });
+        }
+      }).catch(() => {
+        // Redis failure — fall through to allow request (fail-open)
+        next();
+      });
+      return;
+    }
 
     const bucket = getOrCreateBucket(orgId);
     // Apply custom config

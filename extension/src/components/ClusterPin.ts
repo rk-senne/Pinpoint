@@ -326,7 +326,11 @@ if (
   !customElements.get('fl-cluster-pin')
 ) {
   withBoundary(ClusterPin.prototype, 'connectedCallback');
-  customElements.define('fl-cluster-pin', ClusterPin);
+  customElements.define('pp-cluster-pin', ClusterPin);
+  if (!customElements.get('fl-cluster-pin')) {
+    const LegacyClusterPin = class extends ClusterPin {};
+    customElements.define('fl-cluster-pin', LegacyClusterPin);
+  }
 }
 
 declare global {

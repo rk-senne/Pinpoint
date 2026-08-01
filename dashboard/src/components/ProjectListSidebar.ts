@@ -25,6 +25,8 @@
 import type { Project } from '@pinpoint/shared';
 
 import { apiFetch as defaultApiFetch } from '../lib/api';
+import { showToast } from './Toast';
+import { trapFocus, linkInputToError } from '../lib/a11y';
 import {
   attr,
   bind,
@@ -183,6 +185,11 @@ export function mountProjectListSidebar(
 
     const onRowClick = (): void => {
       deps.navigate(`/projects/${project.id}`);
+      // Mark this row as the current page for accessibility (aria-current).
+      for (const sibling of listEl.querySelectorAll('[aria-current]')) {
+        sibling.removeAttribute('aria-current');
+      }
+      row.setAttribute('aria-current', 'page');
     };
     const onRowContext = (e: Event): void => {
       e.preventDefault();
@@ -199,6 +206,12 @@ export function mountProjectListSidebar(
     row.addEventListener('contextmenu', onRowContext);
     row.addEventListener('mouseenter', onRowEnter);
     row.addEventListener('mouseleave', onRowLeave);
+
+    // Mark the active row based on the current URL (aria-current="page").
+    if (location.pathname === `/projects/${project.id}`) {
+      row.setAttribute('aria-current', 'page');
+    }
+
     rowCleanups.push(() => {
       row.removeEventListener('click', onRowClick);
       row.removeEventListener('contextmenu', onRowContext);
@@ -294,6 +307,10 @@ export function mountProjectListSidebar(
           method: 'PUT',
           body: JSON.stringify({ status: newStatus }),
         });
+        showToast({
+          message: newStatus === 'archived' ? 'Project archived' : 'Project unarchived',
+          variant: 'success',
+        });
         await refresh();
       },
       delete: async () => {
@@ -304,6 +321,7 @@ export function mountProjectListSidebar(
           )
         ) {
           await apiFetch(`/projects/${project.id}`, { method: 'DELETE' });
+          showToast({ message: 'Project deleted', variant: 'success' });
           await refresh();
         }
       },
@@ -408,6 +426,9 @@ export function mountProjectListSidebar(
 
     panel.addEventListener('click', (e) => e.stopPropagation());
 
+    // B7 Accessibility: link inputs to error element and trap focus in dialog
+    linkInputToError(nameInput, errorEl);
+    const releaseFocus = trapFocus(panel);
     const teardown = bindEvents(overlay, {
       closeOverlay: closeDialog,
       cancel: closeDialog,
@@ -427,6 +448,7 @@ export function mountProjectListSidebar(
             method: 'POST',
             body: JSON.stringify({ name, urls: [url] }),
           });
+          showToast({ message: 'Project created', variant: 'success' });
           closeDialog();
           await refresh();
         } catch (err) {
@@ -441,6 +463,7 @@ export function mountProjectListSidebar(
     queueMicrotask(() => nameInput.focus());
 
     openDialogCleanup = () => {
+      releaseFocus();
       teardown();
       overlay.remove();
     };

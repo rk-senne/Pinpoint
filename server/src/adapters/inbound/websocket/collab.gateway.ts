@@ -21,23 +21,26 @@
 // hexagonal layering rules enforced in `.eslintrc.cjs`.
 
 import type { Namespace, Server, Socket } from 'socket.io';
+import type { Knex } from 'knex';
 
 import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
 
 /**
- * Dependencies the gateway needs from the composition root. Today only
- * the `TokenIssuer` port is required; future presence/typing use cases
- * would be wired in here so the gateway can stay free of business
- * logic.
+ * Dependencies the gateway needs from the composition root.
+ *
+ * - `tokenIssuer` — verifies the JWT on the handshake.
+ * - `db` — used to authorize room joins by verifying org ownership.
  */
 export interface CollabGatewayDeps {
   readonly tokenIssuer: TokenIssuer;
+  readonly db: Knex;
 }
 
 /** Shape of the user info we attach to each authenticated socket. */
 interface SocketUser {
   readonly userId: string;
   readonly email: string;
+  readonly orgId: string;
 }
 
 /**
@@ -66,7 +69,7 @@ export function installCollabGateway(
   io: Server,
   deps: CollabGatewayDeps,
 ): void {
-  const { tokenIssuer } = deps;
+  const { tokenIssuer, db } = deps;
 
   const collabNamespace: Namespace = io.of('/collab');
 
@@ -130,6 +133,7 @@ export function installCollabGateway(
       (socket as AuthenticatedSocket).user = {
         userId: payload.userId,
         email: payload.email,
+        orgId: payload.orgId,
       };
       next();
     } catch {
@@ -158,8 +162,17 @@ export function installCollabGateway(
     const openAnnotations = new Set<string>();
 
     // --- join event ---
-    socket.on('join', (data: { projectId: string }) => {
+    socket.on('join', async (data: { projectId: string }) => {
       if (!data?.projectId || typeof data.projectId !== 'string') return;
+
+      // Authorize: verify the user's org owns this project (mirrors HTTP IDOR check).
+      const project = await db('projects')
+        .where({ id: data.projectId, org_id: user.orgId })
+        .first('id');
+      if (!project) {
+        socket.emit('error', { code: 'PROJECT_NOT_FOUND', message: 'Not found or access denied' });
+        return;
+      }
 
       const room = getRoomId(data.projectId);
       socket.join(room);
@@ -207,9 +220,18 @@ export function installCollabGateway(
     });
 
     // --- annotation:open event (co-viewer presence) ---
-    socket.on('annotation:open', (data: { id: string }) => {
+    socket.on('annotation:open', async (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
       const annotationId = data.id;
+
+      // Authorize: verify the annotation belongs to the user's org.
+      const annotation = await db('annotations')
+        .where({ id: annotationId, org_id: user.orgId })
+        .first('id');
+      if (!annotation) {
+        socket.emit('error', { code: 'ANNOTATION_NOT_FOUND', message: 'Not found or access denied' });
+        return;
+      }
 
       socket.join(getAnnotationRoomId(annotationId));
       openAnnotations.add(annotationId);
@@ -220,6 +242,23 @@ export function installCollabGateway(
       annotationViewers.get(annotationId)!.add(user.userId);
 
       broadcastAnnotationViewers(annotationId);
+    });
+
+    // --- cursor:move event (live cursor relay) ---
+    socket.on('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
+      if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
+      // Broadcast to all project rooms this socket is in (excluding sender)
+      for (const room of socket.rooms) {
+        if (room.startsWith('project:')) {
+          socket.to(room).emit('cursor:move', {
+            userId: user.userId,
+            email: user.email,
+            x: data.x,
+            y: data.y,
+            pageUrl: data.pageUrl ?? '',
+          });
+        }
+      }
     });
 
     // --- annotation:close event (co-viewer presence) ---
@@ -247,6 +286,13 @@ export function installCollabGateway(
 
     // --- disconnect event ---
     socket.on('disconnect', () => {
+      // Broadcast cursor:leave to all project rooms this socket was in.
+      for (const room of socket.rooms) {
+        if (room.startsWith('project:')) {
+          socket.to(room).emit('cursor:leave', { userId: user.userId });
+        }
+      }
+
       // Clean up co-viewer presence for any annotations this socket had
       // open.
       for (const annotationId of openAnnotations) {

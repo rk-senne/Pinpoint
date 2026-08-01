@@ -39,7 +39,7 @@ describe('<fl-comment-thread>', () => {
   });
 
   it('is registered as a Custom Element', () => {
-    expect(customElements.get('fl-comment-thread')).toBe(FlCommentThread);
+    expect(customElements.get('pp-comment-thread')).toBe(FlCommentThread); expect(customElements.get('fl-comment-thread')).toBeDefined();
   });
 
   it('renders an <ol> with one <li> per comment, including author, body, and time', () => {

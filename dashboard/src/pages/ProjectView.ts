@@ -39,10 +39,15 @@ import type {
   MarkupDocument,
   User,
 } from '@pinpoint/shared';
-import { SEVERITY_COLORS, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
+import { SEVERITY_COLORS, SEVERITY_SHAPES, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
-import { apiFetch as defaultApiFetch } from '../lib/api';
+import { mountReplayPlayer } from '../components/ReplayPlayer';
+import { mountHeatmapOverlay } from '../components/HeatmapOverlay';
+import { createListSkeleton } from '../components/Skeleton';
+import { showToast } from '../components/Toast';
+import { apiFetch as defaultApiFetch, getAnnotationSuggestions } from '../lib/api';
+import { buildSuggestionsPanel } from '../lib/suggestionsFormat';
 import {
   attr,
   bindEvents,
@@ -101,6 +106,31 @@ const KANBAN_COLUMNS: AnnotationStatus[] = ['active', 'in_progress', 'resolved']
 
 const MAX_COVIEWER_AVATARS = 4;
 
+// --- Filter / Sort types (Mission B3) ------------------------------------
+
+type SortMode = 'newest' | 'oldest' | 'severity' | 'pin';
+
+interface FilterState {
+  search: string;
+  severity: string; // '' = all
+  status: string;   // '' = all
+  sort: SortMode;
+}
+
+const DEFAULT_FILTER: FilterState = {
+  search: '',
+  severity: '',
+  status: '',
+  sort: 'newest',
+};
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  major: 1,
+  minor: 2,
+  informational: 3,
+};
+
 // --- Public entry point ---------------------------------------------------
 
 export interface MountProjectViewOptions {
@@ -134,6 +164,8 @@ export function mountProjectView(
   const analytics: Signal<Analytics | null> = signal<Analytics | null>(null);
   const selectedAnnotationId: Signal<string | null> = signal<string | null>(null);
   const currentUserId: Signal<string | null> = signal<string | null>(null);
+  /** Bulk selection — set of annotation IDs currently checked. */
+  const selectedIds: Signal<Set<string>> = signal<Set<string>>(new Set());
   /**
    * Co-viewer presence (Reqs 6.6, 6.7). Keyed by annotation id; the value
    * is the list of user ids that the server has reported as currently
@@ -143,6 +175,11 @@ export function mountProjectView(
   const viewersByAnnotation: Signal<Record<string, string[]>> = signal<
     Record<string, string[]>
   >({});
+
+  // --- Filter state (Mission B3) -----------------------------------------
+  const filterState: Signal<FilterState> = signal<FilterState>(
+    readFilterFromUrl(),
+  );
 
   // --- Build the page DOM and mount inside the layout shell --------------
   const fragment = cloneTemplate('tpl-project-view');
@@ -163,6 +200,10 @@ export function mountProjectView(
   const errorMessageEl = contentRoot.querySelector<HTMLElement>(
     '[data-slot="error-message"]',
   )!;
+
+  // Populate loading section with skeleton list instead of plain text.
+  loadingSection.textContent = '';
+  loadingSection.appendChild(createListSkeleton(5));
   const contentSection = requireSection(contentRoot, 'content');
   const projectTitleEl = contentRoot.querySelector<HTMLElement>(
     '[data-slot="project-title"]',
@@ -184,11 +225,24 @@ export function mountProjectView(
   const listBody = contentRoot.querySelector<HTMLElement>('[data-role="list-body"]')!;
   const kanbanSection = requireSection(contentRoot, 'kanban');
   const detailSection = requireSection(contentRoot, 'detail');
+  const bulkActionsBar = contentRoot.querySelector<HTMLElement>('[data-role="bulk-actions"]')!;
+  const bulkCountEl = contentRoot.querySelector<HTMLElement>('[data-role="bulk-count"]')!;
+  const selectAllCheckbox = contentRoot.querySelector<HTMLInputElement>('[data-role="select-all"]')!;
+
+  // Filter bar DOM refs (Mission B3).
+  const filterBar = contentRoot.querySelector<HTMLElement>('[data-role="filter-bar"]')!;
+  const filterSearchInput = contentRoot.querySelector<HTMLInputElement>('[data-role="filter-search"]')!;
+  const filterSeveritySelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-severity"]')!;
+  const filterStatusSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-status"]')!;
+  const filterSortSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-sort"]')!;
+  const clearFiltersBtn = contentRoot.querySelector<HTMLElement>('[data-role="clear-filters-btn"]')!;
+  const filterEmptyEl = contentRoot.querySelector<HTMLElement>('[data-role="filter-empty"]')!;
 
   // Per-render row listener cleanups. Cleared on every rerender so detached
   // rows can be GC'd; otherwise the closures capturing each row would keep
   // the detached DOM alive for the page's lifetime.
   let rowCleanups: Array<() => void> = [];
+  let replayTeardown: (() => void) | null = null;
 
   // --- Page-level event wiring ------------------------------------------
   const cleanupEvents = bindEvents(contentRoot, {
@@ -217,6 +271,27 @@ export function mountProjectView(
         ? new Date(dueInput.value).toISOString()
         : null;
       void saveAssignment(id, assigneeId, dueDate);
+    },
+    'toggle-heatmap': () => {
+      const heatmapContainer = contentRoot.querySelector<HTMLElement>('[data-role="heatmap-container"]');
+      if (!heatmapContainer) return;
+      const isHidden = heatmapContainer.hasAttribute('hidden');
+      if (isHidden) {
+        heatmapContainer.removeAttribute('hidden');
+        mountHeatmapOverlay(heatmapContainer, projectId);
+      } else {
+        heatmapContainer.setAttribute('hidden', '');
+        heatmapContainer.replaceChildren();
+      }
+    },
+    'bulk-resolve': () => void executeBulkAction('resolve'),
+    'bulk-in-progress': () => void executeBulkAction('in_progress'),
+    'bulk-delete': () => void executeBulkAction('delete'),
+    'bulk-clear': () => {
+      selectedIds.set(new Set());
+    },
+    'clear-filters': () => {
+      filterState.set({ ...DEFAULT_FILTER });
     },
   });
 
@@ -354,6 +429,70 @@ export function mountProjectView(
       renderDetail();
     }),
   );
+
+  // Bulk selection — show/hide actions bar and update count.
+  unsubs.push(
+    selectedIds.subscribe((ids) => {
+      const count = ids.size;
+      toggleHidden(bulkActionsBar, count === 0);
+      if (bulkCountEl) {
+        text(bulkCountEl, count > 0 ? `${count} selected` : '');
+      }
+      // Sync select-all checkbox state
+      const annotations = currentAnnotationsStore.list.get();
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = annotations.length > 0 && count === annotations.length;
+        selectAllCheckbox.indeterminate = count > 0 && count < annotations.length;
+      }
+      // Sync row checkboxes
+      const checkboxes = listBody.querySelectorAll<HTMLInputElement>('[data-role="row-checkbox"]');
+      for (const cb of Array.from(checkboxes)) {
+        const rowId = cb.getAttribute('data-annotation-id') ?? '';
+        cb.checked = ids.has(rowId);
+      }
+    }),
+  );
+
+  // Wire select-all checkbox
+  const onSelectAll = (): void => {
+    if (selectAllCheckbox.checked) {
+      const allIds = new Set(currentAnnotationsStore.list.get().map((a) => a.id));
+      selectedIds.set(allIds);
+    } else {
+      selectedIds.set(new Set());
+    }
+  };
+  selectAllCheckbox.addEventListener('change', onSelectAll);
+
+  // --- Filter bar input listeners (Mission B3) ----------------------------
+  let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const onFilterSearchInput = (): void => {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    filterDebounceTimer = setTimeout(() => {
+      const f = filterState.get();
+      filterState.set({ ...f, search: filterSearchInput.value.trim() });
+    }, 200);
+  };
+  filterSearchInput.addEventListener('input', onFilterSearchInput);
+
+  const onFilterSeverityChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, severity: filterSeveritySelect.value });
+  };
+  filterSeveritySelect.addEventListener('change', onFilterSeverityChange);
+
+  const onFilterStatusChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, status: filterStatusSelect.value });
+  };
+  filterStatusSelect.addEventListener('change', onFilterStatusChange);
+
+  const onFilterSortChange = (): void => {
+    const f = filterState.get();
+    filterState.set({ ...f, sort: filterSortSelect.value as SortMode });
+  };
+  filterSortSelect.addEventListener('change', onFilterSortChange);
   unsubs.push(
     viewersByAnnotation.subscribe(() => {
       renderCoViewers();
@@ -362,6 +501,31 @@ export function mountProjectView(
   unsubs.push(
     currentUserId.subscribe(() => {
       renderCoViewers();
+    }),
+  );
+
+  // Filter state subscription (Mission B3) — re-render list/kanban,
+  // sync DOM controls, persist to URL, and toggle clear-filters button.
+  unsubs.push(
+    filterState.subscribe((f) => {
+      // Sync DOM controls with the canonical state (handles programmatic
+      // resets from Clear Filters or initial URL parse).
+      if (filterSearchInput.value !== f.search) filterSearchInput.value = f.search;
+      if (filterSeveritySelect.value !== f.severity) filterSeveritySelect.value = f.severity;
+      if (filterStatusSelect.value !== f.status) filterStatusSelect.value = f.status;
+      if (filterSortSelect.value !== f.sort) filterSortSelect.value = f.sort;
+
+      // Show/hide clear-filters button.
+      const hasFilters =
+        f.search !== '' || f.severity !== '' || f.status !== '' || f.sort !== 'newest';
+      toggleHidden(clearFiltersBtn, !hasFilters);
+
+      // Persist to URL.
+      writeFilterToUrl(f);
+
+      // Rerender.
+      rerenderList();
+      rerenderKanban();
     }),
   );
   unsubs.push(
@@ -460,6 +624,13 @@ export function mountProjectView(
     for (const u of unsubs) u();
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
+    if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+    selectAllCheckbox.removeEventListener('change', onSelectAll);
+    filterSearchInput.removeEventListener('input', onFilterSearchInput);
+    filterSeveritySelect.removeEventListener('change', onFilterSeverityChange);
+    filterStatusSelect.removeEventListener('change', onFilterStatusChange);
+    filterSortSelect.removeEventListener('change', onFilterSortChange);
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
     cleanupEvents();
     teardownLayout();
     contentRoot.remove();
@@ -544,9 +715,16 @@ export function mountProjectView(
           },
         });
       }
+      showToast({
+        message: newStatus === 'resolved'
+          ? 'Annotation resolved'
+          : `Status changed to ${STATUS_LABELS[newStatus as StatusKey] ?? newStatus}`,
+        variant: 'success',
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update status';
       errorMessage.set(message);
+      showToast({ message, variant: 'error' });
     }
   }
 
@@ -574,6 +752,23 @@ export function mountProjectView(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update annotation';
+      errorMessage.set(message);
+    }
+  }
+
+  async function executeBulkAction(action: 'resolve' | 'in_progress' | 'delete'): Promise<void> {
+    const ids = Array.from(selectedIds.get());
+    if (ids.length === 0) return;
+    try {
+      await apiFetch(`/projects/${projectId}/annotations/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ ids, action }),
+      });
+      // Clear selection and refresh data
+      selectedIds.set(new Set());
+      await fetchData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Bulk action failed';
       errorMessage.set(message);
     }
   }
@@ -616,9 +811,17 @@ export function mountProjectView(
     for (const cleanup of rowCleanups) cleanup();
     rowCleanups = [];
 
-    const annotations = currentAnnotationsStore.list.get();
+    const allAnnotations = currentAnnotationsStore.list.get();
+    const annotations = applyFilterAndSort(allAnnotations, filterState.get());
+
+    // Show filter-empty state when filters are active but produce no results,
+    // but the unfiltered list is non-empty.
+    const hasActiveFilters = isFiltered(filterState.get());
+    const noFilterResults = hasActiveFilters && annotations.length === 0 && allAnnotations.length > 0;
+    toggleHidden(filterEmptyEl, !noFilterResults);
+
     if (annotations.length === 0) {
-      toggleHidden(listEmpty, false);
+      toggleHidden(listEmpty, !noFilterResults); // show generic empty only if no filter active
       toggleHidden(listTable, true);
       return;
     }
@@ -636,11 +839,33 @@ export function mountProjectView(
       const row = rowFragment.firstElementChild as HTMLElement;
       const sevSpan = row.querySelector<HTMLElement>('[data-slot="severity"]');
       if (sevSpan) {
+        // B7: Shape indicator alongside color for WCAG 1.4.1 (not color alone)
+        const shape = SEVERITY_SHAPES[a.severity as SeverityKey] ?? '';
+        sevSpan.textContent = `${shape} ${a.severity}`;
+        sevSpan.setAttribute('data-severity', a.severity);
         attr(
           sevSpan,
           'style',
           `font-weight: 500; color: ${SEVERITY_COLORS[a.severity as SeverityKey] ?? '#333'};`,
         );
+      }
+      // Wire row checkbox for bulk selection
+      const rowCheckbox = row.querySelector<HTMLInputElement>('[data-role="row-checkbox"]');
+      if (rowCheckbox) {
+        rowCheckbox.setAttribute('data-annotation-id', a.id);
+        rowCheckbox.checked = selectedIds.get().has(a.id);
+        const onCheck = (e: Event): void => {
+          e.stopPropagation();
+          const next = new Set(selectedIds.get());
+          if (rowCheckbox.checked) {
+            next.add(a.id);
+          } else {
+            next.delete(a.id);
+          }
+          selectedIds.set(next);
+        };
+        rowCheckbox.addEventListener('change', onCheck);
+        rowCleanups.push(() => rowCheckbox.removeEventListener('change', onCheck));
       }
       const onClick = (): void => {
         selectedAnnotationId.set(a.id);
@@ -652,7 +877,8 @@ export function mountProjectView(
   }
 
   function rerenderKanban(): void {
-    const annotations = currentAnnotationsStore.list.get();
+    const allAnnotations = currentAnnotationsStore.list.get();
+    const annotations = applyFilterAndSort(allAnnotations, filterState.get());
     const columns = kanbanSection.querySelectorAll<HTMLElement>(
       '[data-role="kanban-column"]',
     );
@@ -871,7 +1097,61 @@ export function mountProjectView(
 
     renderCaptureBuffers(annotation);
     renderScreenshot(annotation);
+    renderReplayButton(annotation);
     renderCoViewers();
+    void renderSuggestions(annotation.id);
+  }
+
+  /**
+   * Ensure the AI-suggestions panel exists in the detail section (created
+   * once, reused across selections) and return its <ul> list element.
+   */
+  function ensureSuggestionsList(): HTMLElement | null {
+    let panel = detailSection.querySelector<HTMLElement>('[data-role="ai-suggestions"]');
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.dataset.role = 'ai-suggestions';
+      panel.hidden = true;
+      const heading = document.createElement('h4');
+      heading.textContent = 'AI suggestions';
+      const list = document.createElement('ul');
+      list.dataset.role = 'ai-suggestions-list';
+      panel.append(heading, list);
+      detailSection.appendChild(panel);
+    }
+    return panel.querySelector<HTMLElement>('[data-role="ai-suggestions-list"]');
+  }
+
+  /**
+   * Fetch + render AI triage + smart suggestions for the selected annotation.
+   * Best-effort: any failure hides the panel and never interrupts the detail
+   * view. Guards against a stale response if the selection changes mid-fetch.
+   */
+  async function renderSuggestions(annotationId: string): Promise<void> {
+    const listEl = ensureSuggestionsList();
+    const panel = detailSection.querySelector<HTMLElement>('[data-role="ai-suggestions"]');
+    if (!listEl || !panel) return;
+    try {
+      const data = await getAnnotationSuggestions(annotationId);
+      if (selectedAnnotationId.get() !== annotationId) return; // superseded
+      const model = buildSuggestionsPanel(data);
+      if (!model.hasContent) {
+        toggleHidden(panel, true);
+        listEl.replaceChildren();
+        return;
+      }
+      listEl.replaceChildren(
+        ...model.items.map((item) => {
+          const li = document.createElement('li');
+          li.dataset.kind = item.kind;
+          li.textContent = item.text;
+          return li;
+        }),
+      );
+      toggleHidden(panel, false);
+    } catch {
+      toggleHidden(panel, true);
+    }
   }
 
   /**
@@ -1021,6 +1301,40 @@ export function mountProjectView(
       .catch(() => {
         /* No markup or fetch failed — leave the bitmap alone (Req 35.2 best-effort). */
       });
+  }
+
+  /** Show a "View Replay" button if the annotation has session replay data. */
+  function renderReplayButton(annotation: Annotation): void {
+    // Clean up any previous replay player
+    if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+    // Remove previous button/container
+    detailSection.querySelector('[data-role="replay-btn"]')?.remove();
+    detailSection.querySelector('[data-role="replay-container"]')?.remove();
+
+    if (!annotation.sessionReplay || annotation.sessionReplay.length === 0) return;
+
+    const btn = document.createElement('button');
+    btn.setAttribute('data-role', 'replay-btn');
+    btn.textContent = '▶ View Replay';
+    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:#4f46e5;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
+    const replayContainer = document.createElement('div');
+    replayContainer.setAttribute('data-role', 'replay-container');
+
+    const envPanel = detailSection.querySelector<HTMLElement>('[data-role="env-panel"]');
+    const insertBefore = envPanel ?? detailSection.querySelector('[data-role="assignment-panel"]');
+    if (insertBefore) {
+      insertBefore.parentElement!.insertBefore(replayContainer, insertBefore);
+      insertBefore.parentElement!.insertBefore(btn, replayContainer);
+    } else {
+      detailSection.appendChild(btn);
+      detailSection.appendChild(replayContainer);
+    }
+
+    btn.addEventListener('click', () => {
+      if (replayTeardown) { replayTeardown(); replayTeardown = null; }
+      btn.hidden = true;
+      replayTeardown = mountReplayPlayer(replayContainer, annotation.sessionReplay!);
+    });
   }
 
   function renderEnvironment(env: EnvironmentMetadata): void {
@@ -1288,4 +1602,114 @@ function paintToggle(button: HTMLButtonElement, active: boolean, side: 'left' | 
 function toggleHidden(el: HTMLElement, hidden: boolean): void {
   if (hidden) el.setAttribute('hidden', '');
   else el.removeAttribute('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Filter / Sort helpers (Mission B3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when any filter field differs from its default value,
+ * meaning the user has actively engaged the filter bar.
+ */
+function isFiltered(f: FilterState): boolean {
+  return f.search !== '' || f.severity !== '' || f.status !== '' || f.sort !== 'newest';
+}
+
+/**
+ * Apply the filter and sort criteria to an annotation list, returning a
+ * new array (never mutates the input). Runs entirely client-side.
+ */
+function applyFilterAndSort(
+  annotations: Annotation[],
+  f: FilterState,
+): Annotation[] {
+  let result = annotations;
+
+  // Text search — case-insensitive substring match on body.
+  if (f.search) {
+    const needle = f.search.toLowerCase();
+    result = result.filter(
+      (a) => (a.body ?? '').toLowerCase().includes(needle),
+    );
+  }
+
+  // Severity filter.
+  if (f.severity) {
+    result = result.filter((a) => a.severity === f.severity);
+  }
+
+  // Status filter.
+  if (f.status) {
+    result = result.filter((a) => a.status === f.status);
+  }
+
+  // Sort.
+  result = [...result].sort((a, b) => {
+    switch (f.sort) {
+      case 'newest':
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      case 'oldest':
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      case 'severity': {
+        const sa = SEVERITY_ORDER[a.severity] ?? 99;
+        const sb = SEVERITY_ORDER[b.severity] ?? 99;
+        return sa - sb;
+      }
+      case 'pin':
+        return a.pinNumber - b.pinNumber;
+      default:
+        return 0;
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Read filter state from URL query parameters. Called once at mount to
+ * restore any previously set filter state (e.g. shared links or browser
+ * back/forward).
+ */
+function readFilterFromUrl(): FilterState {
+  const params = new URLSearchParams(window.location.search);
+  const search = params.get('q') ?? '';
+  const severity = params.get('severity') ?? '';
+  const status = params.get('status') ?? '';
+  const sortRaw = params.get('sort') ?? 'newest';
+  const validSorts: SortMode[] = ['newest', 'oldest', 'severity', 'pin'];
+  const sort: SortMode = validSorts.includes(sortRaw as SortMode)
+    ? (sortRaw as SortMode)
+    : 'newest';
+  return { search, severity, status, sort };
+}
+
+/**
+ * Write the current filter state to the URL using `replaceState` so
+ * filters are bookmark-able without polluting browser history.
+ */
+function writeFilterToUrl(f: FilterState): void {
+  const params = new URLSearchParams(window.location.search);
+
+  // Only write non-default values to keep URLs clean.
+  if (f.search) params.set('q', f.search);
+  else params.delete('q');
+
+  if (f.severity) params.set('severity', f.severity);
+  else params.delete('severity');
+
+  if (f.status) params.set('status', f.status);
+  else params.delete('status');
+
+  if (f.sort !== 'newest') params.set('sort', f.sort);
+  else params.delete('sort');
+
+  const qs = params.toString();
+  const newUrl = qs
+    ? `${window.location.pathname}?${qs}`
+    : window.location.pathname;
+
+  // Use replaceState to avoid flooding the history stack with every
+  // keystroke / dropdown change.
+  window.history.replaceState(null, '', newUrl);
 }

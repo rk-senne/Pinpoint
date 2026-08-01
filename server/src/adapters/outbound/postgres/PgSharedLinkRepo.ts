@@ -15,6 +15,7 @@ interface SharedLinkRow {
   failed_attempts: number;
   locked_until: Date | string | null;
   created_at: Date | string;
+  allow_feedback: boolean;
 }
 
 export class PgSharedLinkRepo implements SharedLinkRepo {
@@ -27,6 +28,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
         password_hash: input.passwordHash ?? null,
         failed_attempts: 0,
         locked_until: null,
+        allow_feedback: input.allowFeedback ?? false,
       })
       .returning([
         'id',
@@ -35,6 +37,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
         'failed_attempts',
         'locked_until',
         'created_at',
+        'allow_feedback',
       ]);
     return this.mapRow(created);
   }
@@ -56,6 +59,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
     if (patch.passwordHash !== undefined) updates.password_hash = patch.passwordHash;
     if (patch.failedAttempts !== undefined) updates.failed_attempts = patch.failedAttempts;
     if (patch.lockedUntil !== undefined) updates.locked_until = patch.lockedUntil;
+    if (patch.allowFeedback !== undefined) updates.allow_feedback = patch.allowFeedback;
 
     const [updated] = await this.db<SharedLinkRow>('shared_links')
       .where({ id })
@@ -67,6 +71,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
         'failed_attempts',
         'locked_until',
         'created_at',
+        'allow_feedback',
       ]);
     return this.mapRow(updated);
   }
@@ -79,6 +84,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
       createdAt: toIso(row.created_at),
       failedAttempts: row.failed_attempts ?? 0,
       lockedUntil: row.locked_until ? toIso(row.locked_until) : null,
+      allowFeedback: row.allow_feedback ?? false,
     };
     return link;
   }

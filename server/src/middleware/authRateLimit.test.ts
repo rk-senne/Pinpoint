@@ -40,6 +40,19 @@ function makeLimiter() {
 
 function createApp() {
   const app = express();
+  // Determinism: under heavy parallel test load, supertest's ephemeral
+  // servers can surface the loopback client as IPv4 (`127.0.0.1`) for some
+  // requests and IPv6 (`::ffff:127.0.0.1` / `::1`) for others within the same
+  // test. Because the limiter keys on `ipKeyGenerator(req.ip)`, that split
+  // the (IP, email) bucket and made the "6th request is 429" assertions
+  // flaky. Trust a forwarded header and pin a single client IP so every
+  // request in a test shares one bucket — matching how the limiter behaves
+  // behind a real proxy, and keeping the per-email/per-endpoint intent intact.
+  app.set('trust proxy', true);
+  app.use((req, _res, next) => {
+    req.headers['x-forwarded-for'] = '198.51.100.10';
+    next();
+  });
   app.use(express.json());
   const limiter = makeLimiter();
   app.post('/auth/login', limiter, (_req, res) => res.status(200).json({ ok: true }));

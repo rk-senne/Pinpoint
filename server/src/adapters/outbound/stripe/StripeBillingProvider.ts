@@ -9,7 +9,7 @@ import type { BillingProvider, StripeEvent } from '../../../domain/billing/ports
 
 export class StripeBillingProvider implements BillingProvider {
   constructor(
-    private readonly stripe: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    private readonly stripe: any,
     private readonly webhookSecret: string,
   ) {}
 

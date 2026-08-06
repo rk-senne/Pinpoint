@@ -56,6 +56,7 @@ import { DispatchWebhook } from '../domain/webhook/usecases/webhooks.js';
 import { SocketIoEventBus } from '../adapters/outbound/socket/SocketIoEventBus.js';
 import { WebhookDispatchingEventBus } from '../adapters/outbound/socket/WebhookDispatchingEventBus.js';
 import { StripeBillingProvider } from '../adapters/outbound/stripe/StripeBillingProvider.js';
+import { PgBillingRepo } from '../adapters/outbound/postgres/PgBillingRepo.js';
 import { PinoLogger, pino, pinoHttp } from '../adapters/outbound/logger/PinoLogger.js';
 
 // --- inbound adapters ----------------------------------------------------
@@ -211,11 +212,12 @@ export function buildContainer(config: Config): Container {
     const Stripe = esmRequire('stripe');
     const stripeInstance = new Stripe(config.stripe.secretKey);
     const billingProvider = new StripeBillingProvider(stripeInstance, config.stripe.webhookSecret);
-    const billingDeps = { db, billingProvider, proPriceId: config.stripe.proPriceId };
+    const billingRepo = new PgBillingRepo(db);
+    const billingDeps = { billingRepo, billingProvider, proPriceId: config.stripe.proPriceId };
     const createCheckoutSessionUc = new CreateCheckoutSession(billingDeps);
     const handleStripeWebhookUc = new HandleStripeWebhook(billingDeps);
     const getBillingPortalUc = new GetBillingPortal(billingDeps);
-    const getUsageSummaryUc = new GetUsageSummary({ db });
+    const getUsageSummaryUc = new GetUsageSummary({ billingRepo });
     billingRouteDeps = {
       authMiddleware: (_req, _res, next) => next(),
       createCheckoutSession: createCheckoutSessionUc,

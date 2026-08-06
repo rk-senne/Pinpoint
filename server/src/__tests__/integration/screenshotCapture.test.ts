@@ -346,7 +346,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
       .set('Authorization', authHeader);
 
     expect(listRes.status).toBe(200);
-    const fetched = (listRes.body.annotations as Array<Record<string, unknown>>).find(
+    const fetched = (listRes.body.data as Array<Record<string, unknown>>).find(
       (a) => a.id === annotationId,
     );
     expect(fetched).toBeDefined();

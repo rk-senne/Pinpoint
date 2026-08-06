@@ -60,10 +60,19 @@ export function showToast(options: ToastOptions): void {
   const variant: ToastVariant = options.variant ?? 'info';
   const duration = options.duration ?? DEFAULT_DURATION;
 
-  // Enforce max toasts — remove oldest (first child) to make room.
+  // Enforce max toasts — evict the oldest (first child) *synchronously* to
+  // make room. dismissToast() only *schedules* removal (for the exit
+  // animation) via transitionend / a fallback setTimeout, so it never reduces
+  // container.children.length within this synchronous loop — using it here
+  // spins forever. Remove the node directly (and clear its pending timer).
   while (container.children.length >= MAX_TOASTS) {
-    const oldest = container.firstElementChild as HTMLElement | null;
-    if (oldest) dismissToast(oldest);
+    const oldest = container.firstElementChild as ToastElement | null;
+    if (!oldest) break;
+    if (oldest.__ppTimerId !== undefined) {
+      window.clearTimeout(oldest.__ppTimerId);
+      oldest.__ppTimerId = undefined;
+    }
+    oldest.remove();
   }
 
   // Build the toast element.

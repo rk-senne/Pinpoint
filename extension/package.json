@@ -8,11 +8,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:widget": "vite build --config vite.widget.config.ts",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "build:firefox": "vite build --outDir dist-firefox && node scripts/firefox-manifest.mjs dist-firefox"
   },
   "dependencies": {
     "@pinpoint/shared": "*",
+    "@webcomponents/custom-elements": "1.6.0",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {

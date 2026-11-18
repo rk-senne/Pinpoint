@@ -9,6 +9,8 @@ dist/
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 
 # Python virtual environment
 .venv/
@@ -30,3 +32,7 @@ coverage/
 
 # Docker
 *.log
+
+# Firefox extension build + local Terraform state
+extension/dist-firefox/
+infrastructure/terraform/.terraform/

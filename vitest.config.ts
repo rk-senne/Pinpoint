@@ -4,6 +4,10 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   resolve: {
     alias: {
+      // Deep imports used by the extension to keep zod out of its bundle
+      // (`@pinpoint/shared/dist/<mod>.js`) resolve to source under test.
+      // Must precede the bare-package alias, which matches by prefix.
+      '@pinpoint/shared/dist': fileURLToPath(new URL('./shared/src', import.meta.url)),
       '@pinpoint/shared': fileURLToPath(new URL('./shared/src/index.ts', import.meta.url)),
     },
   },

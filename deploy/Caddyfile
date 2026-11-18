@@ -1,0 +1,34 @@
+# Caddy = TLS terminator + same-origin router for Pinpoint.
+# Certificates are obtained and renewed automatically (Let's Encrypt) for
+# $DOMAIN; ports 80 and 443 must be reachable from the internet and DNS for
+# $DOMAIN must point at this host.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Strict-Transport-Security only; the dashboard sets its own CSP and the
+	# API sets its own headers.
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Everything the browser expects on the *same origin* goes to the API.
+	# /metrics and /health are intentionally NOT routed publicly.
+	@api path /api/* /socket.io/* /widget/*
+	@reviewFrame path /review/*/frame /review/*/frame/
+
+	handle @api {
+		reverse_proxy api:3001
+	}
+	handle @reviewFrame {
+		# Only the /frame document is the API's; /review/:linkId is an SPA route.
+		reverse_proxy api:3001
+	}
+
+	# Everything else is the dashboard SPA (vite preview, port 4173).
+	handle {
+		reverse_proxy dashboard:4173 {
+			# `vite preview` rejects Host headers other than localhost/IPs
+			# (DNS-rebinding guard). Caddy is the public edge, so present the
+			# upstream with a Host it accepts; the browser still sees $DOMAIN.
+			header_up Host localhost:4173
+		}
+	}
+}

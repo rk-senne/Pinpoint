@@ -39,6 +39,7 @@
     "docs:crash-course": "node scripts/build-crash-course.mts"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "4.1.12",
     "fast-check": "4.10.2",
     "jsdom": "29.1.1",
     "marked": "18.2.0",

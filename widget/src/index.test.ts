@@ -85,9 +85,13 @@ describe('widget — showMessage XSS safety', () => {
     root.querySelector<HTMLFormElement>('#pinpoint-form')!.dispatchEvent(
       new Event('submit', { bubbles: true, cancelable: true }),
     );
-    await flush();
-
-    const message = root.querySelector('.pinpoint-message');
+    // Response.json() needs a variable number of ticks across Node versions;
+    // wait for the rendered message instead of counting microtasks.
+    const message = await vi.waitFor(() => {
+      const found = root.querySelector('.pinpoint-message');
+      if (!found) throw new Error('message not rendered yet');
+      return found;
+    });
     expect(message).not.toBeNull();
     expect(message!.querySelector('img')).toBeNull();
     // The payload is present as text, not as a live element.
@@ -302,8 +306,13 @@ describe('widget — dialog accessibility + validation', () => {
     root.querySelector<HTMLFormElement>('#pinpoint-form')!.dispatchEvent(
       new Event('submit', { bubbles: true, cancelable: true }),
     );
-    await flush();
-    const alert = root.querySelector('.pinpoint-message.error')!;
+    // Response.json() needs a variable number of ticks across Node versions;
+    // wait for the rendered message instead of counting microtasks.
+    const alert = await vi.waitFor(() => {
+      const found = root.querySelector('.pinpoint-message.error');
+      if (!found) throw new Error('error message not rendered yet');
+      return found;
+    });
     expect(alert.getAttribute('role')).toBe('alert');
     expect(alert.textContent).toContain('Origin not allowed');
     expect(root.querySelector<HTMLTextAreaElement>('#pinpoint-description')!.value).toBe('checkout button broken');

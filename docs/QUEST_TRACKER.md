@@ -1,5 +1,8 @@
 # Pinpoint — Quest Tracker
 
+> **Superseded (Nov 2026):** AWS is no longer used. Deployment is the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); AWS/Terraform/ECS mentions below are historical.
+
+
 Check off each quest as you complete it. Each phase builds on the last.
 
 ---

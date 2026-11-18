@@ -1,236 +1,258 @@
 # Pinpoint — Deployment
 
-How to build, migrate, run and observe Pinpoint outside the local Compose
-stack. For the variable list see the
-[Environment variables reference](../README.md#10-environment-variables-reference);
-for the secrets an exposed deployment must provide see
+Pinpoint is provider-neutral: it runs anywhere you have a Linux host with
+Docker (Hetzner, DigitalOcean, any VPS, or on-prem). The reference setup is
+`deploy/docker-compose.prod.yml` — Postgres, Redis, a one-shot migration job,
+the API, the dashboard and Caddy (automatic HTTPS). For the variable list see
+the [Environment variables reference](../README.md#10-environment-variables-reference);
+for what an exposed deployment must provide see
 [Self-hosting](../README.md#self-hosting).
 
 ## 1. Images
 
-Two images, both built with the **repository root as the Docker context**
-(the Dockerfiles copy every workspace manifest so `npm ci` can resolve the
-lockfile):
+Two images, both built with the **repository root as the Docker context**:
 
 ```bash
 docker build -f server/Dockerfile    -t pinpoint-server    .
 docker build -f dashboard/Dockerfile -t pinpoint-dashboard .
 ```
 
-- `server/Dockerfile` builds `@pinpoint/shared`, `@pinpoint/server` and the
-  widget bundle. The runtime stage runs `node dist/index.js` on port 3001,
-  sets `NODE_ENV=production` and `WIDGET_DIST_DIR=/app/widget/dist`. The same
-  image runs migrations (`npm run migrate`, which loads the TypeScript
-  knexfile through `ts-node`, so dev dependencies are installed on purpose).
-- `dashboard/Dockerfile` builds the dashboard and serves it with
-  `vite preview` on port 4173, proxying to the API via `API_PROXY_TARGET`.
+CI (`.github/workflows/ci.yml`) builds both on every pull request (no push)
+and, on a push to `main` after lint/tests/e2e pass, publishes them to GitHub
+Container Registry:
 
-## 2. Required production secrets
+- `ghcr.io/<owner>/<repo>/server:<git-sha>` and `:latest`
+- `ghcr.io/<owner>/<repo>/dashboard:<git-sha>` and `:latest`
 
-The server refuses to boot (exit 1) when exposed — `NODE_ENV=production`,
-`PINPOINT_SELF_HOST=1`, or a non-loopback `HOST` without
-`PINPOINT_LOCAL_DEV=1` — and any of these is missing or a dev default:
-`JWT_SECRET` (≥ 32 bytes), `CORS_ORIGIN` (exact origin, not `*`),
-`DB_PASSWORD` (not `postgres`), `OAUTH_STATE_SECRET`,
-`INTEGRATION_ENCRYPTION_KEY` (32 bytes), `METRICS_TOKEN` (≥ 16 characters;
-PP-07 — without it `/metrics` is readable by anyone behind the proxy), and
-`COOKIE_INSECURE` must not be `true`. The full table, formats and generation
-commands are in the README's [Self-hosting](../README.md#self-hosting) section.
+The production compose file defaults to `ghcr.io/rk-senne/pinpoint/*:latest`;
+override with `PINPOINT_SERVER_IMAGE` / `PINPOINT_DASHBOARD_IMAGE` (pin the
+`<git-sha>` tag for image-exact deploys and rollbacks). If the packages are
+private, `docker login ghcr.io` on the host with a token that has
+`read:packages`. Without a registry, `up -d --build` builds from source.
 
-On AWS, `infrastructure/terraform/ecs.tf` delivers `DB_PASSWORD`,
-`JWT_SECRET`, `INTEGRATION_ENCRYPTION_KEY`, `OAUTH_STATE_SECRET` and
-`METRICS_TOKEN` as SSM `SecureString` parameters injected through the task
-definition's `secrets` block (Terraform variables `db_password`, `jwt_secret`,
-`integration_encryption_key`, `oauth_state_secret`, `metrics_token`; the task
-execution role is granted `ssm:GetParameters` on exactly those parameters).
+The server image runs `node dist/index.js` on port 3001 and also runs the
+migrations (`npm run migrate`, which needs the dev dependencies for `ts-node`
+— on purpose). The dashboard image serves the built bundle with `vite preview`
+on port 4173.
 
-### Behind a load balancer: `TRUST_PROXY`
+## 2. First deploy
 
-Express only trusts `X-Forwarded-For` when told to. With the default
-(`TRUST_PROXY` unset = `false`) every client behind an ALB shares the ALB's IP,
-so the per-IP rate limiters (`/api` general limiter, auth limiter) become one
-global bucket. Set `TRUST_PROXY=1` (one trusted hop — the ALB; the Terraform
-task definition does this). Use a hop count or an explicit subnet list, never
-`true`: that trusts any client-supplied header and the preflight rejects it on
-an exposed deployment. Leave it unset when the API is reached directly.
-
-Related knobs: `TENANT_RATE_LIMIT_MAX` (per-organisation requests/hour,
-default 1000) and `AUTH_RATE_LIMIT_IP_MAX` (per-IP auth-endpoint requests per
-minute, default 20 — raise for load/E2E runs from a single machine).
-
-## 3. Migrations
-
-Migrations are `knex migrate:latest` (`npm run migrate`). The `production`
-profile of `server/knexfile.ts` uses `DATABASE_URL` if set, otherwise the same
-`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` the API reads — which is
-what the ECS task definition provides.
-
-In CI the database sits in a private subnet that GitHub-hosted runners cannot
-reach, so migrations run **inside the VPC** via
-`infrastructure/scripts/ecs-migrate.sh`:
+Requirements: a Linux VM with Docker 24+ and Compose v2, a DNS record for your
+domain pointing at it, ports 80 and 443 open (80 is needed for the ACME
+challenge and the HTTP→HTTPS redirect), and an SMTP account.
 
 ```bash
-ECS_CLUSTER=<cluster> ECS_SERVICE=<service> ./infrastructure/scripts/ecs-migrate.sh
+git clone https://github.com/<owner>/<repo>.git /opt/pinpoint && cd /opt/pinpoint
+cp deploy/.env.production.example deploy/.env.production
+chmod 600 deploy/.env.production
+$EDITOR deploy/.env.production      # set DOMAIN, every secret, SMTP_*
 ```
 
-It reads the service's current task definition and network configuration,
-starts a one-off Fargate task from that task definition with the command
-overridden to `npm run migrate` (same image, env and secrets as the API),
-waits for it to stop, and exits non-zero unless the container's exit code
-is 0. Both deploy workflows run it after the image push and before
-`update-service`.
+Generate the secrets (commands are also in the example file):
 
-The deploy principal needs: `ecs:RunTask`, `ecs:DescribeTasks`,
-`ecs:DescribeServices`, `ecs:DescribeTaskDefinition`, `ecs:UpdateService`, and
-`iam:PassRole` on the task role and the task execution role (the script's `aws
-ecs wait tasks-stopped` call is covered by `ecs:DescribeTasks`), plus ECR push.
-Terraform does not create that principal (it is the IAM user/role behind the
-`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` repository secrets), but
-`infrastructure/terraform/ci_deploy.tf` defines the least-privilege managed
-policy `pinpoint-<env>-ci-deploy` (output `ci_deploy_policy_arn`) — attach it
-to that principal, or to a GitHub OIDC role, out of band. `RunTask` is scoped
-to the API task-definition family on the environment's cluster; `PassRole` is
-scoped to the two task roles and `iam:PassedToService=ecs-tasks.amazonaws.com`.
+```bash
+openssl rand -base64 48   # JWT_SECRET, OAUTH_STATE_SECRET (>= 32 bytes)
+openssl rand -base64 32   # INTEGRATION_ENCRYPTION_KEY (exactly 32 bytes)
+openssl rand -base64 24   # METRICS_TOKEN (>= 16 chars)
+openssl rand -hex 24      # DB_PASSWORD (not "postgres")
+```
 
-For Compose the `migrate` service does the same job before `api` starts.
+Start it (alias for brevity):
 
-## 4. The `:latest` tag coupling
+```bash
+dc() { docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production "$@"; }
+dc config -q                 # validates the file and that no secret is missing
+dc pull
+dc up -d
+dc ps
+curl -f https://$DOMAIN/health
+```
 
-`infrastructure/terraform/ecs.tf` pins the task definition's image to
-`<ecr-repo>:latest`. Consequences:
+`up -d` starts Postgres (named volume `db_data`, healthcheck), Redis, runs
+`migrate` to completion, then starts `api`, `dashboard` and `caddy`. Only
+Caddy publishes ports; everything else is on the private Compose network.
+Caddy obtains the certificate on first request (keep the `caddy_data` volume,
+or you will re-issue certificates and may hit rate limits). Register the first
+account in the dashboard; the verification email goes through your SMTP server.
 
-- Both deploy workflows push `:<git-sha>` **and** `:latest` (production also
-  pushes `:production`). If `:latest` is not updated,
-  `update-service --force-new-deployment` redeploys the previous image.
-- The migration task is started from the same task definition, so it also
-  pulls `:latest`; that is why migrate must run after the push.
-- Rolling back means re-pointing the service at the previous task-definition
-  revision (the production workflow does this), but `:latest` itself still
-  refers to the newest build. Pin the task definition to the `<git-sha>` tag
-  if you need rollbacks to be image-exact.
-- The ECR repository is declared with `image_tag_mutability = "MUTABLE"` so
-  the moving tags (`:latest`, `:production`) can be re-pushed on every deploy
-  (an `IMMUTABLE` repo rejected the second push of any tag). Every build is
-  still pushed under its immutable `<git-sha>` tag, and `scan_on_push` stays
-  enabled so each push is vulnerability-scanned. If you need image-exact
-  deploys, pin the task definition to the `<git-sha>` tag instead.
+How the stack satisfies the production preflight: `NODE_ENV=production` makes
+the API validate its config at boot and exit 1 if `JWT_SECRET`,
+`OAUTH_STATE_SECRET`, `INTEGRATION_ENCRYPTION_KEY`, `METRICS_TOKEN` or
+`DB_PASSWORD` are missing/weak, `CORS_ORIGIN` is `*`/unset, or
+`COOKIE_INSECURE` is set. `CORS_ORIGIN` and `APP_URL` are derived as
+`https://$DOMAIN`. The compose file sets none of the local-dev escape hatches
+(`COOKIE_INSECURE`, `PINPOINT_LOCAL_DEV`).
 
-## 5. Graceful shutdown
+### Reverse proxy and `TRUST_PROXY`
 
-On `SIGTERM` (or `SIGINT`) the API stops the notification, digest,
-integration-refresh and webhook workers (awaiting in-flight work), drops idle
-keep-alive connections, closes Socket.IO and the HTTP server, and gives
-in-flight requests up to **10 seconds** before force-closing remaining
-sockets. It then closes Redis and the database pool and exits 0; a failure in
-that sequence exits 1. `GET /health/live` returns 503 (`shutting_down`) once
-a signal has been received, so load balancers can stop routing before the
-drain ends. Set the orchestrator's stop timeout above 10 s (ECS default 30 s).
+The dashboard must be **same-origin with the API** (first-party cookies; the
+session cookie is `SameSite=Lax`; cookie-authenticated WebSockets are accepted
+only from the `CORS_ORIGIN` origin). `deploy/Caddyfile` routes:
 
-## 6. Health and metrics
+| Path | Upstream |
+|---|---|
+| `/api/*` | API (`/api/v1`) |
+| `/socket.io/*` | API — WebSocket upgrade is handled by Caddy automatically |
+| `/widget/*` | API — serves `pinpoint-widget.js` |
+| `/review/*/frame` | API — review-link proxy document. `/review/:linkId` itself is a dashboard SPA route |
+| everything else | dashboard (SPA) |
+
+`/metrics` and `/health*` are deliberately not routed publicly (use
+`docker compose exec api …` or Prometheus on the private network). If you use
+a different proxy (nginx, Traefik, a cloud load balancer) keep the same routing
+table.
+
+Express only trusts `X-Forwarded-For` when told to. With `TRUST_PROXY` unset
+every client behind the proxy shares the proxy's IP, so the per-IP rate
+limiters collapse into one global bucket. The compose file sets
+`TRUST_PROXY=1` (one trusted hop — Caddy). Use a hop count or a subnet list,
+never `true` (rejected by the preflight on an exposed deployment). Related
+knobs: `TENANT_RATE_LIMIT_MAX` (per organisation per hour, default 1000) and
+`AUTH_RATE_LIMIT_IP_MAX` (per IP per minute on auth endpoints, default 20).
+
+### Screenshot storage (optional)
+
+Screenshots use any S3-compatible object store (MinIO, Cloudflare R2,
+Backblaze B2, Wasabi, …). Set `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`,
+`S3_FORCE_PATH_STYLE` (usually `true` for self-hosted), `S3_PUBLIC_BASE_URL`
+and the access key pair `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` in
+`deploy/.env.production` (the compose file maps the key pair to the
+environment variables the S3 client library reads). Create the bucket first.
+
+## 3. Upgrades
+
+```bash
+cd /opt/pinpoint
+git pull                      # picks up compose/Caddyfile changes
+dc pull                       # new images (or: dc build, if building locally)
+dc run --rm migrate           # apply migrations first; abort here if it fails
+dc up -d                      # recreate changed services (migrate re-runs, no-op)
+dc ps && curl -f https://$DOMAIN/health
+```
+
+`up -d` also runs `migrate` before `api` (`service_completed_successfully`), so
+the explicit `run --rm migrate` step is just a way to see a failing migration
+before any container is replaced. Take a backup first (§4) if the release has
+migrations. **Rollback:** set `PINPOINT_SERVER_IMAGE` /
+`PINPOINT_DASHBOARD_IMAGE` to the previous `<git-sha>` tag and `dc up -d`.
+Migrations are forward-only; if a release added one, restore the pre-upgrade
+backup rather than only rolling the image back.
+
+On `SIGTERM` the API stops its workers (awaiting in-flight work), drops idle
+keep-alive connections, closes Socket.IO and the HTTP server, gives in-flight
+requests up to **10 seconds**, closes Redis and the database pool and exits 0
+(`GET /health/live` returns 503 once a signal was received). The compose file
+sets `stop_grace_period: 30s`, above that window.
+
+## 4. Backups and restore
+
+Everything stateful is in Postgres (plus Caddy's certificates and, if used, the
+object store). Back up Postgres with `pg_dump` in custom format from the
+running container:
+
+```bash
+mkdir -p /var/backups/pinpoint
+dc exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > /var/backups/pinpoint/pinpoint-$(date +%F).dump
+```
+
+Daily cron (root crontab; `%` must be escaped in crontab), keeping 14 days:
+
+```cron
+30 2 * * * cd /opt/pinpoint && docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > /var/backups/pinpoint/pinpoint-$(date +\%F).dump && find /var/backups/pinpoint -name '*.dump' -mtime +14 -delete
+```
+
+Copy the dumps off the host (rsync, rclone, your provider's volume snapshots) —
+a backup on the same disk is not a backup. Also keep `deploy/.env.production`
+somewhere safe: **`INTEGRATION_ENCRYPTION_KEY` is needed to read stored
+integration tokens and webhook secrets**, and losing `JWT_SECRET` only signs
+everyone out.
+
+Restore into an empty database (this **replaces** the data):
+
+```bash
+dc stop api dashboard caddy
+dc exec -T db sh -c 'dropdb -U "$POSTGRES_USER" --if-exists "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+dc exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' < /var/backups/pinpoint/pinpoint-YYYY-MM-DD.dump
+dc up -d
+```
+
+Test a restore on a scratch host before you need it.
+
+## 5. Health and metrics
 
 - `GET /health` and `GET /health/ready` — 200 with
   `{"status":"ok"|"degraded","checks":{…},"info":{…}}`; **503** when the
-  database check fails. `GET /health/live` is the liveness probe.
+  database check fails. `GET /health/live` is the liveness probe (the API
+  container's Docker healthcheck uses it).
 - `GET /metrics` — Prometheus text format (`prom-client`):
   `http_requests_total`, `http_request_duration_seconds` (labels `method`,
-  `route`, `status`, with `route` as the matched route pattern) and default
-  Node process metrics.
+  `route`, `status`; `route` is the matched route pattern) and default Node
+  process metrics.
   - With `METRICS_TOKEN` set, scrapers must send
-    `Authorization: Bearer $METRICS_TOKEN` (401 otherwise).
-  - Without it (local stacks only), only direct loopback / private-network
-    callers are served and any request carrying `X-Forwarded-For` / `Forwarded`
-    is refused (403). Behind a proxy the socket address is the proxy's, so the
-    boot preflight **now refuses to start an exposed deployment without
-    `METRICS_TOKEN`**; still do not publish `/metrics` through the public
-    listener. The Terraform task definition injects it from the `metrics_token`
-    variable (SSM `SecureString`, ≥ 24 characters).
+    `Authorization: Bearer $METRICS_TOKEN` (401 otherwise). The boot preflight
+    refuses to start an exposed deployment without it, because behind a proxy
+    every caller has a private peer address.
   - The `route` label is bounded: unmatched requests under `/api/v1/<area>/*`
     use a fixed allow-list of areas, everything else is `unmatched`.
-  - Prometheus: add the token under `authorization` in the scrape config
-    (see the commented block in `infrastructure/monitoring/prometheus.yml`).
 
-## 7. Serving the dashboard
+### Monitoring profile
 
-The dashboard must be **same-origin with the API** (cookies are first-party;
-the session cookie is `SameSite=Lax`, and cookie-authenticated WebSockets are
-accepted only from the `CORS_ORIGIN` origin). Either run the dashboard image
-with `API_PROXY_TARGET=http://<api-host>:3001`, or put a reverse proxy / load
-balancer in front of both and route these paths to the **API**; everything
-else goes to the dashboard's static files / SPA:
+```bash
+dc --profile monitoring up -d
+```
 
-| Path | Notes |
-|---|---|
-| `/api/*` | REST API (`/api/v1`) |
-| `/socket.io/*` | Socket.IO — must allow WebSocket upgrade |
-| `/widget/*` | Serves `pinpoint-widget.js` for the embeddable widget |
-| `/review/*/frame` | Review-link proxy document. Only the `/frame` suffix goes to the API; `/review/:linkId` itself is a dashboard SPA route |
+starts Prometheus (config: `deploy/prometheus.prod.yml`, scrapes `api:3001`
+with `METRICS_TOKEN` as the bearer token). It publishes **no host port**:
+reach it with `ssh -L 9090:localhost:9090 <host>` plus
+`docker compose … port`/`exec`, or add your own authenticated exposure through
+Caddy. The local dev stack's equivalent is `docker compose --profile monitoring up`
+with `infrastructure/monitoring/prometheus.yml` (Prometheus + Grafana on
+loopback).
 
-Set `CORS_ORIGIN` and `APP_URL` to the public dashboard origin (`https://…`).
-Do not set `COOKIE_INSECURE` on an HTTPS deployment.
+## 6. Pre-deploy checklist
 
-## 8. Pre-deploy checklist
+Do these in order the first time, and re-check items 3–6 before every deploy.
 
-Do these in order the first time you stand up an environment, and re-check
-items 3-6 before every deploy.
+1. **Host.** Linux VM with Docker 24+/Compose v2, a firewall allowing only
+   22 (ideally restricted), 80 and 443. Nothing else needs to be reachable.
+2. **DNS.** `$DOMAIN` has an A/AAAA record pointing at the host *before* the
+   first `up` (otherwise certificate issuance fails and retries).
+3. **Secrets.** `deploy/.env.production` exists with mode 600, is not in git,
+   and every value was generated (§2): `JWT_SECRET` ≥ 32 bytes,
+   `OAUTH_STATE_SECRET`, `INTEGRATION_ENCRYPTION_KEY` (32 bytes),
+   `METRICS_TOKEN` ≥ 16 chars, `DB_PASSWORD` ≠ `postgres`. No placeholder
+   (`REPLACE_ME…`) is left. `COOKIE_INSECURE` is **not** set.
+4. **Config validates.** `dc config -q` succeeds. Without a required secret the
+   container exits 1 at boot (`dc logs api`).
+5. **Mail.** `SMTP_*` point at a working relay and `SMTP_FROM` is an address
+   that relay is allowed to send from; new accounts cannot log in until they
+   verify by email.
+6. **Backups.** The cron job from §4 is installed, dumps leave the host, and a
+   restore has been tested.
+7. **CI is green.** `main` passes the `CI` workflow (lint/typecheck, unit tests
+   on Postgres, Playwright `e2e`), and the images you deploy exist in GHCR
+   (`docker manifest inspect ghcr.io/<owner>/<repo>/server:<sha>`).
+8. **After the deploy.** `curl -f https://$DOMAIN/health` is 200,
+   `GET /widget/pinpoint-widget.js` is served, `https://$DOMAIN/metrics` is
+   **not** served by the API (it falls through to the SPA), and
+   `dc exec api wget -qO- http://127.0.0.1:3001/metrics` returns 401 without the
+   token.
 
-1. **Terraform inputs.** Provide the sensitive variables via
-   `TF_VAR_*` or a git-ignored tfvars file (never in `envs/*.tfvars`):
-   `db_password` (not `postgres`), `jwt_secret` (>= 32 bytes,
-   `openssl rand -base64 48`), `integration_encryption_key`
-   (`openssl rand -base64 32`), `oauth_state_secret` (>= 32 chars,
-   `openssl rand -base64 48`), `metrics_token` (>= 24 chars,
-   `openssl rand -base64 32`). Terraform's variable validation rejects short
-   `oauth_state_secret` / `metrics_token` values.
-2. **Validate, then plan (never apply from CI).** From
-   `infrastructure/terraform/`: `terraform fmt -check -recursive`,
-   `terraform init`, `terraform validate`,
-   `terraform plan -var-file=envs/<env>.tfvars`. Review the plan; apply
-   manually.
-3. **Task secrets are wired.** Verify in the plan / console that the task
-   definition's `secrets` block has `DB_PASSWORD`, `JWT_SECRET`,
-   `INTEGRATION_ENCRYPTION_KEY`, `OAUTH_STATE_SECRET` and `METRICS_TOKEN`
-   (SSM `SecureString`: `/pinpoint/<env>/{db-password,jwt-secret,
-   integration-encryption-key,oauth-state-secret,metrics-token}`) and that the
-   execution role's `read-task-secrets` policy lists all five parameter ARNs.
-   Without `OAUTH_STATE_SECRET` the container exits 1 at boot (config
-   preflight), which the ECS circuit breaker turns into a rollback.
-4. **CI principal can migrate and deploy.** `ci_deploy_policy_arn`
-   (`ci_deploy.tf`) is attached to the principal behind the repository's AWS
-   secrets: it grants `ecs:RunTask` (migration task) and `iam:PassRole` for the
-   task + execution roles. Without `iam:PassRole` the migrate job fails with
-   `AccessDeniedException` before any task starts.
-5. **ECR tag mutability.** The repository is `MUTABLE` on purpose: the deploy
-   workflows re-push `:latest` (and `:production`) on every deploy, and the
-   task definition runs `:latest`. An `IMMUTABLE` repository rejects the second
-   push of any tag. Every build also gets an immutable `:<git-sha>` tag; confirm
-   with `aws ecr describe-repositories --repository-names pinpoint-api
-   --query 'repositories[0].imageTagMutability'` -> `"MUTABLE"`.
-6. **GitHub configuration.** Repository/environment secrets exist:
-   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
-   `ECR_REPOSITORY`, `ECS_CLUSTER`, `ECS_SERVICE` (and optionally
-   `SLACK_WEBHOOK_URL`). The `production` environment should require
-   reviewers. `main` is green on the `CI` workflow (lint/typecheck, unit
-   tests on Postgres, the Playwright `e2e` job) — staging deploys on every push
-   to `main` via `deploy-staging.yml`, which is the only staging deploy path.
-7. **Public DNS/TLS.** `domain_name` resolves to the ALB, the ACM certificate
-   (DNS validation) is issued, and `CORS_ORIGIN`/`APP_URL` (derived from
-   `domain_name`) match the origin users load the dashboard from. The dashboard
-   must be same-origin with the API (see §7).
-8. **After the deploy.** `curl -f https://<domain>/health` is 200 (the
-   workflow's smoke test), `GET /metrics` returns 401 without the bearer
-   token, and `GET /widget/pinpoint-widget.js` is served.
-
-## 9. Continuous integration
+## 7. Continuous integration
 
 `.github/workflows/ci.yml` runs on every push/PR to `main`:
 
 | Job | What it does |
 |---|---|
 | `lint-typecheck` | `npm run typecheck`, `npm run lint` |
-| `test` | Postgres 16 service container, migrations, full Vitest suite with coverage (`DB_*` point at the service) |
-| `e2e` | Postgres + Mailpit service containers; builds every workspace, migrates, starts the API (`server/dist`) and the Vite dashboard, seeds the verified `pro` account (`infrastructure/scripts/ci-seed-e2e.sh`), installs Chromium/Firefox/WebKit, runs the `api`, `browser`, `browser-firefox`, `browser-webkit` projects, then the MV3 `extension` project under `xvfb-run`. On failure it uploads the HTML reports, `test-results/` (traces/screenshots) and the API/dashboard logs as artifacts |
-| `build-docker` (main only) | Builds the server and dashboard images (no push) |
+| `test` | Postgres 16 service container, migrations, full Vitest suite with coverage |
+| `e2e` | Postgres + Mailpit service containers; builds every workspace, migrates, starts the API and the Vite dashboard, seeds the verified `pro` account (`infrastructure/scripts/ci-seed-e2e.sh`), installs Chromium/Firefox/WebKit, runs the `api`, `browser`, `browser-firefox`, `browser-webkit` projects, then the MV3 `extension` project under `xvfb-run`. On failure it uploads reports, traces and service logs as artifacts |
+| `docker-build` (PRs) | Builds the server and dashboard images; no push, read-only token |
+| `docker-publish` (push to `main`) | After the three jobs above pass, builds and pushes both images to `ghcr.io/<owner>/<repo>/{server,dashboard}` tagged `<git-sha>` and `latest`. The only job with `packages: write` |
 
-Third-party actions are pinned to full commit SHAs (tag in a trailing comment).
-Resolve a new one with `git ls-remote https://github.com/<owner>/<repo>
-refs/tags/<tag> 'refs/tags/<tag>^{}'` (use the `^{}` commit for annotated tags).
+There is no automatic deploy: pulling and restarting on the host (§3) is a
+deliberate, manual step. Third-party actions are pinned to full commit SHAs
+(tag in a trailing comment). Resolve a new one with
+`git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag> 'refs/tags/<tag>^{}'`
+(use the `^{}` commit for annotated tags).

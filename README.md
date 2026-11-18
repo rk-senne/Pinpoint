@@ -653,8 +653,8 @@ that is unset or empty falls back to the default.
 | `API_RATE_LIMIT_MAX` | `100` | server | Per-IP request ceiling for `/api/*` per 15 minutes (minimum 1). Raise it for E2E runs from one machine. |
 | `AUTH_RATE_LIMIT_IP_MAX` | `20` | server | Per-IP ceiling per minute on login/register/reset/verify endpoints, applied before the 5/min per (IP, email) and 30/15 min per-email limits. Raise it for E2E runs from one machine. |
 | `TENANT_RATE_LIMIT_MAX` | `1000` | server | Requests per hour per organization (identified from the verified session/bearer). |
-| `TRUST_PROXY` | `false` | server | Express `trust proxy` setting (`false`, `true`, a hop count like `1`, or a subnet list). Set to the number of proxies in front of the API (the AWS ALB task definition sets `1`) so rate limits and logs see the real client IP. `true` is rejected on exposed deployments. |
-| `METRICS_TOKEN` | unset | server, preflight | If set, `GET /metrics` requires `Authorization: Bearer $METRICS_TOKEN` (401 otherwise). **Required (≥ 16 characters) on exposed deployments — the boot preflight exits 1 without it** (PP-07: behind a reverse proxy/ALB every caller has a private peer address). If unset on a local stack, only direct loopback/private-network callers are served; any request carrying `X-Forwarded-For`/`Forwarded` is refused (403). Generate with `openssl rand -base64 24`. |
+| `TRUST_PROXY` | `false` | server | Express `trust proxy` setting (`false`, `true`, a hop count like `1`, or a subnet list). Set to the number of proxies in front of the API (a single reverse proxy such as the bundled Caddy needs `1`) so rate limits and logs see the real client IP. `true` is rejected on exposed deployments. |
+| `METRICS_TOKEN` | unset | server, preflight | If set, `GET /metrics` requires `Authorization: Bearer $METRICS_TOKEN` (401 otherwise). **Required (≥ 16 characters) on exposed deployments — the boot preflight exits 1 without it** (PP-07: behind a reverse proxy every caller has a private peer address). If unset on a local stack, only direct loopback/private-network callers are served; any request carrying `X-Forwarded-For`/`Forwarded` is refused (403). Generate with `openssl rand -base64 24`. |
 | `PINPOINT_SELF_HOST` | unset | server preflight | `1` forces the strict preflight regardless of `NODE_ENV` / `HOST`. |
 | `PINPOINT_LOCAL_DEV` | unset | server preflight | `1` asserts the stack is published on loopback only, so a `0.0.0.0` bind does not trigger the strict preflight. Never weakens `NODE_ENV=production` or `PINPOINT_SELF_HOST=1`. Set by Compose. |
 | `COOKIE_INSECURE` | unset (`true` in Compose) | server | `true` drops the `Secure` flag from session cookies for plain-HTTP local stacks. **Rejected by the preflight on any exposed deployment.** |
@@ -701,7 +701,7 @@ that is unset or empty falls back to the default.
 | `SMTP_USER` / `SMTP_PASSWORD` | unset | server | SMTP credentials (optional). |
 | `SMTP_FROM` | `no-reply@pinpoint.local` | server | From address. |
 | `S3_BUCKET` | `pinpoint` | server | Bucket for screenshots. |
-| `S3_REGION` | `AWS_REGION`, else `us-east-1` | server | Bucket region. |
+| `S3_REGION` | `us-east-1` (the SDK's `AWS_REGION` is also honoured) | server | Bucket region (`auto` for Cloudflare R2). |
 | `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | unset / `false` / unset | server | S3-compatible storage (MinIO, etc.) options. |
 | `S3_KEY_PREFIX` | `annotations/screenshots` | server | Object key prefix. |
 
@@ -1027,11 +1027,12 @@ On an exposed deployment the server exits with code 1 if:
 | `METRICS_TOKEN` | yes | string (≥ 16 chars) | Bearer token for `GET /metrics`. Required on exposed deployments (PP-07); `openssl rand -base64 24`. |
 | `COOKIE_INSECURE` | no | — | Leave unset on any exposed deployment. |
 
-On AWS (`infrastructure/terraform/`) these are delivered to the ECS task as
-SSM `SecureString` parameters and injected via the task definition's
-`secrets` block — `DB_PASSWORD`, `JWT_SECRET`, and
-`INTEGRATION_ENCRYPTION_KEY` (see `variables.tf` / `ecs.tf`). For image
-builds, CI migrations, graceful shutdown and reverse-proxy requirements see
+`deploy/docker-compose.prod.yml` is a ready-made, provider-neutral production
+stack (Postgres, Redis, migrations, API, dashboard and Caddy with automatic
+HTTPS) that sets `NODE_ENV=production` and reads every secret above from
+`deploy/.env.production` (template: `deploy/.env.production.example`, with the
+generation commands). For first deploy, upgrades, backups/restore, monitoring,
+the pre-deploy checklist and reverse-proxy requirements see
 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
 ## Troubleshooting

@@ -15,10 +15,10 @@
 > - The dashboard read the wrong response shape in 4 places; the Send-to menu crashed on a TDZ error.
 > - Realtime and mutations broke after a page reload (CSRF/bearer held only in memory).
 > - The review iframe recursively framed the SPA and was blocked by `X-Frame-Options: DENY`.
-> - SIGTERM exited 1 without closing the DB; migrations could not connect in production (`DATABASE_URL`-only) and CI never ran them inside the VPC.
+> - SIGTERM exited 1 without closing the DB; migrations could not connect in production (`DATABASE_URL`-only) and CI never ran them inside the private network.
 > - Webhook queue double-send; heatmap SQL; SSRF IPv6 bypass.
 >
-> Still open: the ECR repo is `IMMUTABLE` while deploys push `:latest`, and `ecs.tf` defines no `OAUTH_STATE_SECRET` secret (see `docs/DEPLOYMENT.md`).
+> Deployment moved off AWS: the Terraform/ECS/ECR path was removed in favour of the provider-neutral Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); images ship to GHCR, and `OAUTH_STATE_SECRET` is a required variable there.
 
 > **Earlier status (2026-11-13):** all missions A1–A9, B1–B5, C1–C5 and GAP 1–8 implemented.
 > Verified with a real `tsc --build` typecheck, lint, full build, and 1967 tests green ×3 against a real Postgres (0 skipped). All 42 migrations apply, roll back fully, and re-apply.
@@ -86,7 +86,7 @@ Two defensible wedges no/few competitors have: **safe self-host** and an **MCP s
 - **A2 — Dedicated `/api/v1/widget/*` CORS** (M). Credential-free CORS reflecting `Origin` only on per-key `allowed_origins`; global strict cookie/CSRF policy untouched. NEW `middleware/widgetCors.ts`. Dep: A1.
 - **A3 — Redis fail-closed widget rate limit + per-key daily quota** (M). Replace in-memory 5/min. Files: `tenantRateLimit.ts`, NEW `widgetRateLimit.ts`, `planLimits.ts`. Dep: A1.
 - **A4 — Encrypt integration tokens at rest; never log** (M). Encrypt access/refresh tokens + `clientSecret`; pino redaction. Dep: precedes A5b.
-- **A5a — SSRF egress guard on every outbound fetch** (M). Deny private/link-local/loopback + IMDS; https-only; DNS-pin. NEW `services/egressGuard.ts`; applied in `DispatchWebhook`, `integrationTokenRefresh`; ECS IMDSv2 hop-limit 1. Unblocks all outbound.
+- **A5a — SSRF egress guard on every outbound fetch** (M). Deny private/link-local/loopback + IMDS; https-only; DNS-pin. NEW `services/egressGuard.ts`; applied in `DispatchWebhook`, `integrationTokenRefresh`; on cloud hosts also block the instance-metadata endpoint at the host (IMDSv2 hop-limit 1 where available). Unblocks all outbound.
 - **A5b — standard-webhooks signing + durable queued dispatch** (L). Sign `{msgId}.{ts}.{body}`, emit standard headers, `whsec_` secret, move dispatch onto the notification-queue worker so SIGTERM mid-backoff can't drop deliveries. Deps: A5a, A4.
 - **A7 — Finish guest / no-login reviewer access** (M). Redis per-link quota, unverified-author marking, ≥128-bit non-enumerable `linkId`, scoped/expiring reply tokens, canonical error envelope. Deps: A3, B1.
 - **A9 — Self-host preflight independent of NODE_ENV** (M). Run config preflight on any non-localhost bind; reject weak JWT, `CORS_ORIGIN=*`, insecure cookies, default DB password, missing signing secrets. Dep: A5b.

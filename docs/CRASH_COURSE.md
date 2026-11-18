@@ -175,7 +175,7 @@ The dashboard adapts to small screens. The phone view is meant for reviewing, wi
 | "Tell our other systems." | **Webhooks**: signed notifications to your own endpoints. Deliveries are queued and retried. |
 | "Use our task tracker." | One-click send to Jira, Linear, GitHub, ClickUp or Asana. |
 | "Let scripts and AI agents help." | **API keys** for automation, and an **MCP server**. MCP is a standard way for AI assistants to use tools. Here an agent can list feedback, read it with its diagnostics, change status and add comments. |
-| "Host it ourselves." | Self-host with Docker (`docker compose up`) or on AWS using the Terraform files in the repo. The server refuses to start in an exposed setup if secrets are weak. |
+| "Host it ourselves." | Self-host with Docker: `docker compose up` locally, or `deploy/docker-compose.prod.yml` on any Linux VPS (Caddy provides automatic HTTPS). The server refuses to start in an exposed setup if secrets are weak. |
 | "Our IT uses a reverse proxy." | The dashboard and API share one web address, so it sits behind a standard proxy or load balancer. `docs/DEPLOYMENT.md` lists the routes. |
 
 ---
@@ -202,7 +202,7 @@ This is based on our own tests and audits. There are **no formal certifications*
 As of 15 Nov 2026:
 
 - **2,468 automated unit and integration tests pass** (225 test files, run twice), many against a real PostgreSQL database rather than a stand-in.
-- **184 end-to-end tests pass** (API, dashboard, widget, and the actual Chrome extension loaded into Chromium). The dashboard tests run on Chromium, Firefox and WebKit, the engine behind Safari.
+- **211 end-to-end tests pass** (API, dashboard, widget, and the actual Chrome extension loaded into Chromium). The dashboard tests run on Chromium, Firefox and WebKit, the engine behind Safari.
 - **Accessibility scans** (axe) run on every dashboard page at desktop and phone sizes, and on the widget: zero critical or serious findings, down from 74 at the start of the pass.
 - **Production-image simulation.** The production Docker image is started and checked: migrations, health check, widget file, protected metrics endpoint, and a clean shutdown.
 - **UI pass.** The latest pass fixed about 40 interface bugs and produced the 72+ screenshots used here.
@@ -240,20 +240,20 @@ Pricing: `docs/BUSINESS_ANALYSIS.md` (a May 2026 draft) proposes Free, Pro $19, 
 Plain list of what is not finished:
 
 - **Integrations tested against simulated providers only.** No live Jira, GitHub, Linear, ClickUp or Asana accounts have been used. Run a pilot against real accounts before relying on them.
-- **Extension sign-in token storage is an open decision.** It sits in Chrome's local extension storage. Moving it to session storage is safer but would require signing in again after each browser restart.
+- **Extension sign-in stays signed in across browser restarts.** The token is kept in the extension's own storage, which web pages can't read; sessions expire after at most 30 days and can be revoked from the server at any time.
 - **Screenshot storage needs S3-compatible storage configured.** Without it, screenshot upload fails with a visible error. You can see this in the extension screenshots, which were taken on a local stack with no storage set up.
-- **Chrome extension only.** Firefox and Safari extensions are not built. The widget and review links work in any browser.
+- **Firefox extension is early.** It builds and loads in Firefox without errors, but hasn't had a full hands-on test. There is no Safari extension. The widget and review links work in any browser.
 - **Review links can't show every site.** Sites that refuse to be framed, or that need a login to render, won't display.
-- **Open deployment items.** `docs/ENHANCEMENT_ROADMAP.md` lists two: the image repository setting for AWS (`:latest` re-pushes) and an `OAUTH_STATE_SECRET` in the Terraform. `docs/DEPLOYMENT.md` suggests the first may already be fixed, so check both before an AWS rollout.
+- **Deployment.** The team deploys with the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); images are published to GitHub Container Registry by CI. Deploys are manual (pull, migrate, `up -d`), so check the pre-deploy checklist before each rollout.
 - **Some pages are thin.** Workflow Automation and Client Portals are built but were empty in the demo data.
-- **Uncommitted work.** All of this sits on a feature branch that has not been merged or released.
+- **Not released yet.** All of this sits on a feature branch awaiting review and merge.
 - **No certifications.** There is no SOC 2 or ISO attestation and no third-party penetration test report.
 
 ---
 
 ## 9. FAQ
 
-**What does it cost to run, who hosts the data, and how long does it take to install?** Pinpoint is self-hosted, so you pay only for your own infrastructure. It needs a PostgreSQL database and a small Node service, plus optional Redis, email (SMTP) and S3-compatible storage for screenshots. For AWS costs, use AWS's own pricing calculator, as I haven't estimated them. Your data stays on infrastructure you control, in your database and your storage bucket. The Pinpoint team doesn't see it. On a laptop with Docker, `docker compose up` starts the database, API, dashboard and a catch-all mailbox in one command. I haven't timed it, but the first run builds images, so allow several minutes. A production setup needs real secrets and a domain, and the repo's deployment guide covers it. A site owner adds feedback to a website by pasting one snippet, which takes minutes.
+**What does it cost to run, who hosts the data, and how long does it take to install?** Pinpoint is self-hosted, so you pay only for your own infrastructure. It needs a PostgreSQL database and a small Node service, plus optional Redis, email (SMTP) and S3-compatible storage for screenshots. For hosting costs, use your provider's own pricing calculator, as I haven't estimated them. Your data stays on infrastructure you control, in your database and your storage bucket. The Pinpoint team doesn't see it. On a laptop with Docker, `docker compose up` starts the database, API, dashboard and a catch-all mailbox in one command. I haven't timed it, but the first run builds images, so allow several minutes. A production setup needs real secrets and a domain, and the repo's deployment guide covers it. A site owner adds feedback to a website by pasting one snippet, which takes minutes.
 
 ---
 

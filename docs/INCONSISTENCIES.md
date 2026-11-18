@@ -1,5 +1,8 @@
 # Pinpoint — Inconsistencies & Technical Debt
 
+> **Superseded (Nov 2026):** AWS is no longer used. Deployment is the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); AWS/Terraform/ECS mentions below are historical.
+
+
 Quick-reference for moonbase agents. These are things that are broken, contradictory, or incomplete in the current codebase.
 
 > **Status update — 2026-11-15 (branch `feat/enhancement-roadmap`):** The

@@ -9,6 +9,45 @@ columns (Req 11), and the shared-link lockout state machine (Req 15).
 > drives E2E only** — Vitest covers unit, property, and integration tests
 > across `shared/`, `server/`, `dashboard/`, and `extension/`.
 
+
+## Running against a real stack
+
+The suite has three Playwright projects:
+
+| Project | What it drives | Needs |
+|---|---|---|
+| `api` | REST API contracts (`*.spec.ts`) | API |
+| `browser` | The real dashboard UI in Chromium (`browser/*.spec.ts`) | API + dashboard (`FL_APP_URL`) |
+| `extension` | The built MV3 extension loaded into Chromium (`browser/extension.spec.ts`) | API + `npm run build --workspace extension` |
+
+One-time setup for a local or CI stack:
+
+```bash
+# 1. API with a raised per-IP ceiling (one machine runs the whole suite)
+API_RATE_LIMIT_MAX=5000 npm start --workspace server
+# 2. Seed a verified account (see "Seeding the account" below), then run:
+FL_API_URL=http://127.0.0.1:3001 FL_APP_URL=http://localhost:5173 \
+FL_E2E_EMAIL=e2e-seed@example.test FL_E2E_PASSWORD='P@ssw0rd-E2E-1!' \
+  npm test --workspace e2e
+```
+
+### Seeding the account
+
+The repo does not ship a seeding script. Create the account through the
+normal flow: `POST /api/v1/auth/register`, verify the email (the link is in
+Mailpit at http://localhost:8025 on the Compose stack, or call
+`POST /api/v1/auth/verify-email/:token`), then log in once — the first login
+of a verified user provisions their personal org. The free plan caps projects
+at 2, so set that org's `organizations.plan` to `pro` in the database before a
+full run. Use the same email/password for `FL_E2E_EMAIL` / `FL_E2E_PASSWORD`.
+
+`global-setup.ts` logs the seed account in once per run (the API allows
+5 auth attempts per minute per IP+email) and shares that session with every
+spec. Extensions only load in Playwright's bundled Chromium (`channel:
+'chromium'`); branded Chrome 137+ ignores `--load-extension`. Set
+`PINPOINT_CHROMIUM_PATH` to force a specific Chromium executable for the
+`browser` project.
+
 ## Prerequisites
 
 1. The full stack is up:
@@ -33,7 +72,8 @@ columns (Req 11), and the shared-link lockout state machine (Req 15).
    npm install --workspace e2e
    ```
    The CI workflow installs and caches Playwright browsers automatically;
-   for the API-only suite that ships today no browser binary is needed.
+   the `api` project needs no browser binary, while `browser` and
+   `extension` need Chromium (`npx playwright install chromium`).
 
 ## Run
 
@@ -56,11 +96,14 @@ stack is running" requirement.
 
 ## What's covered
 
-| Spec | Requirements | Notes |
+| Spec | Project | Notes |
 |---|---|---|
-| `auth.spec.ts` | 1.1, 18.1, 18.3, 18.4, 18.5, 20.4 | register → unverified login is rejected; seeded verified account passes the cookie+CSRF gauntlet |
-| `projects.spec.ts` | 23.1, 11.3, 11.4, 18.1, 18.4 | multi-URL project creates one Page row per URL; CSV export emits the browser/OS columns |
-| `sharedLinkLockout.spec.ts` | 15.3, 15.4, 18.1, 18.4 | three wrong attempts → 423 + `Retry-After` |
+| `auth.spec.ts` | api | register → unverified login is rejected; seeded verified account passes the cookie+CSRF gauntlet (Req 1.1, 18.x, 20.4) |
+| `projects.spec.ts` | api | multi-URL project creates one Page row per URL; CSV export emits the browser/OS columns (Req 23.1, 11.3, 11.4) |
+| `sharedLinkLockout.spec.ts` | api | three wrong attempts → 423 + `Retry-After` (Req 15.3, 15.4) |
+| `annotations.spec.ts`, `teams.spec.ts`, `notifications.spec.ts`, `webhooks.spec.ts`, `billing.spec.ts` | api | REST contracts for those areas |
+| `browser/dashboard.spec.ts`, `onboarding.spec.ts`, `sendto.spec.ts`, `review.spec.ts`, `widget.spec.ts` | browser | real dashboard UI in Chromium (review-link frame, widget, Send-to menu, onboarding) |
+| `browser/extension.spec.ts` | extension | loads the built `extension/dist/` (MV3) into Chromium and signs in with the seed account |
 
 The 15-minute "lock expires → success" leg of the lockout FSM is covered
 by the property-based test in

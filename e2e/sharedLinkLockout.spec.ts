@@ -23,7 +23,7 @@
  * E2E run is impractical, so this spec focuses on the lockout entry
  * transition.
  */
-import { expect, test } from '@playwright/test';
+import { expect, request as requestFactory, test } from '@playwright/test';
 
 import { loginExisting } from './helpers/auth.js';
 import { withTemporaryProject } from './helpers/projects.js';
@@ -74,11 +74,19 @@ test.describe('shared link lockout', () => {
         expect(sharedLink.hasPassword).toBe(true);
 
         // 3. Three wrong-password attempts. The verify endpoint is
-        //    unauthenticated and CSRF-exempt, so no headers are needed.
+        //    unauthenticated and CSRF-exempt — but the seed login attaches an
+        //    `fl_session` cookie to the shared `request` context, and any
+        //    mutating POST carrying that cookie without an `X-CSRF-Token`
+        //    header is rejected by the CSRF middleware (403) BEFORE the
+        //    verify handler runs. Model a real anonymous visitor with a
+        //    fresh, cookie-free context so the lockout contract is exercised.
+        const anon = await requestFactory.newContext();
         const verifyUrl = `${API_BASE_URL}/api/v1/shared/${sharedLink.id}/verify`;
-        const expectedRemaining = [2, 1, 0];
-        for (const remaining of expectedRemaining) {
-          const wrong = await request.post(verifyUrl, {
+        // Req 15.2: the 3rd consecutive failure itself locks the link, so
+        // attempts 1–2 return 401 INVALID_PASSWORD with the countdown and
+        // attempt 3 returns 423 LOCKED.
+        for (const remaining of [2, 1]) {
+          const wrong = await anon.post(verifyUrl, {
             data: { password: 'definitely-wrong' },
           });
           expect(wrong.status()).toBe(401);
@@ -86,10 +94,14 @@ test.describe('shared link lockout', () => {
           expect(body.error?.code).toBe('INVALID_PASSWORD');
           expect(body.error?.details?.attemptsRemaining).toBe(remaining);
         }
+        const third = await anon.post(verifyUrl, {
+          data: { password: 'definitely-wrong' },
+        });
+        expect(third.status()).toBe(423);
 
-        // 4. The next attempt — even with the correct password — must
-        //    be locked with 423 + Retry-After (Req 15.4).
-        const lockedRes = await request.post(verifyUrl, {
+        // 4. While locked, even the CORRECT password is rejected with
+        //    423 + Retry-After (Req 15.4).
+        const lockedRes = await anon.post(verifyUrl, {
           data: { password },
         });
         expect(lockedRes.status()).toBe(423);
@@ -102,6 +114,7 @@ test.describe('shared link lockout', () => {
 
         const lockedBody = await lockedRes.json();
         expect(lockedBody.error?.code).toBe('LOCKED');
+        await anon.dispose();
       },
     );
   });

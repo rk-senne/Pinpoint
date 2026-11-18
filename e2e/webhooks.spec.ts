@@ -32,7 +32,7 @@ test.describe('webhooks', () => {
       headers: session.mutatingHeaders(),
       data: {
         url: 'https://example.com/webhook-receiver',
-        events: ['annotation.created', 'annotation.resolved'],
+        events: ['annotation.created', 'annotation.status_changed'],
       },
     });
 
@@ -49,7 +49,7 @@ test.describe('webhooks', () => {
     // --- List webhooks ---
     const listRes = await request.get(`${API_BASE_URL}/api/v1/webhooks`);
     expect(listRes.ok()).toBe(true);
-    const { webhooks } = await listRes.json();
+    const { data: webhooks } = await listRes.json();
     expect(webhooks.some((w: { id: string }) => w.id === webhook.id)).toBe(true);
 
     // --- Delete webhook ---
@@ -61,7 +61,7 @@ test.describe('webhooks', () => {
 
     // Verify removed
     const afterRes = await request.get(`${API_BASE_URL}/api/v1/webhooks`);
-    const { webhooks: remaining } = await afterRes.json();
+    const { data: remaining } = await afterRes.json();
     expect(remaining.some((w: { id: string }) => w.id === webhook.id)).toBe(false);
   });
 });

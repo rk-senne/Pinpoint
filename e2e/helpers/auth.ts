@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { SESSION_META, STORAGE_STATE } from '../global-setup.js';
 /**
  * Authenticated-API helpers.
  *
@@ -68,6 +70,12 @@ export async function loginExisting(
   email: string,
   password: string,
 ): Promise<{ session: AuthSession; user: LoginResult['user']; token: string }> {
+  // The seeded account's session is created ONCE by global-setup.ts and
+  // loaded into every request context via `storageState`, so the per-spec
+  // login doesn't trip the API's 5-per-minute auth rate limit (Req 19.1).
+  const seeded = await seedSession(request, email);
+  if (seeded) return seeded;
+
   const loginRes = await request.post(`${API_BASE_URL}/api/v1/auth/login`, {
     data: { email, password },
   });
@@ -102,6 +110,53 @@ export async function loginExisting(
   };
 
   return { session, user: body.user, token: body.token };
+}
+
+/**
+ * Session for the seed account written by global-setup.ts, if any. The
+ * cached cookies are added ONLY to the request context that asked to be
+ * logged in — specs that model anonymous visitors keep an empty jar.
+ *
+ * Playwright's APIRequestContext has no public addCookies(), so the cookies
+ * are attached per call via a scoped Cookie header on this context only.
+ */
+async function seedSession(
+  request: APIRequestContext,
+  email: string,
+): Promise<{ session: AuthSession; user: LoginResult['user']; token: string } | null> {
+  let meta: { email: string; body: LoginResult } | null = null;
+  let state: { cookies: Array<{ name: string; value: string }> } | null = null;
+  try {
+    meta = JSON.parse(readFileSync(SESSION_META, 'utf8'));
+    state = JSON.parse(readFileSync(STORAGE_STATE, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!meta || !state || meta.email !== email.toLowerCase()) return null;
+  const cookieHeader = state.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+  attachCookies(request, cookieHeader);
+  const { body } = meta;
+  const session: AuthSession = {
+    csrfToken: body.csrfToken,
+    mutatingHeaders(extra: Record<string, string> = {}): Record<string, string> {
+      return { 'Content-Type': 'application/json', 'X-CSRF-Token': body.csrfToken, ...extra };
+    },
+  };
+  return { session, user: body.user, token: body.token };
+}
+
+function attachCookies(request: APIRequestContext, cookieHeader: string): void {
+  const ctx = request as APIRequestContext & { __ppSeedCookies?: boolean };
+  if (ctx.__ppSeedCookies) return;
+  for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'head', 'fetch'] as const) {
+    const original = (ctx as any)[verb].bind(ctx);
+    (ctx as any)[verb] = (url: string, options: Record<string, any> = {}) => {
+      const headers = { ...(options.headers ?? {}) };
+      if (!Object.keys(headers).some((k) => k.toLowerCase() === 'cookie')) headers.Cookie = cookieHeader;
+      return original(url, { ...options, headers });
+    };
+  }
+  ctx.__ppSeedCookies = true;
 }
 
 /**

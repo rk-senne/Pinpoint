@@ -288,7 +288,7 @@ function generateCsv(
       a.page_url ?? '',
       a.guideline_name ?? '',
       a.assignee_id ?? '',
-      a.due_date ? (typeof a.due_date === 'string' ? a.due_date : a.due_date.toISOString()) : '',
+      a.due_date ? dueDateOnly(a.due_date) : '',
       env.browserFamily,
       env.browserVersion ?? '',
       env.osFamily,
@@ -299,9 +299,31 @@ function generateCsv(
   });
 
   const csvLines = [headers, ...rows].map((row) =>
-    row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','),
+    row.map((cell) => encodeCsvCell(cell)).join(','),
   );
   return csvLines.join('\n');
+}
+
+/**
+ * Encode a single CSV cell safely against both CSV-structure breakage and
+ * spreadsheet formula injection (CWE-1236).
+ *
+ * Formula injection: a cell whose first character is one of `= + - @` or a
+ * control char (TAB `\t`, CR `\r`) is interpreted by Excel/Sheets/LibreOffice
+ * as a formula when the file is opened — e.g. `=cmd|' /C calc'!A0`. We neutralise
+ * it by prefixing a single quote, which forces the spreadsheet to treat the
+ * cell as literal text while leaving the visible value intact after import.
+ *
+ * CSV structure: the (possibly prefixed) value is then wrapped in double
+ * quotes with inner quotes doubled, so embedded commas, quotes, and newlines
+ * never break the row/column grid.
+ */
+export function encodeCsvCell(value: unknown): string {
+  let s = String(value);
+  if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function parseEnvironment(raw: unknown): ParsedEnvironment {
@@ -339,4 +361,12 @@ function capitalize(s: string): string {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+}
+
+/** `date` columns arrive as 'YYYY-MM-DD'; a stray Date is read in local time (never toISOString, which shifts by the UTC offset). */
+export function dueDateOnly(value: string | Date): string {
+  if (typeof value === 'string') return value.slice(0, 10);
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
 }

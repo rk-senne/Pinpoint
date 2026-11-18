@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createFeedbackRoutes, type FeedbackRouteDeps } from './feedback.routes.js';
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
-const PROJECT_ID = 'b0000000-0000-0000-0000-000000000001';
-const ANNOTATION_ID = 'c0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-4000-8000-000000000002';
+const PROJECT_ID = 'b0000000-0000-4000-8000-000000000001';
+const ANNOTATION_ID = 'c0000000-0000-4000-8000-000000000001';
+const PAGE_ID = 'd0000000-0000-4000-8000-000000000001';
 
 function fakeAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
   (req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
@@ -20,13 +21,20 @@ function makeMockDb(opts: { projectOwned?: boolean; annotationOwned?: boolean } 
     if (table === 'projects') {
       const b: any = {};
       b.where = vi.fn().mockReturnValue(b);
-      b.first = vi.fn().mockResolvedValue(projectOwned ? { id: PROJECT_ID, org_id: ORG_ID } : undefined);
+      b.first = vi.fn().mockResolvedValue(projectOwned ? { id: PROJECT_ID, org_id: ORG_ID, owner_id: 'u1' } : undefined);
       return b;
     }
     if (table === 'annotations') {
       const b: any = {};
       b.where = vi.fn().mockReturnValue(b);
-      b.first = vi.fn().mockResolvedValue(annotationOwned ? { id: ANNOTATION_ID, org_id: ORG_ID } : undefined);
+      b.first = vi.fn().mockResolvedValue(annotationOwned ? { id: ANNOTATION_ID, project_id: PROJECT_ID, org_id: ORG_ID } : undefined);
+      return b;
+    }
+    if (table === 'pages') {
+      const b: any = {};
+      b.where = vi.fn().mockReturnValue(b);
+      b.orderBy = vi.fn().mockReturnValue(b);
+      b.first = vi.fn().mockResolvedValue({ id: PAGE_ID });
       return b;
     }
     return {};

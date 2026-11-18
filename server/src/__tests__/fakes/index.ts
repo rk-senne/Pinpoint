@@ -8,6 +8,7 @@
 
 export { FakeAnalyticsRepo } from './FakeAnalyticsRepo.js';
 export { FakeAnnotationRepo } from './FakeAnnotationRepo.js';
+export { FakeApiKeyRepo } from './FakeApiKeyRepo.js';
 export { FakeAuthTokenRepo } from './FakeAuthTokenRepo.js';
 export { FakeClock } from './FakeClock.js';
 export { FakeCommentRepo } from './FakeCommentRepo.js';
@@ -33,3 +34,4 @@ export type { FakeTeamRepoDeps } from './FakeTeamRepo.js';
 export { FakeTokenIssuer } from './FakeTokenIssuer.js';
 export type { FakeTokenIssuerOptions } from './FakeTokenIssuer.js';
 export { FakeUserRepo } from './FakeUserRepo.js';
+export { FakeWebhookRepo } from './FakeWebhookRepo.js';

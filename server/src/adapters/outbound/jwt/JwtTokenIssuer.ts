@@ -31,6 +31,8 @@ export interface JwtTokenIssuerConfig {
    * Defaults to `'24h'` to match the legacy `signToken` helper.
    */
   accessTtl?: SignOptions['expiresIn'];
+  /** Absolute session lifetime in seconds (default 30 days). */
+  maxSessionSeconds?: number;
   /**
    * Sliding refresh grace window in seconds. A token whose `exp` is in
    * the past by no more than this many seconds is still acceptable to
@@ -41,25 +43,32 @@ export interface JwtTokenIssuerConfig {
 
 const DEFAULT_ACCESS_TTL: SignOptions['expiresIn'] = '24h';
 const DEFAULT_GRACE_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+/** PP-15: absolute session lifetime, independent of sliding refresh. */
+const DEFAULT_MAX_SESSION_SECONDS = 30 * 24 * 60 * 60;
+/** Pinned: never trust the `alg` header (no `none`, no RS/HS confusion). */
+const ALGORITHMS: jwt.Algorithm[] = ['HS256'];
 
 export class JwtTokenIssuer implements TokenIssuer {
   private readonly secret: Secret;
   private readonly accessTtl: SignOptions['expiresIn'];
   readonly graceWindowSeconds: number;
+  readonly maxSessionSeconds: number;
 
   constructor(config: JwtTokenIssuerConfig) {
     this.secret = config.secret;
     this.accessTtl = config.accessTtl ?? DEFAULT_ACCESS_TTL;
     this.graceWindowSeconds =
       config.graceWindowSeconds ?? DEFAULT_GRACE_WINDOW_SECONDS;
+    this.maxSessionSeconds = config.maxSessionSeconds ?? DEFAULT_MAX_SESSION_SECONDS;
   }
 
   sign(payload: TokenPayload): string {
-    return jwt.sign({ ...payload }, this.secret, { expiresIn: this.accessTtl });
+    const sessionStart = payload.sessionStart ?? Math.floor(Date.now() / 1000);
+    return jwt.sign({ ...payload, sessionStart }, this.secret, { expiresIn: this.accessTtl, algorithm: 'HS256' });
   }
 
   verify(token: string): VerifiedToken {
-    const decoded = jwt.verify(token, this.secret);
+    const decoded = jwt.verify(token, this.secret, { algorithms: ALGORITHMS });
     return this.coercePayload(decoded);
   }
 
@@ -67,7 +76,7 @@ export class JwtTokenIssuer implements TokenIssuer {
     // `ignoreExpiration: true` still enforces the signature; only the
     // `exp` claim is skipped. The refresh use case applies the grace
     // check via `graceWindowSeconds` itself.
-    const decoded = jwt.verify(token, this.secret, { ignoreExpiration: true });
+    const decoded = jwt.verify(token, this.secret, { ignoreExpiration: true, algorithms: ALGORITHMS });
     return this.coercePayload(decoded);
   }
 
@@ -92,6 +101,7 @@ export class JwtTokenIssuer implements TokenIssuer {
       throw new jwt.JsonWebTokenError('Token payload is missing required claims.');
     }
 
-    return { userId, email, orgId, role, tokenVersion, exp };
+    const sessionStart = typeof decoded.sessionStart === 'number' ? decoded.sessionStart : undefined;
+    return { userId, email, orgId, role, tokenVersion, exp, ...(sessionStart !== undefined ? { sessionStart } : {}) };
   }
 }

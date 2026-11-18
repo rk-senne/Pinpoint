@@ -40,7 +40,21 @@ export class GoogleOAuthProvider implements OAuthProvider {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) throw new Error(`Google userinfo failed: ${res.status}`);
-    const data = (await res.json()) as { id: string; email: string; name: string; picture?: string };
-    return { id: data.id, email: data.email, name: data.name, avatarUrl: data.picture };
+    const data = (await res.json()) as {
+      id: string;
+      email: string;
+      name: string;
+      picture?: string;
+      verified_email?: boolean;
+    };
+    // Only a Google-verified address may be used to link to / create a local
+    // account (OAuth pre-hijack defence in oauthLogin.ts).
+    return {
+      id: data.id,
+      email: data.email,
+      name: data.name,
+      avatarUrl: data.picture,
+      emailVerified: data.verified_email === true,
+    };
   }
 }

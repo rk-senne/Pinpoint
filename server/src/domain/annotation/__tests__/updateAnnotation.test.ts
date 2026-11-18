@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FakeAnnotationRepo,
   FakeClock,
+  FakeEventBus,
   FakeProjectRepo,
   FakeTeamMemberRepo,
 } from '../../../__tests__/fakes/index.js';
@@ -50,12 +51,14 @@ async function seed() {
     pinNumber: 1,
   });
 
+  const eventBus = new FakeEventBus();
   const usecase = new UpdateAnnotation({
     annotationRepo,
     projectRepo,
     teamMemberRepo,
+    eventBus,
   });
-  return { usecase, annotation, annotationRepo };
+  return { usecase, annotation, annotationRepo, eventBus };
 }
 
 describe('updateAnnotation use case', () => {
@@ -114,5 +117,25 @@ describe('updateAnnotation use case', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe('Validation');
+  });
+
+  it('emits annotation.updated to the project room with the updated annotation', async () => {
+    const { usecase, annotation, eventBus } = await seed();
+
+    await usecase.execute({ annotationId: annotation.id, actorUserId: 'owner-1', patch: { body: 'edited' } });
+
+    expect(eventBus.events).toHaveLength(1);
+    const [evt] = eventBus.events;
+    expect(evt!.type).toBe('annotation.updated');
+    expect(evt!.room).toBe(`project:${annotation.projectId}`);
+    expect(evt!.payload).toMatchObject({ id: annotation.id, body: 'edited' });
+  });
+
+  it('does not emit when the caller is not allowed', async () => {
+    const { usecase, annotation, eventBus } = await seed();
+
+    await usecase.execute({ annotationId: annotation.id, actorUserId: 'stranger', patch: { body: 'x' } });
+
+    expect(eventBus.events).toHaveLength(0);
   });
 });

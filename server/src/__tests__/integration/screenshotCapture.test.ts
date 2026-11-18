@@ -35,7 +35,7 @@ import {
 } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import request from 'supertest';
+import { request } from '../supertestClient.js';
 import knex, { Knex } from 'knex';
 import crypto from 'crypto';
 import path from 'path';
@@ -98,6 +98,7 @@ let db: Knex | null = null;
 let setupError: string | null = null;
 const seededProjectIds: string[] = [];
 const seededUserIds: string[] = [];
+const seededOrgIds: string[] = [];
 
 describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3, 34.4)', () => {
   beforeAll(async () => {
@@ -135,6 +136,9 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
       if (seededUserIds.length > 0) {
         await db('users').whereIn('id', seededUserIds).del();
       }
+      if (seededOrgIds.length > 0) {
+        await db('organizations').whereIn('id', seededOrgIds).del();
+      }
     } catch {
       // best-effort cleanup; never fail the suite on teardown
     } finally {
@@ -166,6 +170,14 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
     });
     seededUserIds.push(userId);
 
+    // A real organization: annotations carry an org_id FK, so the JWT's
+    // orgId must be a real organizations.id (routes now pass it through).
+    const orgId = crypto.randomUUID();
+    await db('organizations').insert({ id: orgId, name: `screenshot-org-${orgId}`, slug: `screenshot-${orgId}` });
+    seededOrgIds.push(orgId);
+    // The auth middleware requires a live membership in the token's org.
+    await db('memberships').insert({ org_id: orgId, user_id: userId, role: 'owner' });
+
     const projectId = crypto.randomUUID();
     const pageUrl = `https://example.com/screenshot-capture/${projectId}`;
     await db('projects').insert({
@@ -174,6 +186,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
       urls: [pageUrl],
       status: 'active',
       owner_id: userId,
+      org_id: orgId,
       pin_counter: 0,
     });
     seededProjectIds.push(projectId);
@@ -209,11 +222,13 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
       annotationRepo,
       projectRepo,
       teamMemberRepo,
+      eventBus: eventBusNoop,
     });
     const changeAnnotationStatus = new ChangeAnnotationStatus({
       annotationRepo,
       projectRepo,
       teamMemberRepo,
+      eventBus: eventBusNoop,
     });
     const deleteAnnotation = new DeleteAnnotation({
       annotationRepo,
@@ -229,7 +244,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
 
     // --- Mount the hex routers ---
     const tokenIssuer = new JwtTokenIssuer({ secret: JWT_SECRET });
-    const authMiddleware = createAuthMiddleware({ tokenIssuer });
+    const authMiddleware = createAuthMiddleware({ tokenIssuer, db });
     const { projectAnnotationsRouter, annotationRouter } = createAnnotationRoutes({
       createAnnotation,
       updateAnnotation,
@@ -247,6 +262,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
       buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
       fetchScreenshotBuffer: (key) => screenshotStore.fetchScreenshot(key),
       authMiddleware,
+      db,
     });
 
     const app = express();
@@ -255,7 +271,7 @@ describe('Integration: screenshot capture (Task 25.8 — Requirements 34.1, 34.3
     app.use('/api/v1/projects/:id/annotations', projectAnnotationsRouter);
     app.use('/api/v1/annotations', annotationRouter);
 
-    const token = tokenIssuer.sign({ userId, email: userEmail, orgId: 'org-test', role: 'owner', tokenVersion: 0 });
+    const token = tokenIssuer.sign({ userId, email: userEmail, orgId, role: 'owner', tokenVersion: 0 });
     const authHeader = `Bearer ${token}`;
 
     // ----------------------------------------------------------------

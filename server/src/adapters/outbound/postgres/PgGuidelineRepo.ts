@@ -10,6 +10,7 @@ interface GuidelineRow {
   description: string;
   is_default: boolean;
   created_by_user_id: string | null;
+  org_id: string | null;
 }
 
 export class PgGuidelineRepo implements GuidelineRepo {
@@ -22,14 +23,16 @@ export class PgGuidelineRepo implements GuidelineRepo {
         description: input.description,
         is_default: input.isDefault,
         created_by_user_id: input.createdByUserId ?? null,
+        org_id: input.isDefault ? null : (input.orgId ?? null),
       })
-      .returning(['id', 'name', 'description', 'is_default', 'created_by_user_id']);
+      .returning(['id', 'name', 'description', 'is_default', 'created_by_user_id', 'org_id']);
     return this.mapRow(created);
   }
 
-  async list(): Promise<Guideline[]> {
+  async list(orgId: string): Promise<Guideline[]> {
     const rows = await this.db<GuidelineRow>('guidelines')
-      .select('id', 'name', 'description', 'is_default', 'created_by_user_id')
+      .select('id', 'name', 'description', 'is_default', 'created_by_user_id', 'org_id')
+      .where((qb) => qb.where('is_default', true).orWhere('org_id', orgId))
       .orderBy('is_default', 'desc')
       .orderBy('name', 'asc');
     return rows.map((r) => this.mapRow(r));
@@ -47,6 +50,7 @@ export class PgGuidelineRepo implements GuidelineRepo {
       description: g.description,
       is_default: g.isDefault,
       created_by_user_id: g.createdByUserId ?? null,
+      org_id: g.isDefault ? null : (g.orgId ?? null),
     }));
     await this.db('guidelines').insert(rows);
   }
@@ -59,6 +63,7 @@ export class PgGuidelineRepo implements GuidelineRepo {
       isDefault: row.is_default,
     };
     if (row.created_by_user_id) guideline.createdByUserId = row.created_by_user_id;
+    if (row.org_id) guideline.orgId = row.org_id;
     return guideline;
   }
 }

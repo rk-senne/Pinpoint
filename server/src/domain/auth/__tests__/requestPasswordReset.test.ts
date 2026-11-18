@@ -70,4 +70,23 @@ describe('requestPasswordReset use case', () => {
     expect(authTokenRepo.tokens.size).toBe(0);
     expect(mailer.sent).toHaveLength(0);
   });
+
+  it('does not await the mail send: a hanging SMTP server cannot be used as a timing oracle (F-17)', async () => {
+    const { usecase, mailer } = await buildSut();
+    // SMTP that never answers.
+    mailer.send = () => new Promise<void>(() => { /* never resolves */ });
+
+    const outcome = await Promise.race([
+      usecase.execute({ email: 'alice@example.com' }).then(() => 'resolved'),
+      new Promise<string>((r) => setTimeout(() => r('timeout'), 200)),
+    ]);
+    expect(outcome).toBe('resolved');
+  });
+
+  it('known and unknown emails resolve with the identical result value', async () => {
+    const { usecase } = await buildSut();
+    const known = await usecase.execute({ email: 'alice@example.com' });
+    const unknown = await usecase.execute({ email: 'nobody@example.com' });
+    expect(known).toEqual(unknown);
+  });
 });

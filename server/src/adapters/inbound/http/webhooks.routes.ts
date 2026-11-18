@@ -7,6 +7,8 @@ import type { RegisterWebhook, DeleteWebhook } from '../../../domain/webhook/use
 import type { WebhookRepo } from '../../../domain/webhook/ports/WebhookRepo.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
 import { recordAudit } from './auditLog.routes.js';
+import { registerSessionDb, requireOrgAdmin } from './access.js';
+import { assertPublicUrl as defaultAssertPublicUrl } from '../../../services/egressGuard.js';
 
 export interface WebhookRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -14,15 +16,21 @@ export interface WebhookRouteDeps {
   deleteWebhook: DeleteWebhook;
   webhookRepo: WebhookRepo;
   db: Knex;
+  /**
+   * SSRF guard applied to a changed URL on PATCH (same guard as create).
+   * Defaults to the shared egress guard; plain http is allowed only in
+   * development/test.
+   */
+  assertPublicUrl?: (url: string) => Promise<unknown>;
 }
 
 const CreateWebhookSchema = z.object({
-  url: z.string().url(),
+  url: z.string().max(2048).url(),
   events: z.array(z.string()).min(1),
 });
 
 const UpdateWebhookSchema = z.object({
-  url: z.string().url().optional(),
+  url: z.string().max(2048).url().optional(),
   events: z.array(z.string()).min(1).optional(),
   active: z.boolean().optional(),
 });
@@ -31,9 +39,16 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
   const { authMiddleware, registerWebhook, deleteWebhook, webhookRepo, db } = deps;
   const router = Router();
   router.use(authMiddleware);
+  registerSessionDb(db);
+  const assertPublicUrl =
+    deps.assertPublicUrl ??
+    ((url: string) =>
+      defaultAssertPublicUrl(url, {
+        allowHttp: process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test',
+      }));
 
   // POST /api/v1/webhooks
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', requireOrgAdmin, async (req: Request, res: Response) => {
     const parsed = CreateWebhookSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid webhook.', parsed.error.flatten()); return; }
 
@@ -47,11 +62,14 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
       resourceId: result.value.endpoint.id,
       metadata: { url: parsed.data.url, events: parsed.data.events },
     });
+    // The plaintext `whsec_` signing secret is returned exactly ONCE here, on
+    // create. List (GET /) and update (PATCH) responses strip it — the server
+    // never exposes it again (A5b).
     res.status(201).json({ webhook: result.value.endpoint });
   });
 
   // GET /api/v1/webhooks
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', requireOrgAdmin, async (req: Request, res: Response) => {
     const orgId = req.user!.orgId;
 
     const parsed = PaginationParamsSchema.safeParse(req.query);
@@ -85,7 +103,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
   });
 
   // PATCH /api/v1/webhooks/:id
-  router.patch('/:id', async (req: Request, res: Response) => {
+  router.patch('/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     const parsed = UpdateWebhookSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid update.', parsed.error.flatten()); return; }
 
@@ -97,6 +115,17 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
       }
     }
 
+    // A changed URL must pass the same SSRF egress guard as create.
+    if (parsed.data.url !== undefined) {
+      try {
+        await assertPublicUrl(parsed.data.url);
+      } catch (e) {
+        const reason = e instanceof Error && e.name === 'EgressBlockedError' ? `: ${e.message}` : '';
+        res.status(400).json({ error: { code: 'VALIDATION', message: `Webhook URL rejected${reason}` } });
+        return;
+      }
+    }
+
     const updated = await webhookRepo.update(paramString(req.params.id), req.user!.orgId, parsed.data);
     if (!updated) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Webhook not found' } }); return; }
     const { secret, ...rest } = updated;
@@ -104,7 +133,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
   });
 
   // DELETE /api/v1/webhooks/:id
-  router.delete('/:id', async (req: Request, res: Response) => {
+  router.delete('/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     const result = await deleteWebhook.execute(paramString(req.params.id), req.user!.orgId);
     if (!result.ok) { sendDomainError(res, result.error); return; }
     await recordAudit(db, {
@@ -118,11 +147,21 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
   });
 
   // GET /api/v1/webhooks/:id/deliveries
-  router.get('/:id/deliveries', async (req: Request, res: Response) => {
+  router.get('/:id/deliveries', requireOrgAdmin, async (req: Request, res: Response) => {
     const endpoint = await webhookRepo.findById(paramString(req.params.id), req.user!.orgId);
     if (!endpoint) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Webhook not found' } }); return; }
-    const deliveries = await webhookRepo.listDeliveries(paramString(req.params.id), 50);
-    res.json({ deliveries });
+
+    const parsed = PaginationParamsSchema.safeParse(req.query);
+    const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
+    const offset = (page - 1) * pageSize;
+
+    const total = await webhookRepo.countDeliveries(paramString(req.params.id));
+    const deliveries = await webhookRepo.listDeliveries(paramString(req.params.id), pageSize, offset);
+
+    res.json({
+      data: deliveries,
+      pagination: paginationMeta(total, page, pageSize),
+    });
   });
 
   // GET /api/v1/webhooks/events — list available event types

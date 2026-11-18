@@ -18,7 +18,7 @@ export class FakeSharedLinkRepo implements SharedLinkRepo {
   constructor(private readonly clock: Clock) {}
 
   async insert(input: NewSharedLink): Promise<SharedLink> {
-    const id = randomUUID();
+    const id = input.id ?? randomUUID();
     const link: SharedLink = {
       id,
       projectId: input.projectId,
@@ -53,6 +53,7 @@ export class FakeSharedLinkRepo implements SharedLinkRepo {
     if (patch.passwordHash !== undefined) next.passwordHash = patch.passwordHash;
     if (patch.failedAttempts !== undefined) next.failedAttempts = patch.failedAttempts;
     if (patch.lockedUntil !== undefined) next.lockedUntil = patch.lockedUntil;
+    if (patch.allowFeedback !== undefined) next.allowFeedback = patch.allowFeedback;
     this.links.set(id, next);
     return { ...next };
   }

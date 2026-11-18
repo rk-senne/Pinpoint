@@ -66,24 +66,36 @@ describe('registerUser use case', () => {
     expect(queued.payload.recipientUserId).toBe(result.value.user.id);
   });
 
-  it('returns Conflict when the email is already registered', async () => {
-    const { usecase } = buildSut();
+  it('responds to a duplicate email exactly like a success but creates/sends nothing (F-17)', async () => {
+    const { usecase, userRepo, authTokenRepo, notificationQueue } = buildSut();
 
-    await usecase.execute({
+    const first = await usecase.execute({
       email: 'alice@example.com',
       password: PASSWORD,
       name: 'Alice',
     });
+    expect(first.ok).toBe(true);
 
     const result = await usecase.execute({
-      email: 'alice@example.com',
-      password: PASSWORD,
+      email: 'Alice@example.com',
+      password: 'another-long-password-9',
       name: 'Alice2',
     });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.kind).toBe('Conflict');
+    // Same ok-shape as a fresh registration (no Conflict → no enumeration).
+    expect(result.ok).toBe(true);
+    if (!result.ok || !first.ok) return;
+    expect(Object.keys(result.value.user).sort()).toEqual(Object.keys(first.value.user).sort());
+    expect(result.value.user.email).toBe('alice@example.com');
+
+    // …but no second account, token, or email, and the real account is untouched.
+    expect(userRepo.users.size).toBe(1);
+    expect(authTokenRepo.tokens.size).toBe(1);
+    expect(notificationQueue.list()).toHaveLength(1);
+    expect(result.value.user.id).not.toBe(first.value.user.id);
+    const stored = [...userRepo.users.values()][0]!;
+    expect(stored.name).toBe('Alice');
+    expect(stored.passwordHash).toBe(`hashed:${PASSWORD}`);
   });
 
   it('returns Validation when the password is in the common-passwords blocklist', async () => {

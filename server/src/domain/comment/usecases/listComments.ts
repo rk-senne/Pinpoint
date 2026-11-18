@@ -17,6 +17,11 @@ import {
 
 export interface ListCommentsInput {
   annotationId: string;
+  /**
+   * Caller's org. When supplied, an annotation belonging to a different org
+   * is reported as NotFound (never leak that it exists).
+   */
+  orgId?: string;
 }
 
 export interface ListCommentsOutput {
@@ -37,7 +42,7 @@ export class ListComments {
     const { commentRepo, annotationRepo } = this.deps;
 
     const annotation = await annotationRepo.findById(input.annotationId);
-    if (!annotation) {
+    if (!annotation || (input.orgId && annotation.orgId && annotation.orgId !== input.orgId)) {
       return err(new NotFound('Annotation not found.'));
     }
 

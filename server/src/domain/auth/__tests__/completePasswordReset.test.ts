@@ -58,6 +58,8 @@ describe('completePasswordReset use case', () => {
 
     const refreshed = await userRepo.findByIdWithSecret(user.id);
     expect(refreshed?.passwordHash).toBe('hashed:correcthorsebatterystaple');
+    // F-06: every session issued before the reset is revoked.
+    expect(refreshed?.tokenVersion).toBe(1);
   });
 
   it('returns Validation when the new password is in the blocklist', async () => {

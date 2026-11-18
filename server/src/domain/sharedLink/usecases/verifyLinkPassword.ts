@@ -53,6 +53,13 @@ export interface VerifyLinkPasswordDeps {
   sharedLinkRepo: SharedLinkRepo;
   passwordHasher: PasswordHasher;
   clock: Clock;
+  /**
+   * Per-LINK ceiling of failed attempts before the whole link locks (default 3).
+   * The HTTP layer applies the strict 3-strikes lock per (link, IP) so a stranger
+   * holding the URL cannot lock the legitimate audience out (PP-14); production
+   * wiring raises this to a high global ceiling that only stops distributed guessing.
+   */
+  maxFailedAttempts?: number;
 }
 
 /**
@@ -74,7 +81,7 @@ export class MissingPassword extends Validation {
 export class InvalidPassword extends Unauthorized {
   readonly attemptsRemaining: number;
   constructor(attemptsRemaining: number) {
-    super('Incorrect password.');
+    super('Incorrect password.', 'INVALID_PASSWORD');
     this.attemptsRemaining = attemptsRemaining;
   }
 }
@@ -103,6 +110,7 @@ export class VerifyLinkPassword {
     input: VerifyLinkPasswordInput,
   ): Promise<Result<VerifyLinkPasswordOutput, DomainError>> {
     const { sharedLinkRepo, passwordHasher, clock } = this.deps;
+    const maxFailed = this.deps.maxFailedAttempts ?? MAX_FAILED_ATTEMPTS;
 
     const link = await sharedLinkRepo.findById(input.linkId);
     if (!link) {
@@ -166,7 +174,7 @@ export class VerifyLinkPassword {
     // --- Mismatch: increment and possibly lock ---
     const newFailedAttempts = (failedAttempts || 0) + 1;
 
-    if (newFailedAttempts >= MAX_FAILED_ATTEMPTS) {
+    if (newFailedAttempts >= maxFailed) {
       const lockedUntilDate = new Date(
         clock.now().getTime() + LOCKOUT_MINUTES * 60 * 1000,
       );
@@ -187,7 +195,7 @@ export class VerifyLinkPassword {
     });
 
     return err(
-      new InvalidPassword(MAX_FAILED_ATTEMPTS - newFailedAttempts),
+      new InvalidPassword(Math.min(maxFailed - newFailedAttempts, MAX_FAILED_ATTEMPTS)),
     );
   }
 }

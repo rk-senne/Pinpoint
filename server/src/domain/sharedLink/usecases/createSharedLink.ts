@@ -12,6 +12,22 @@ import type { PasswordHasher } from '../../auth/ports/PasswordHasher.js';
 import type { ProjectRepo } from '../../project/ports/ProjectRepo.js';
 import type { SharedLink } from '../SharedLink.js';
 import type { SharedLinkRepo } from '../ports/SharedLinkRepo.js';
+// `node:crypto` is a Node built-in (not a restricted infra package), used
+// here exactly as the auth use cases do for token generation.
+import { randomBytes } from 'node:crypto';
+
+/**
+ * Bytes of entropy in a generated shared-link id. 16 bytes = 128 bits, the
+ * floor at which a link id is computationally infeasible to enumerate — the
+ * other half of killing the enumeration oracle (Mission A7). Encoded as
+ * URL-safe base64 so the id is path-segment clean.
+ */
+export const SHARED_LINK_ID_BYTES = 16;
+
+/** Generate a ≥128-bit unguessable, URL-safe shared-link id (A7). */
+export function generateSharedLinkId(): string {
+  return randomBytes(SHARED_LINK_ID_BYTES).toString('base64url');
+}
 
 export interface CreateSharedLinkInput {
   /** Caller's user id; must match the project owner. */
@@ -66,6 +82,7 @@ export class CreateSharedLink {
     }
 
     const created = await sharedLinkRepo.insert({
+      id: generateSharedLinkId(),
       projectId: input.projectId,
       passwordHash,
       allowFeedback: input.allowFeedback ?? false,

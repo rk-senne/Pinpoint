@@ -54,7 +54,7 @@ describe('createComment use case', () => {
   it('persists the comment, extracts mentions from the body, and emits comment.created', async () => {
     const { usecase, annotation, commentRepo, eventBus } = await buildSut();
 
-    const mentionedId = '11111111-1111-1111-1111-111111111111';
+    const mentionedId = '11111111-1111-4111-8111-111111111111';
     const result = await usecase.execute({
       authorUserId: 'author-2',
       annotationId: annotation.id,
@@ -71,7 +71,7 @@ describe('createComment use case', () => {
 
   it('returns the cached row on idempotent replay', async () => {
     const { usecase, annotation, commentRepo } = await buildSut();
-    const requestId = '22222222-2222-2222-2222-222222222222';
+    const requestId = '22222222-2222-4222-8222-222222222222';
 
     const first = await usecase.execute({
       authorUserId: 'author-2',

@@ -22,12 +22,15 @@ export class FakeGuidelineRepo implements GuidelineRepo {
       isDefault: input.isDefault,
     };
     if (input.createdByUserId) guideline.createdByUserId = input.createdByUserId;
+    if (!input.isDefault && input.orgId) guideline.orgId = input.orgId;
     this.guidelines.set(id, guideline);
     return { ...guideline };
   }
 
-  async list(): Promise<Guideline[]> {
-    const all = Array.from(this.guidelines.values()).map((g) => ({ ...g }));
+  async list(orgId: string): Promise<Guideline[]> {
+    const all = Array.from(this.guidelines.values())
+      .filter((g) => g.isDefault || g.orgId === orgId)
+      .map((g) => ({ ...g }));
     all.sort((a, b) => {
       if (a.isDefault !== b.isDefault) {
         return a.isDefault ? -1 : 1;

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import request from 'supertest';
-import { csrfMiddleware } from './csrf.js';
+import { request } from '../__tests__/supertestClient.js';
+import { csrfMiddleware, createCsrfMiddleware } from './csrf.js';
 
 /**
  * Tests for Task 7.2 / Requirements 18.4, 18.5, 18.6, 18.7.
@@ -122,6 +122,92 @@ describe('csrfMiddleware', () => {
         .set('Cookie', cookie)
         .set('X-CSRF-Token', 'wrong');
       expect(badDelete.status).toBe(403);
+    });
+  });
+
+  describe('bearer that authenticates + cookie session coexist', () => {
+    const goodJwt = 'good.jwt.value';
+    const goodKey = 'pk_' + 'a'.repeat(32);
+    function bearerApp(overrides: { findByHash?: (h: string) => Promise<unknown> } = {}) {
+      const app = express();
+      app.use(express.json());
+      app.use(cookieParser());
+      app.use(
+        createCsrfMiddleware({
+          tokenIssuer: {
+            verify: (t: string) => {
+              if (t !== goodJwt) throw new Error('bad token');
+              return {} as never;
+            },
+          },
+          apiKeyRepo: {
+            findByHash:
+              (overrides.findByHash as never) ??
+              (async (h: string) => {
+                const { createHash } = await import('node:crypto');
+                return h === createHash('sha256').update(goodKey).digest('hex')
+                  ? ({ keyType: 'standard' } as never)
+                  : null;
+              }),
+          },
+        }),
+      );
+      app.post('/echo', (_req, res) => {
+        res.json({ ok: true });
+      });
+      return app;
+    }
+    const cookie = 'fl_session=session.jwt; fl_csrf=c';
+
+    it('valid JWT bearer + cookie session needs no CSRF token', async () => {
+      const res = await request(bearerApp()).post('/echo').set('Cookie', cookie)
+        .set('Authorization', `Bearer ${goodJwt}`).send({});
+      expect(res.status).toBe(200);
+    });
+
+    it('valid API-key bearer + cookie session needs no CSRF token', async () => {
+      const res = await request(bearerApp()).post('/echo').set('Cookie', cookie)
+        .set('Authorization', `Bearer ${goodKey}`).send({});
+      expect(res.status).toBe(200);
+    });
+
+    it('bogus JWT bearer + cookie session still requires CSRF', async () => {
+      const res = await request(bearerApp()).post('/echo').set('Cookie', cookie)
+        .set('Authorization', 'Bearer not.a.jwt').send({});
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('CSRF_INVALID');
+    });
+
+    it('unknown API key + cookie session still requires CSRF', async () => {
+      const res = await request(bearerApp()).post('/echo').set('Cookie', cookie)
+        .set('Authorization', `Bearer pk_${'b'.repeat(32)}`).send({});
+      expect(res.status).toBe(403);
+    });
+
+    it('widget key bearer never earns the exemption', async () => {
+      const res = await request(bearerApp({ findByHash: async () => ({ keyType: 'standard' }) }))
+        .post('/echo').set('Cookie', cookie)
+        .set('Authorization', 'Bearer pk_widget_abc').send({});
+      expect(res.status).toBe(403);
+    });
+
+    it('API-key lookup failure fails closed (CSRF enforced)', async () => {
+      const res = await request(bearerApp({ findByHash: async () => { throw new Error('db down'); } }))
+        .post('/echo').set('Cookie', cookie)
+        .set('Authorization', `Bearer ${goodKey}`).send({});
+      expect(res.status).toBe(403);
+    });
+
+    it('valid bearer + cookie + matching CSRF passes; bogus bearer + matching CSRF passes', async () => {
+      const res = await request(bearerApp()).post('/echo').set('Cookie', cookie)
+        .set('X-CSRF-Token', 'c').set('Authorization', 'Bearer not.a.jwt').send({});
+      expect(res.status).toBe(200);
+    });
+
+    it('default instance (no verifiers) enforces CSRF for any bearer + cookie', async () => {
+      const res = await request(createApp()).post('/echo').set('Cookie', cookie)
+        .set('Authorization', `Bearer ${goodJwt}`).send({});
+      expect(res.status).toBe(403);
     });
   });
 });

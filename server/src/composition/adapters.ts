@@ -29,6 +29,7 @@ import { PgOrgRepo } from '../adapters/outbound/postgres/PgOrgRepo.js';
 import { PgInvitationRepo } from '../adapters/outbound/postgres/PgInvitationRepo.js';
 import { PgApiKeyRepo } from '../adapters/outbound/postgres/PgApiKeyRepo.js';
 import { PgIntegrationRepo } from '../adapters/outbound/postgres/PgIntegrationRepo.js';
+import { SecretBox } from '../services/secretBox.js';
 
 // --- Other outbound adapters -----------------------------------------------
 import {
@@ -103,13 +104,15 @@ export function buildAdapters(
   const membershipRepo = new PgMembershipRepo(db);
   const notificationQueue = new PgNotificationQueue(db);
   const pinSequence = new PgProjectPinSequence(db);
-  const webhookRepo = new PgWebhookRepo(db);
+  const webhookRepo = new PgWebhookRepo(db, SecretBox.fromRawKey(config.integrationEncryptionKey));
   const userNotificationRepo = new PgUserNotificationRepo(db);
   const orgRepo = new PgOrgRepo(db);
   const invitationRepo = new PgInvitationRepo(db);
   const apiKeyRepo = new PgApiKeyRepo(db);
   const oauthAccountRepo = new PgOAuthAccountRepo(db);
-  const integrationRepo = new PgIntegrationRepo(db);
+  // A4: encrypt integration secrets at rest with the configured key.
+  const integrationSecretBox = SecretBox.fromRawKey(config.integrationEncryptionKey);
+  const integrationRepo = new PgIntegrationRepo(db, integrationSecretBox);
 
   // ---- S3 Screenshot Store --------------------------------------------
   const screenshotStoreConfig: S3ScreenshotStoreConfig = {

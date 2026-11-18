@@ -25,7 +25,7 @@ export function createPlanLimitsMiddleware(db: Knex, kind: LimitKind) {
       if (kind === 'annotations') {
         if (limits.annotationsPerMonth === Infinity) { next(); return; }
         const now = new Date();
-        const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+        const periodStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01` /* UTC month start; local-midnight .toISOString() shifted east-of-UTC zones into the previous month */;
         const usageRow = await db('usage_records').where({ org_id: orgId, period_start: periodStart }).first();
         const count = usageRow?.annotations_count ?? 0;
         if (count >= limits.annotationsPerMonth) {

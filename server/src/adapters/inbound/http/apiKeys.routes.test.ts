@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createApiKeyRoutes, type ApiKeyRouteDeps } from './apiKeys.routes.js';
+import { FakeApiKeyRepo } from '../../../__tests__/fakes/FakeApiKeyRepo.js';
 
 /**
  * Route tests for api-keys endpoints. Validates the IDOR fix:
@@ -10,9 +11,9 @@ import { createApiKeyRoutes, type ApiKeyRouteDeps } from './apiKeys.routes.js';
  * caller's org before revoking (cross-tenant IDOR prevention).
  */
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
-const KEY_ID = 'c0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-4000-8000-000000000002';
+const KEY_ID = 'c0000000-0000-4000-8000-000000000001';
 const USER_ID = 'u0000000-0000-0000-0000-000000000001';
 
 function fakeAuth(role: string = 'admin', orgId: string = ORG_ID) {
@@ -141,5 +142,86 @@ describe('apiKeys.routes — DELETE /api/v1/api-keys/:id (IDOR fix)', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/api-keys — widget key issuance (Mission A1)
+// ---------------------------------------------------------------------------
+
+const PROJECT_ID = 'd0000000-0000-4000-8000-000000000001';
+
+function makeIssueDb(opts: { project?: { id: string; org_id: string } } = {}): any {
+  const db: any = vi.fn((table: string) => {
+    if (table === 'projects') {
+      const builder: any = {};
+      builder.where = vi.fn(() => builder);
+      builder.first = vi.fn(() => Promise.resolve(opts.project));
+      return builder;
+    }
+    if (table === 'audit_log') {
+      const builder: any = {};
+      builder.insert = vi.fn(() => Promise.resolve());
+      return builder;
+    }
+    const builder: any = {};
+    builder.where = vi.fn(() => builder);
+    builder.first = vi.fn(() => Promise.resolve(undefined));
+    builder.insert = vi.fn(() => Promise.resolve());
+    return builder;
+  });
+  db.fn = { now: vi.fn(() => 'now()') };
+  return db;
+}
+
+describe('apiKeys.routes — POST widget key issuance (A1)', () => {
+  it('issues a pk_widget_ key bound to a project in the caller org', async () => {
+    const db = makeIssueDb({ project: { id: PROJECT_ID, org_id: ORG_ID } });
+    const apiKeyRepo = new FakeApiKeyRepo();
+    const app = makeApp({ authMiddleware: fakeAuth('admin', ORG_ID), apiKeyRepo, db });
+
+    const res = await request(app)
+      .post('/api/v1/api-keys')
+      .send({ name: 'Site widget', keyType: 'widget', projectId: PROJECT_ID, allowedOrigins: ['https://x.test'], dailyQuota: 50 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.rawKey).toMatch(/^pk_widget_/);
+    expect(res.body.keyType).toBe('widget');
+    expect(res.body.projectId).toBe(PROJECT_ID);
+    expect(res.body.scopes).toEqual(['widget']);
+    expect(res.body.allowedOrigins).toEqual(['https://x.test']);
+    expect(res.body.dailyQuota).toBe(50);
+  });
+
+  it('400 when widget key issuance omits projectId', async () => {
+    const db = makeIssueDb({ project: { id: PROJECT_ID, org_id: ORG_ID } });
+    const apiKeyRepo = new FakeApiKeyRepo();
+    const app = makeApp({ authMiddleware: fakeAuth('admin', ORG_ID), apiKeyRepo, db });
+
+    const res = await request(app).post('/api/v1/api-keys').send({ name: 'w', keyType: 'widget' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION');
+  });
+
+  it('404 when the target project is not in the caller org', async () => {
+    const db = makeIssueDb({ project: undefined });
+    const apiKeyRepo = new FakeApiKeyRepo();
+    const app = makeApp({ authMiddleware: fakeAuth('admin', ORG_ID), apiKeyRepo, db });
+
+    const res = await request(app)
+      .post('/api/v1/api-keys')
+      .send({ name: 'w', keyType: 'widget', projectId: PROJECT_ID });
+    expect(res.status).toBe(404);
+  });
+
+  it('issues a standard pk_ key (non-widget) with default scopes', async () => {
+    const db = makeIssueDb();
+    const apiKeyRepo = new FakeApiKeyRepo();
+    const app = makeApp({ authMiddleware: fakeAuth('admin', ORG_ID), apiKeyRepo, db });
+
+    const res = await request(app).post('/api/v1/api-keys').send({ name: 'ci' });
+    expect(res.status).toBe(201);
+    expect(res.body.rawKey).toMatch(/^pk_(?!widget_)/);
+    expect(res.body.keyType).toBe('standard');
   });
 });

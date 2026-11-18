@@ -128,7 +128,7 @@ export class GetUsageSummary {
     const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
 
     const now = new Date();
-    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const periodStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01` /* UTC month start; local-midnight .toISOString() shifted east-of-UTC zones into the previous month */;
 
     const usageRow = await billingRepo.getUsage(orgId, periodStart);
     const annotations = usageRow?.annotations_count ?? 0;

@@ -36,7 +36,17 @@ const config: Record<string, Knex.Config> = {
   },
   production: {
     client: 'pg',
-    connection: process.env.DATABASE_URL,
+    // DATABASE_URL when provided; otherwise the same DB_* variables the API
+    // itself reads (composition/config.ts) — the ECS task definition supplies
+    // DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD, never DATABASE_URL, so a
+    // DATABASE_URL-only production profile could never connect to migrate.
+    connection: process.env.DATABASE_URL || {
+      host: process.env.DB_HOST || 'localhost',
+      port: Number(process.env.DB_PORT) || 5432,
+      database: process.env.DB_NAME || 'pinpoint',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD,
+    },
     pool: { min: 2, max: 20 },
     migrations: {
       directory: './src/migrations',

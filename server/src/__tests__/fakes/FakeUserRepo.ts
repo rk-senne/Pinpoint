@@ -29,6 +29,7 @@ interface StoredUser extends User {
   passwordHash: string;
   verified: boolean;
   tokenVersion: number;
+  pendingEmail?: string | null;
 }
 
 export class FakeUserRepo implements UserRepo {
@@ -99,6 +100,12 @@ export class FakeUserRepo implements UserRepo {
     return this.toUser(next);
   }
 
+  async setPendingEmail(id: string, email: string | null): Promise<void> {
+    const row = this.users.get(id);
+    if (!row) return;
+    this.users.set(id, { ...row, pendingEmail: email ? email.toLowerCase() : null });
+  }
+
   async markVerified(id: string): Promise<void> {
     const row = this.users.get(id);
     if (!row) return;
@@ -136,6 +143,8 @@ export class FakeUserRepo implements UserRepo {
       ...this.toUser(row),
       passwordHash: row.passwordHash,
       verified: row.verified,
+      tokenVersion: row.tokenVersion,
+      pendingEmail: row.pendingEmail ?? null,
     };
   }
 }

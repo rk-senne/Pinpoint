@@ -8,6 +8,8 @@ import type { Annotation, AnnotationPatch } from '../Annotation.js';
 import type { AnnotationRepo } from '../ports/AnnotationRepo.js';
 import type { ProjectRepo } from '../../project/ports/ProjectRepo.js';
 import type { TeamMemberRepo } from '../../team/ports/TeamMemberRepo.js';
+import type { PageRepo } from '../../project/ports/PageRepo.js';
+import type { EventBus } from '../../shared/ports/EventBus.js';
 import { hasProjectAccess } from '../../shared/projectAccess.js';
 import {
   Forbidden,
@@ -33,6 +35,10 @@ export interface UpdateAnnotationDeps {
   annotationRepo: AnnotationRepo;
   projectRepo: ProjectRepo;
   teamMemberRepo: TeamMemberRepo;
+  /** Broadcasts `annotation.updated` to the project room (realtime + webhooks). */
+  eventBus: EventBus;
+  /** Resolves `pageUrl` for the broadcast payload (omitted when absent). */
+  pageRepo?: PageRepo;
 }
 
 export class UpdateAnnotation {
@@ -70,6 +76,13 @@ export class UpdateAnnotation {
     }
 
     const updated = await annotationRepo.update(input.annotationId, input.patch);
+
+    const page = await this.deps.pageRepo?.findById(updated.pageId);
+    this.deps.eventBus.emit({
+      type: 'annotation.updated',
+      room: `project:${updated.projectId}`,
+      payload: { ...updated, pageUrl: page?.url ?? null },
+    });
     return ok({ annotation: updated });
   }
 }

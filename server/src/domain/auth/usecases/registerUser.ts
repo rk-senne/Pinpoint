@@ -4,7 +4,11 @@
 // Pipeline:
 //   1. Validate password against the shared Common_Passwords_Blocklist
 //      policy (Req 1.10/1.11) — fast-fail before doing any I/O.
-//   2. Reject duplicate email with `Conflict` (Req 1.5).
+//   2. Duplicate email: respond EXACTLY like a fresh registration (F-17 — no
+//      account enumeration). No row is created and nothing is sent: the
+//      durable notification queue has no "account already exists" kind, so
+//      this is a deliberate no-op. The password is still hashed first so the
+//      timing matches the success path.
 //   3. Hash the password through the `PasswordHasher` port (the bcrypt
 //      adapter is the only file that imports `bcrypt`).
 //   4. Insert the user as `verified: false` so login is blocked until
@@ -21,10 +25,9 @@
 // `.eslintrc.cjs`'s `no-restricted-imports` allow-list); using it here
 // for random-bytes + sha256 keeps the use case dependency-free.
 
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { validatePassword } from '@pinpoint/shared';
 import {
-  Conflict,
   Validation,
   err,
   ok,
@@ -106,14 +109,30 @@ export class RegisterUser {
 
     const normalizedEmail = input.email.toLowerCase();
 
-    // --- Duplicate email guard ----------------------------------------------
+    // --- Hash first (constant-ish timing for new vs. existing email) -------
+    const passwordHash = await passwordHasher.hash(input.password);
+
+    // --- Duplicate email: indistinguishable from success (F-17) -------------
     const existing = await userRepo.findByEmail(normalizedEmail);
     if (existing) {
-      return err(new Conflict('Email already registered.'));
+      const decoy: User = {
+        id: randomUUID(),
+        email: normalizedEmail,
+        name: input.name,
+        // Key order mirrors what Postgres JSONB returns for a real row
+        // (shorter keys first) so the serialized bodies line up.
+        notificationPreferences: {
+          newComment: true,
+          newAnnotation: true,
+          projectDeleted: true,
+          promotedToOwner: true,
+        },
+        createdAt: clock.now().toISOString(),
+      };
+      return ok({ user: decoy });
     }
 
     // --- Persist user (unverified) ------------------------------------------
-    const passwordHash = await passwordHasher.hash(input.password);
     const user = await userRepo.insert({
       email: normalizedEmail,
       name: input.name,

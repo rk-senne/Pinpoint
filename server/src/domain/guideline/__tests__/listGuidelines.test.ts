@@ -16,15 +16,17 @@ describe('listGuidelines use case', () => {
       name: 'Custom Beta',
       description: 'd',
       isDefault: false,
+      orgId: 'org-1',
     });
     await repo.insert({
       name: 'Custom Alpha',
       description: 'd',
       isDefault: false,
+      orgId: 'org-1',
     });
 
     const usecase = new ListGuidelines({ guidelineRepo: repo });
-    const result = await usecase.execute();
+    const result = await usecase.execute({ orgId: 'org-1' });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -42,7 +44,7 @@ describe('listGuidelines use case', () => {
     const repo = new FakeGuidelineRepo();
     const usecase = new ListGuidelines({ guidelineRepo: repo });
 
-    const result = await usecase.execute();
+    const result = await usecase.execute({ orgId: 'org-1' });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;

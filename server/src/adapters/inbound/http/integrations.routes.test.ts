@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 import { createHmac } from 'node:crypto';
 import { createIntegrationsRoutes, type IntegrationsRouteDeps } from './integrations.routes.js';
 import type { IntegrationRepo, Integration } from '../../../domain/integration/ports/IntegrationRepo.js';
@@ -47,11 +47,12 @@ function makeApp(deps: IntegrationsRouteDeps): express.Express {
 
 /** Helper: build a signed cookie value for integration_oauth_state */
 function buildStateCookie(
-  payload: { state: string; orgId: string; provider: string },
+  input: { state: string; orgId: string; provider: string; uid?: string; exp?: number },
   secret: string = TEST_SECRET,
 ): string {
+  const payload = { uid: 'u1', exp: Date.now() + 600_000, ...input };
   const sig = createHmac('sha256', secret)
-    .update(`${payload.state}.${payload.orgId}.${payload.provider}`)
+    .update(`${payload.state}.${payload.orgId}.${payload.provider}.${payload.uid}.${payload.exp}`)
     .digest('hex');
   return `integration_oauth_state=${encodeURIComponent(JSON.stringify({ ...payload, sig }))}`;
 }
@@ -267,7 +268,7 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
 
       // Recompute and verify
       const expectedSig = createHmac('sha256', TEST_SECRET)
-        .update(`${parsed.state}.${parsed.orgId}.${parsed.provider}`)
+        .update(`${parsed.state}.${parsed.orgId}.${parsed.provider}.${parsed.uid}.${parsed.exp}`)
         .digest('hex');
       expect(parsed.sig).toBe(expectedSig);
     });
@@ -379,6 +380,55 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
         'slack',
         expect.objectContaining({ accessToken: 'exchanged_xyz' }),
       );
+    });
+  });
+
+  describe('PP-21: expiry, user binding, Secure', () => {
+    it('rejects a state cookie whose signed expiry has passed (even if the browser still sent it)', async () => {
+      const deps = makeDeps();
+      const nonce = 'c'.repeat(32);
+      const res = await request(makeApp(deps))
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', buildStateCookie({ state: nonce, orgId: 'org-123', provider: 'slack', exp: Date.now() - 1 }));
+      expect(res.status).toBe(400);
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cookie minted for a different admin (user binding)', async () => {
+      const deps = makeDeps();
+      const nonce = 'd'.repeat(32);
+      const res = await request(makeApp(deps))
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', buildStateCookie({ state: nonce, orgId: 'org-123', provider: 'slack', uid: 'someone-else' }));
+      expect(res.status).toBe(400);
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a tampered expiry (signature covers exp and uid)', async () => {
+      const deps = makeDeps();
+      const nonce = 'e'.repeat(32);
+      const good = decodeURIComponent(buildStateCookie({ state: nonce, orgId: 'org-123', provider: 'slack' }).split('=')[1]!);
+      const forged = { ...JSON.parse(good), exp: Date.now() + 10 * 365 * 24 * 3600_000 };
+      const res = await request(makeApp(deps))
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', `integration_oauth_state=${encodeURIComponent(JSON.stringify(forged))}`);
+      expect(res.status).toBe(400);
+      expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    it('requires an authenticated org admin on the callback', async () => {
+      const deps = makeDeps({ authMiddleware: (_req, res) => void res.status(401).json({}) });
+      const nonce = 'f'.repeat(32);
+      const res = await request(makeApp(deps))
+        .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
+        .set('Cookie', buildStateCookie({ state: nonce, orgId: 'org-123', provider: 'slack' }));
+      expect(res.status).toBe(401);
+    });
+
+    it('sets the state cookie Secure even outside production', async () => {
+      const res = await request(makeApp(makeDeps())).post('/api/v1/integrations/slack/connect').send({});
+      const set = ([] as string[]).concat(res.headers['set-cookie'] as unknown as string[]);
+      expect(set.find((c) => c.includes('integration_oauth_state'))).toMatch(/;\s*Secure/i);
     });
   });
 });

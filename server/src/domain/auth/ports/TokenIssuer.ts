@@ -9,6 +9,12 @@ export interface TokenPayload {
   orgId: string;
   role: string;
   tokenVersion: number;
+  /**
+   * Seconds-since-epoch when the login that started this session happened.
+   * Carried unchanged across refreshes so refresh cannot extend a session
+   * beyond `maxSessionSeconds` (PP-15). Set by the issuer when omitted.
+   */
+  sessionStart?: number;
 }
 
 /** Decoded payload as returned by `verify` / `decodeIgnoreExpiration`. */
@@ -33,4 +39,7 @@ export interface TokenIssuer {
 
   /** Configured grace window in seconds (Req 33.3 — sliding refresh). */
   readonly graceWindowSeconds: number;
+
+  /** Absolute lifetime of a session regardless of refreshes (PP-15). */
+  readonly maxSessionSeconds?: number;
 }

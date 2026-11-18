@@ -12,6 +12,8 @@ export interface UserWithSecret extends User {
   passwordHash: string;
   verified: boolean;
   tokenVersion?: number;
+  /** E-mail awaiting confirmation (PP-06); never the login e-mail until confirmed. */
+  pendingEmail?: string | null;
 }
 
 export interface UserRepo {
@@ -24,6 +26,8 @@ export interface UserRepo {
   update(id: string, patch: UserPatch): Promise<User>;
   /** Mark a user as verified after a successful email-verification token redemption. */
   markVerified(id: string): Promise<void>;
+  /** Store / clear the e-mail address waiting for confirmation (PP-06). */
+  setPendingEmail(id: string, email: string | null): Promise<void>;
   /** Increment token version to invalidate all existing sessions. */
   incrementTokenVersion(id: string): Promise<void>;
 }

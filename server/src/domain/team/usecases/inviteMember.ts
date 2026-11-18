@@ -12,6 +12,7 @@ import type { TeamMember } from '../TeamMember.js';
 import type { TeamRepo } from '../ports/TeamRepo.js';
 import type { TeamMemberRepo } from '../ports/TeamMemberRepo.js';
 import type { UserRepo } from '../../user/ports/UserRepo.js';
+import type { MembershipRepo } from '../../auth/ports/MembershipRepo.js';
 import type { EventBus } from '../../shared/ports/EventBus.js';
 import {
   Conflict,
@@ -30,6 +31,8 @@ export interface InviteMemberInput {
   teamId: string;
   /** Email of the user to invite. */
   email: string;
+  /** Caller's org. The team must belong to it and the invitee must be a member of it (PP-04). */
+  orgId?: string;
 }
 
 export interface InviteMemberOutput {
@@ -41,6 +44,8 @@ export interface InviteMemberDeps {
   teamMemberRepo: TeamMemberRepo;
   userRepo: UserRepo;
   eventBus: EventBus;
+  /** Used to require that the invitee belongs to the team's org (PP-04). */
+  membershipRepo?: MembershipRepo;
 }
 
 export class InviteMember {
@@ -57,7 +62,8 @@ export class InviteMember {
     }
 
     const team = await teamRepo.findById(input.teamId);
-    if (!team) {
+    // A team of another org is indistinguishable from a missing one.
+    if (!team || (input.orgId !== undefined && team.orgId !== input.orgId)) {
       return err(new NotFound('Team not found.'));
     }
 
@@ -74,9 +80,15 @@ export class InviteMember {
       );
     }
 
+    // Unknown e-mail and "registered but in another org" return the SAME
+    // error so the endpoint is not a cross-tenant account oracle (PP-04).
+    const notInOrg = (): Result<InviteMemberOutput, DomainError> =>
+      err(new NotFound('No member of your organization has that email.'));
     const invited = await userRepo.findByEmail(trimmedEmail);
-    if (!invited) {
-      return err(new NotFound('No user found with that email.'));
+    if (!invited) return notInOrg();
+    if (input.orgId !== undefined) {
+      const membership = await this.deps.membershipRepo?.findByOrgAndUser(input.orgId, invited.id);
+      if (!membership) return notInOrg();
     }
 
     const existing = await teamMemberRepo.findByTeamAndUser(team.id, invited.id);
@@ -92,6 +104,7 @@ export class InviteMember {
 
     eventBus.emit({
       type: 'team.member_invited',
+      room: `user:${invited.id}`,
       payload: {
         teamId: team.id,
         teamName: team.name,

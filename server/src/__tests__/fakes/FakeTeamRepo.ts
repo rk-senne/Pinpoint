@@ -33,6 +33,7 @@ export class FakeTeamRepo implements TeamRepo {
       id,
       name: input.name,
       ownerId: input.ownerId,
+      orgId: input.orgId ?? null,
       createdAt: this.deps.clock.now().toISOString(),
     };
     this.teams.set(id, team);

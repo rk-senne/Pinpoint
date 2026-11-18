@@ -92,19 +92,28 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
 
     eventBus = new SocketIoEventBus(ioServer);
 
-    // Mock db that approves any project join for org-test (the org all
-    // test tokens use). The gateway only calls db('projects').where({...}).first('id')
-    // and db('annotations').where({...}).first('id').
-    const mockDb = ((table: string) => ({
-      where: (filter: Record<string, string>) => ({
-        first: () => {
-          if (filter.org_id === 'org-test') {
-            return Promise.resolve({ id: filter.id });
-          }
-          return Promise.resolve(undefined);
-        },
-      }),
-    })) as unknown as import('knex').Knex;
+    // Mock db: approves any project / annotation of org-test for the token's
+    // user (owner of everything), and reports a live session (token_version 0,
+    // membership role) for the `users as u` session lookup.
+    const mockDb = ((table: string) => {
+      const b: Record<string, unknown> = {};
+      let filter: Record<string, string> = {};
+      b.leftJoin = () => b;
+      b.where = (f: Record<string, string>) => {
+        filter = f;
+        return b;
+      };
+      b.first = () => {
+        if (table === 'users as u') return Promise.resolve({ token_version: 0, name: 'Tester', role: 'owner' });
+        if (filter.org_id === 'org-test') {
+          // owner_id is irrelevant here: team_members lookup below approves too.
+          return Promise.resolve({ id: filter.id, org_id: 'org-test', project_id: 'proj-1', owner_id: null, team_id: 't1', user_id: filter.user_id });
+        }
+        if (table === 'team_members') return Promise.resolve({ user_id: filter.user_id });
+        return Promise.resolve(undefined);
+      };
+      return b;
+    }) as unknown as import('knex').Knex;
 
     installCollabGateway(ioServer, { tokenIssuer, db: mockDb });
 

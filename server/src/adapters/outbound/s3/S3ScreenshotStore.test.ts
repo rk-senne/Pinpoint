@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { S3ScreenshotStore } from './S3ScreenshotStore.js';
 import type { S3ScreenshotStoreConfig } from './S3ScreenshotStore.js';
+import { StorageUnavailableError } from '../../../domain/annotation/ports/ScreenshotStore.js';
 
 // Minimal mock of S3Client — we only care about .send()
 function createMockS3Client(sendImpl: (...args: unknown[]) => unknown) {
@@ -66,5 +67,32 @@ describe('S3ScreenshotStore.fetchScreenshot', () => {
     const result = await store.fetchScreenshot('annotations/screenshots/abc/123.png');
 
     expect(result).toBeNull();
+  });
+});
+
+describe('S3ScreenshotStore upload failures', () => {
+  const cases: Array<[string, unknown]> = [
+    ['missing credentials', Object.assign(new Error('Could not load credentials from any providers'), { name: 'CredentialsProviderError' })],
+    ['connection refused', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })],
+    ['aggregate connection refused', Object.assign(new Error(''), { errors: [{ code: 'ECONNREFUSED' }] })],
+    ['no such bucket', Object.assign(new Error('nb'), { name: 'NoSuchBucket' })],
+    ['provider 5xx', Object.assign(new Error('boom'), { name: 'X', $metadata: { httpStatusCode: 503 } })],
+  ];
+  it.each(cases)('maps %s to StorageUnavailableError', async (_label, failure) => {
+    const store = new S3ScreenshotStore(createMockS3Client(async () => { throw failure; }), config);
+    await expect(
+      store.uploadScreenshot({ annotationId: 'a', body: Buffer.from('x'), contentType: 'image/png' }),
+    ).rejects.toBeInstanceOf(StorageUnavailableError);
+    await expect(
+      store.uploadMarkupDocument({ screenshotKey: 'k.png', markupDocument: {} }),
+    ).rejects.toBeInstanceOf(StorageUnavailableError);
+  });
+
+  it('leaves unrelated errors untouched', async () => {
+    const bug = new TypeError('bad input');
+    const store = new S3ScreenshotStore(createMockS3Client(async () => { throw bug; }), config);
+    await expect(
+      store.uploadScreenshot({ annotationId: 'a', body: Buffer.from('x'), contentType: 'image/png' }),
+    ).rejects.toBe(bug);
   });
 });

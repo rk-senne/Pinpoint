@@ -11,6 +11,7 @@ describe('createCustomGuideline use case', () => {
     const usecase = new CreateCustomGuideline({ guidelineRepo: repo });
 
     const result = await usecase.execute({
+      orgId: 'org-1',
       userId: 'user-1',
       name: '  My Heuristic  ',
       description: '  Useful in QA  ',
@@ -30,6 +31,7 @@ describe('createCustomGuideline use case', () => {
     const usecase = new CreateCustomGuideline({ guidelineRepo: repo });
 
     const result = await usecase.execute({
+      orgId: 'org-1',
       userId: 'user-1',
       name: '   ',
       description: 'desc',
@@ -45,6 +47,7 @@ describe('createCustomGuideline use case', () => {
     const usecase = new CreateCustomGuideline({ guidelineRepo: repo });
 
     const result = await usecase.execute({
+      orgId: 'org-1',
       userId: 'user-1',
       name: 'name',
       description: '',

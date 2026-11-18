@@ -20,6 +20,8 @@ import { Unauthorized, err, ok } from '../../shared/DomainError.js';
 import type { DomainError, Result } from '../../shared/DomainError.js';
 import type { Clock } from '../../shared/ports/Clock.js';
 import type { TokenIssuer } from '../ports/TokenIssuer.js';
+import type { UserRepo } from '../../user/ports/UserRepo.js';
+import type { MembershipRepo } from '../ports/MembershipRepo.js';
 
 export interface RefreshTokenInput {
   /** Raw JWT extracted from `Authorization: Bearer ...` or `fl_session` cookie. */
@@ -36,6 +38,14 @@ export interface RefreshTokenOutput {
 export interface RefreshTokenDeps {
   tokenIssuer: TokenIssuer;
   clock: Clock;
+  /**
+   * Both optional only so older wiring keeps compiling; when present refresh
+   * re-validates the account (exists, token_version not bumped, still a
+   * member of the token's org) and re-signs with the CURRENT role. The auth
+   * middleware enforces the same rules on every request regardless.
+   */
+  userRepo?: UserRepo;
+  membershipRepo?: MembershipRepo;
 }
 
 export class RefreshToken {
@@ -81,12 +91,38 @@ export class RefreshToken {
       return invalid();
     }
 
+    // PP-15: a session cannot be kept alive forever by refreshing. Tokens minted
+    // before the claim existed fall back to their own expiry as the start.
+    const maxSession = tokenIssuer.maxSessionSeconds;
+    const sessionStart = payload.sessionStart ?? payload.exp;
+    if (maxSession !== undefined && nowSeconds - sessionStart > maxSession) {
+      return invalid();
+    }
+
+    let { email, role, tokenVersion } = payload;
+    const { userRepo, membershipRepo } = this.deps;
+    if (userRepo) {
+      const account = await userRepo.findByIdWithSecret(payload.userId);
+      if (!account) return invalid();
+      const currentVersion = account.tokenVersion ?? 0;
+      // Revoked session (logout / password reset / revoke-sessions).
+      if ((payload.tokenVersion ?? 0) < currentVersion) return invalid();
+      tokenVersion = currentVersion;
+      email = account.email;
+    }
+    if (membershipRepo) {
+      const membership = await membershipRepo.findByOrgAndUser(payload.orgId, payload.userId);
+      if (!membership) return invalid();
+      role = membership.role;
+    }
+
     const token = tokenIssuer.sign({
       userId: payload.userId,
-      email: payload.email,
+      email,
       orgId: payload.orgId,
-      role: payload.role,
-      tokenVersion: payload.tokenVersion,
+      role,
+      tokenVersion,
+      sessionStart,
     });
     const csrfToken = randomBytes(32).toString('hex');
 

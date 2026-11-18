@@ -112,15 +112,19 @@ export function renderTemplate(payload: NotificationPayload): {
   body: string;
 } {
   const appUrl = process.env.APP_URL || 'http://localhost:5173';
+  // PP-17: every interpolated value is HTML-escaped in the body and stripped of
+  // CR/LF in the subject (header injection). Raw payload values never reach markup.
+  const e = escapeHtml;
+  const line = oneLine;
 
   switch (payload.kind) {
     case 'annotation_created': {
       const projectName = String(payload.projectName ?? 'Unknown');
       const projectId = String(payload.projectId ?? '');
       return {
-        subject: `New annotation on project: ${projectName}`,
+        subject: line(`New annotation on project: ${projectName}`),
         body: emailLayout(
-          `A new annotation was created on project "${projectName}".`,
+          `A new annotation was created on project "${e(projectName)}".`,
           `${appUrl}/projects/${projectId}`,
           'View Project',
         ),
@@ -130,9 +134,9 @@ export function renderTemplate(payload: NotificationPayload): {
       const annotationId = String(payload.annotationId ?? 'Unknown');
       const projectId = String(payload.projectId ?? '');
       return {
-        subject: `New comment on annotation #${payload.pinNumber ?? annotationId}`,
+        subject: line(`New comment on annotation #${payload.pinNumber ?? annotationId}`),
         body: emailLayout(
-          `A new comment was added to annotation #${payload.pinNumber ?? annotationId}.`,
+          `A new comment was added to annotation #${e(String(payload.pinNumber ?? annotationId))}.`,
           `${appUrl}/projects/${projectId}`,
           'View Annotation',
         ),
@@ -143,9 +147,9 @@ export function renderTemplate(payload: NotificationPayload): {
       const pinNumber = String(payload.pinNumber ?? '?');
       const projectId = String(payload.projectId ?? '');
       return {
-        subject: `${name} commented on your annotation #${pinNumber}`,
+        subject: line(`${name} commented on your annotation #${pinNumber}`),
         body: emailLayout(
-          `${name} commented on your annotation #${pinNumber}.`,
+          `${e(name)} commented on your annotation #${e(pinNumber)}.`,
           `${appUrl}/projects/${projectId}`,
           'View Annotation',
         ),
@@ -156,9 +160,9 @@ export function renderTemplate(payload: NotificationPayload): {
       const pinNumber = String(payload.pinNumber ?? '?');
       const projectId = String(payload.projectId ?? '');
       return {
-        subject: `@${name} mentioned you in a comment`,
+        subject: line(`@${name} mentioned you in a comment`),
         body: emailLayout(
-          `@${name} mentioned you in a comment on annotation #${pinNumber}.`,
+          `@${e(name)} mentioned you in a comment on annotation #${e(pinNumber)}.`,
           `${appUrl}/projects/${projectId}`,
           'View Comment',
         ),
@@ -170,24 +174,24 @@ export function renderTemplate(payload: NotificationPayload): {
       const status = String(payload.newStatus ?? 'unknown');
       const projectId = String(payload.projectId ?? '');
       return {
-        subject: `Annotation #${pinNumber} marked as ${status}`,
+        subject: line(`Annotation #${pinNumber} marked as ${status}`),
         body: emailLayout(
-          `Annotation #${pinNumber} was marked as ${status} by ${name}.`,
+          `Annotation #${e(pinNumber)} was marked as ${e(status)} by ${e(name)}.`,
           `${appUrl}/projects/${projectId}`,
           'View Annotation',
         ),
       };
     }
     case 'daily_digest': {
-      const newAnnotations = Number(payload.newAnnotations ?? 0);
-      const resolved = Number(payload.resolved ?? 0);
+      const newAnnotations = Number(payload.newAnnotations ?? 0) || 0;
+      const resolved = Number(payload.resolved ?? 0) || 0;
       const insight = String(payload.insight ?? '');
       const projectId = String(payload.projectId ?? '');
       const metricsHtml = `
         <div style="background:#f7f7fa;border-radius:6px;padding:12px 16px;margin:12px 0;">
           <div style="font-size:14px;margin-bottom:4px;"><strong>${newAnnotations}</strong> new annotations</div>
           <div style="font-size:14px;margin-bottom:4px;"><strong>${resolved}</strong> resolved</div>
-          ${insight ? `<div style="font-size:13px;color:#555;margin-top:8px;font-style:italic;">${insight}</div>` : ''}
+          ${insight ? `<div style="font-size:13px;color:#555;margin-top:8px;font-style:italic;">${e(insight)}</div>` : ''}
         </div>`;
       return {
         subject: `Daily digest: ${newAnnotations} new, ${resolved} resolved`,
@@ -204,7 +208,7 @@ export function renderTemplate(payload: NotificationPayload): {
       return {
         subject: `You've been promoted to project owner`,
         body: emailLayout(
-          `You have been promoted to owner of project "${projectName}".`,
+          `You have been promoted to owner of project "${e(projectName)}".`,
           `${appUrl}/projects/${projectId}`,
           'View Project',
         ),
@@ -213,9 +217,9 @@ export function renderTemplate(payload: NotificationPayload): {
     case 'project_deleted': {
       const projectName = String(payload.projectName ?? 'Unknown');
       return {
-        subject: `Project deleted: ${projectName}`,
+        subject: line(`Project deleted: ${projectName}`),
         body: emailLayout(
-          `The project "${projectName}" has been deleted.`,
+          `The project "${e(projectName)}" has been deleted.`,
           appUrl,
           'Open Dashboard',
         ),
@@ -241,6 +245,22 @@ export function renderTemplate(payload: NotificationPayload): {
   }
 }
 
+/** Escape text for HTML element content and double-quoted attributes. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Collapse CR/LF (and other control chars) so a value can never inject mail headers. */
+export function oneLine(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').trim();
+}
+
 /** Minimal inline-styled HTML email layout with brand header, message, CTA, and footer. */
 function emailLayout(message: string, ctaUrl: string, ctaLabel: string): string {
   return `<!DOCTYPE html>
@@ -256,7 +276,7 @@ function emailLayout(message: string, ctaUrl: string, ctaLabel: string): string 
   ${message}
 </td></tr>
 <tr><td style="padding:12px 0;">
-  <a href="${ctaUrl}" style="display:inline-block;padding:10px 24px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:4px;font-size:14px;font-weight:500;">${ctaLabel}</a>
+  <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;padding:10px 24px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:4px;font-size:14px;font-weight:500;">${escapeHtml(ctaLabel)}</a>
 </td></tr>
 <tr><td style="padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.5;">
   You're receiving this because of your Pinpoint notification settings.<br>

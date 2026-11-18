@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FakeAnnotationRepo,
   FakeClock,
+  FakeEventBus,
   FakeProjectRepo,
   FakeTeamMemberRepo,
 } from '../../../__tests__/fakes/index.js';
@@ -48,13 +49,15 @@ async function seed() {
     pinNumber: 1,
   });
 
+  const eventBus = new FakeEventBus();
   const usecase = new ChangeAnnotationStatus({
     annotationRepo,
     projectRepo,
     teamMemberRepo,
+    eventBus,
   });
 
-  return { usecase, annotation };
+  return { usecase, annotation, eventBus };
 }
 
 describe('changeAnnotationStatus use case', () => {
@@ -98,5 +101,31 @@ describe('changeAnnotationStatus use case', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe('NotFound');
+  });
+
+  it('emits annotation.status_changed to the project room with the previous status', async () => {
+    const { usecase, annotation, eventBus } = await seed();
+
+    await usecase.execute({ annotationId: annotation.id, actorUserId: 'owner-1', status: 'resolved' });
+
+    expect(eventBus.events).toHaveLength(1);
+    const [evt] = eventBus.events;
+    expect(evt!.type).toBe('annotation.status_changed');
+    expect(evt!.room).toBe(`project:${annotation.projectId}`);
+    expect(evt!.payload).toMatchObject({
+      id: annotation.id,
+      projectId: annotation.projectId,
+      status: 'resolved',
+      previousStatus: 'active',
+    });
+  });
+
+  it('does not emit when the status is unchanged or access is denied', async () => {
+    const { usecase, annotation, eventBus } = await seed();
+
+    await usecase.execute({ annotationId: annotation.id, actorUserId: 'owner-1', status: 'active' });
+    await usecase.execute({ annotationId: annotation.id, actorUserId: 'stranger', status: 'resolved' });
+
+    expect(eventBus.events).toHaveLength(0);
   });
 });

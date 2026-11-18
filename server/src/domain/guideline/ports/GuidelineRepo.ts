@@ -4,8 +4,11 @@ import type { Guideline, NewGuideline } from '../Guideline.js';
 
 export interface GuidelineRepo {
   insert(input: NewGuideline): Promise<Guideline>;
-  /** Defaults first, then alphabetical by name. */
-  list(): Promise<Guideline[]>;
+  /**
+   * Global defaults plus the custom guidelines owned by `orgId` — never
+   * another org's. Defaults first, then alphabetical by name.
+   */
+  list(orgId: string): Promise<Guideline[]>;
   /** Are the Nielsen defaults already seeded? */
   hasDefaults(): Promise<boolean>;
   /** Bulk insert used by the seeder when `hasDefaults()` returns false. */

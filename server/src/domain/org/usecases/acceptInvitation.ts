@@ -1,6 +1,7 @@
 import type { InvitationRepo } from '../ports/InvitationRepo.js';
 import type { MembershipRepo, Membership } from '../../auth/ports/MembershipRepo.js';
 import type { Clock } from '../../shared/ports/Clock.js';
+import { hashInvitationToken } from './inviteToOrg.js';
 import {
   NotFound,
   Unauthorized,
@@ -14,6 +15,12 @@ import {
 export interface AcceptInvitationInput {
   token: string;
   userId: string;
+  /**
+   * Email of the authenticated accepting user (from the DB, not the request).
+   * The invitation is bound to the invited address: a different account that
+   * somehow obtained the link cannot redeem it.
+   */
+  userEmail: string;
 }
 
 export interface AcceptInvitationOutput {
@@ -32,9 +39,22 @@ export class AcceptInvitation {
   async execute(input: AcceptInvitationInput): Promise<Result<AcceptInvitationOutput, DomainError>> {
     const { invitationRepo, membershipRepo, clock } = this.deps;
 
-    const invitation = await invitationRepo.findByToken(input.token);
-    if (!invitation) {
-      return err(new NotFound('Invitation not found or already used.'));
+    const notFound = (): Result<AcceptInvitationOutput, DomainError> =>
+      err(new NotFound('Invitation not found or already used.'));
+
+    if (typeof input.token !== 'string' || input.token.length === 0) return notFound();
+
+    // Only the hash is stored; look up by hash of the presented token.
+    const invitation = await invitationRepo.findByToken(hashInvitationToken(input.token));
+    if (!invitation) return notFound();
+
+    // Bind to the invited email. Same response as "unknown token" so the
+    // endpoint can't be used to probe which tokens exist.
+    if (
+      typeof input.userEmail !== 'string' ||
+      input.userEmail.trim().toLowerCase() !== invitation.email.trim().toLowerCase()
+    ) {
+      return notFound();
     }
 
     const now = clock.now();
@@ -43,8 +63,8 @@ export class AcceptInvitation {
       return err(new Unauthorized('Invitation has expired.'));
     }
 
-    const existing = await membershipRepo.findDefaultForUser(input.userId);
-    if (existing && existing.orgId === invitation.orgId) {
+    const existing = await membershipRepo.findByOrgAndUser(invitation.orgId, input.userId);
+    if (existing) {
       await invitationRepo.deleteById(invitation.id);
       return err(new Conflict('You are already a member of this organization.'));
     }

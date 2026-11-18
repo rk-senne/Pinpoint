@@ -57,12 +57,45 @@ export class VerifyEmail {
       clock.now(),
     );
     if (!record) {
-      return invalidToken();
+      return this.confirmEmailChange(tokenHash, clock.now());
     }
 
     await userRepo.markVerified(record.userId);
     await authTokenRepo.markUsed(record.id);
 
+    return ok({ verified: true });
+  }
+
+  /**
+   * PP-06: the same dashboard link (`/verify-email/:token`) also confirms an
+   * e-mail change. Applies the stored `pending_email`, clears it, revokes every
+   * session of the user (token_version bump) and burns the token.
+   */
+  private async confirmEmailChange(
+    tokenHash: string,
+    now: Date,
+  ): Promise<Result<VerifyEmailOutput, DomainError>> {
+    const { authTokenRepo, userRepo } = this.deps;
+    const invalid = (): Result<VerifyEmailOutput, DomainError> =>
+      err(new Validation('Verification token is invalid or has expired.'));
+    const record = await authTokenRepo.findValid(tokenHash, 'change_email', now);
+    if (!record) return invalid();
+    const user = await userRepo.findByIdWithSecret(record.userId);
+    const pending = user?.pendingEmail;
+    if (!user || !pending) {
+      await authTokenRepo.markUsed(record.id);
+      return invalid();
+    }
+    const taken = await userRepo.findByEmail(pending);
+    if (taken && taken.id !== user.id) {
+      await authTokenRepo.markUsed(record.id);
+      await userRepo.setPendingEmail(user.id, null);
+      return invalid();
+    }
+    await userRepo.update(user.id, { email: pending, verified: true });
+    await userRepo.setPendingEmail(user.id, null);
+    await authTokenRepo.markUsed(record.id);
+    await userRepo.incrementTokenVersion(user.id);
     return ok({ verified: true });
   }
 }

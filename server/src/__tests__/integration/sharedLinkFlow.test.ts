@@ -23,7 +23,7 @@
 
 import bcrypt from 'bcrypt';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../supertestClient.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createSharedLinkRoutes } from '../../adapters/inbound/http/sharedLinks.routes.js';
@@ -39,6 +39,8 @@ import {
 import type { SharedLink } from '../../domain/sharedLink/SharedLink.js';
 import { FakeClock } from '../fakes/FakeClock.js';
 import { FakeSharedLinkRepo } from '../fakes/FakeSharedLinkRepo.js';
+import { FakeAnnotationRepo } from '../fakes/FakeAnnotationRepo.js';
+import { FakePageRepo } from '../fakes/FakePageRepo.js';
 
 interface SeedOverrides {
   id?: string;
@@ -100,6 +102,11 @@ function buildHarness(): Harness {
     createSharedLink,
     verifyLinkPassword,
     authMiddleware: (_req, _res, next) => next(),
+    sharedLinkRepo,
+    annotationRepo: new FakeAnnotationRepo(clock),
+    pageRepo: new FakePageRepo(clock),
+    accessSecret: 'test-secret',
+    cookieInsecure: true,
   });
 
   const app = express();

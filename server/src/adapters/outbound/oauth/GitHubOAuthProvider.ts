@@ -40,21 +40,21 @@ export class GitHubOAuthProvider implements OAuthProvider {
     if (!userRes.ok) throw new Error(`GitHub user fetch failed: ${userRes.status}`);
     const user = (await userRes.json()) as { id: number; login: string; name?: string; avatar_url?: string; email?: string };
 
-    let email = user.email;
-    if (!email) {
-      const emailsRes = await fetch('https://api.github.com/user/emails', { headers });
-      if (emailsRes.ok) {
-        const emails = (await emailsRes.json()) as { email: string; primary: boolean; verified: boolean }[];
-        const primary = emails.find((e) => e.primary && e.verified);
-        email = primary?.email ?? emails.find((e) => e.verified)?.email;
-      }
+    // `user.email` is the public profile email and carries no verification
+    // signal, so always resolve the PRIMARY + VERIFIED address from
+    // /user/emails. Only that address may link to / create a local account.
+    let email: string | undefined;
+    const emailsRes = await fetch('https://api.github.com/user/emails', { headers });
+    if (emailsRes.ok) {
+      const emails = (await emailsRes.json()) as { email: string; primary: boolean; verified: boolean }[];
+      email = emails.find((e) => e.primary && e.verified)?.email;
     }
-
     if (!email) throw new Error('GitHub account has no verified email.');
 
     return {
       id: String(user.id),
       email,
+      emailVerified: true,
       name: user.name || user.login,
       avatarUrl: user.avatar_url,
     };

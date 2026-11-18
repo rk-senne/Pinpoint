@@ -2,7 +2,7 @@
 // PKCE S256 support for mobile deep-link callbacks (Task 1).
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { OAuthLogin, OAuthProvider } from '../../../domain/auth/usecases/oauthLogin.js';
 
 export interface OAuthRouteDeps {
@@ -11,6 +11,22 @@ export interface OAuthRouteDeps {
   callbackBaseUrl: string;
   appUrl: string;
   cookieInsecure?: boolean;
+  /**
+   * HMAC key (OAUTH_STATE_SECRET) signing the `oauth_state` cookie. Required:
+   * an unsigned state cookie lets an attacker who can plant a cookie (sibling
+   * subdomain, XSS on a neighbour) complete a login-CSRF.
+   */
+  stateSecret: string;
+  /** State cookie lifetime in ms (default 10 minutes). */
+  stateTtlMs?: number;
+  /** Test seam: clock. */
+  now?: () => number;
+  /**
+   * IGNORED. OAuth login initiation must work for a visitor with no session
+   * (that is the whole point of "log in with …"); gating `/google` and
+   * `/github` behind auth made them unusable. Kept optional only so callers
+   * that still pass it keep type-checking.
+   */
   authMiddleware?: (req: Request, res: Response, next: NextFunction) => void;
 }
 
@@ -30,14 +46,70 @@ function verifyPkceS256(codeVerifier: string, codeChallenge: string): boolean {
   return hash === codeChallenge;
 }
 
-interface OAuthStateCookie {
-  state: string;
-  codeChallenge?: string;
-  codeChallengeMethod?: string;
+interface OAuthStatePayload {
+  /** Random state echoed by the provider on the callback. */
+  s: string;
+  /** Provider this state was issued for — a state minted for google can't complete github. */
+  p: string;
+  /** Expiry, epoch ms. */
+  e: number;
+  /** PKCE challenge (mobile flow). */
+  cc?: string;
+  ccm?: string;
+}
+
+const STATE_COOKIE = 'oauth_state';
+const STATE_COOKIE_PATH = '/api/v1/auth/oauth';
+
+function b64u(buf: Buffer | string): string {
+  return Buffer.from(buf).toString('base64url');
+}
+
+function sign(secret: string, payloadB64: string): string {
+  return createHmac('sha256', secret).update(payloadB64).digest('base64url');
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+/** `<payload>.<hmac>` — tamper-evident, provider-bound, expiring. */
+export function signOAuthState(secret: string, payload: OAuthStatePayload): string {
+  const body = b64u(JSON.stringify(payload));
+  return `${body}.${sign(secret, body)}`;
+}
+
+/** Returns the payload only if the MAC verifies (constant time) AND it hasn't expired. */
+export function verifyOAuthState(
+  secret: string,
+  raw: unknown,
+  nowMs: number,
+): OAuthStatePayload | null {
+  if (typeof raw !== 'string') return null;
+  const dot = raw.indexOf('.');
+  if (dot <= 0 || dot === raw.length - 1) return null;
+  const body = raw.slice(0, dot);
+  const mac = raw.slice(dot + 1);
+  if (!safeEqual(mac, sign(secret, body))) return null;
+  try {
+    const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as OAuthStatePayload;
+    if (typeof p.s !== 'string' || typeof p.p !== 'string' || typeof p.e !== 'number') return null;
+    if (p.e <= nowMs) return null;
+    return p;
+  } catch {
+    return null;
+  }
 }
 
 export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
-  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false, authMiddleware } = deps;
+  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false, stateSecret } = deps;
+  if (typeof stateSecret !== 'string' || stateSecret.length === 0) {
+    throw new Error('createOAuthRoutes: stateSecret (OAUTH_STATE_SECRET) is required');
+  }
+  const stateTtlMs = deps.stateTtlMs ?? 600_000;
+  const now = deps.now ?? Date.now;
   const router = Router();
 
   function handleRedirect(providerName: string, req: Request, res: Response): void {
@@ -53,17 +125,18 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
       code_challenge_method?: string;
     };
 
-    const cookiePayload: OAuthStateCookie = { state };
+    const payload: OAuthStatePayload = { s: state, p: providerName, e: now() + stateTtlMs };
     if (code_challenge) {
-      cookiePayload.codeChallenge = code_challenge;
-      cookiePayload.codeChallengeMethod = code_challenge_method || 'S256';
+      payload.cc = code_challenge;
+      payload.ccm = code_challenge_method || 'S256';
     }
 
-    res.cookie('oauth_state', JSON.stringify(cookiePayload), {
+    res.cookie(STATE_COOKIE, signOAuthState(stateSecret, payload), {
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 600_000,
+      maxAge: stateTtlMs,
       secure: !cookieInsecure,
+      path: STATE_COOKIE_PATH,
     });
     res.redirect(provider.getAuthorizationUrl(state, redirectUri));
   }
@@ -78,23 +151,33 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
       code_verifier?: string;
     };
 
-    // Parse state cookie (supports both legacy string and new JSON formats)
-    const rawCookie = req.cookies?.oauth_state;
-    res.clearCookie('oauth_state');
+    // Single-use: always drop the state cookie (same path it was set with).
+    const rawCookie = req.cookies?.[STATE_COOKIE];
+    res.clearCookie(STATE_COOKIE, { path: STATE_COOKIE_PATH });
 
-    let stateCookie: OAuthStateCookie | null = null;
-    if (typeof rawCookie === 'string') {
-      try {
-        stateCookie = JSON.parse(rawCookie) as OAuthStateCookie;
-      } catch {
-        // Legacy format: plain state string
-        stateCookie = { state: rawCookie };
-      }
-    }
-
-    if (!code || !state || !stateCookie || state !== stateCookie.state) {
+    const stateCookie = verifyOAuthState(stateSecret, rawCookie, now());
+    if (
+      !code ||
+      !state ||
+      !stateCookie ||
+      stateCookie.p !== providerName ||
+      !safeEqual(state, stateCookie.s)
+    ) {
       res.redirect(`${appUrl}/auth?error=oauth_failed`);
       return;
+    }
+
+    // PKCE mobile flow: validate BEFORE exchanging the code / creating anything.
+    const pkce = Boolean(code_verifier && stateCookie.cc);
+    if (pkce) {
+      if (stateCookie.ccm !== 'S256') {
+        res.status(400).json({ error: { code: 'VALIDATION', message: 'Unsupported code_challenge_method. Only S256 is supported.' } });
+        return;
+      }
+      if (!verifyPkceS256(code_verifier!, stateCookie.cc!)) {
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'PKCE verification failed.' } });
+        return;
+      }
     }
 
     const redirectUri = `${callbackBaseUrl}/api/v1/auth/oauth/${providerName}/callback`;
@@ -104,16 +187,7 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
       return;
     }
 
-    // PKCE mobile flow: validate code_verifier and return JSON
-    if (code_verifier && stateCookie.codeChallenge) {
-      if (stateCookie.codeChallengeMethod !== 'S256') {
-        res.status(400).json({ error: { code: 'VALIDATION', message: 'Unsupported code_challenge_method. Only S256 is supported.' } });
-        return;
-      }
-      if (!verifyPkceS256(code_verifier, stateCookie.codeChallenge)) {
-        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'PKCE verification failed.' } });
-        return;
-      }
+    if (pkce) {
       // Mobile clients get JSON response (can't use cookies)
       const { token, user } = result.value;
       res.status(200).json({ token, user });
@@ -122,28 +196,21 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
 
     // Web flow: redirect with cookies
     const { token, csrfToken } = result.value;
-    res.setHeader('Set-Cookie', [buildSessionCookie(token, cookieInsecure), buildCsrfCookie(csrfToken)]);
+    // append (not set): keep the state-cookie clearing header queued above.
+    res.append('Set-Cookie', [buildSessionCookie(token, cookieInsecure), buildCsrfCookie(csrfToken)]);
     res.redirect(appUrl);
   }
 
-  // --- Google ---
-  if (authMiddleware) {
-    router.get('/google', authMiddleware, (req, res) => handleRedirect('google', req, res));
-  } else {
-    router.get('/google', (req, res) => handleRedirect('google', req, res));
+  // Login initiation + callback are PUBLIC: the visitor has no session yet.
+  // CSRF protection is the signed, provider-bound, expiring state cookie.
+  for (const name of ['google', 'github'] as const) {
+    router.get(`/${name}`, (req, res) => handleRedirect(name, req, res));
+    router.get(`/${name}/callback`, (req, res) => {
+      handleCallback(name, req, res).catch(() => {
+        if (!res.headersSent) res.redirect(`${appUrl}/auth?error=oauth_failed`);
+      });
+    });
   }
-  // Callback route — NO auth middleware; OAuth providers redirect here before the user is authenticated.
-  // State param is validated instead to prevent CSRF.
-  router.get('/google/callback', (req, res) => handleCallback('google', req, res));
-
-  // --- GitHub ---
-  if (authMiddleware) {
-    router.get('/github', authMiddleware, (req, res) => handleRedirect('github', req, res));
-  } else {
-    router.get('/github', (req, res) => handleRedirect('github', req, res));
-  }
-  // Callback route — NO auth middleware; state param validated instead.
-  router.get('/github/callback', (req, res) => handleCallback('github', req, res));
 
   return router;
 }

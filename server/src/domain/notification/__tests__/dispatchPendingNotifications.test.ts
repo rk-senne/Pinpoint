@@ -10,7 +10,7 @@ import {
   FakeNotificationQueue,
   FakeUserRepo,
 } from '../../../__tests__/fakes/index.js';
-import { DispatchPendingNotifications } from '../usecases/dispatchPendingNotifications.js';
+import { DispatchPendingNotifications, renderTemplate } from '../usecases/dispatchPendingNotifications.js';
 
 async function buildSut() {
   const clock = new FakeClock(new Date('2024-06-01T00:00:00Z'));
@@ -82,5 +82,25 @@ describe('dispatchPendingNotifications use case', () => {
     expect(mailer.sent).toHaveLength(0);
     expect(notificationQueue.rows.get(id)?.status).toBe('failed');
     expect(logger.logs.some((l) => l.level === 'warn')).toBe(true);
+  });
+});
+
+describe('renderTemplate escaping (PP-17)', () => {
+  const evil = '<img src=x onerror=alert(1)>"&\r\nBcc: attacker@evil.test';
+
+  it.each([
+    ['annotation_created', { projectName: evil }],
+    ['comment_on_own', { actorName: evil, pinNumber: evil }],
+    ['mention', { actorName: evil, pinNumber: evil }],
+    ['status_change', { actorName: evil, pinNumber: evil, newStatus: evil }],
+    ['daily_digest', { insight: evil }],
+    ['promoted_to_owner', { projectName: evil }],
+    ['project_deleted', { projectName: evil }],
+  ] as const)('%s: no raw markup in the body, no CR/LF in the subject', (kind, extra) => {
+    const { subject, body } = renderTemplate({ kind, ...extra } as never);
+    expect(body).not.toContain('<img');
+    expect(body).not.toContain('onerror=alert(1)>');
+    expect(body).toContain('&lt;img');
+    expect(subject).not.toMatch(/[\r\n]/);
   });
 });

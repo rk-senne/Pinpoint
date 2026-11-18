@@ -1,5 +1,15 @@
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
- * Builds the HTML email body for an org invitation.
+ * Builds the HTML email body for an org invitation. All interpolated values
+ * are HTML-escaped (org / inviter names are user-controlled).
  */
 export function buildInvitationEmail(params: {
   orgName: string;
@@ -7,7 +17,10 @@ export function buildInvitationEmail(params: {
   role: string;
   acceptUrl: string;
 }): { subject: string; html: string } {
-  const { orgName, inviterName, role, acceptUrl } = params;
+  const orgName = escapeHtml(params.orgName);
+  const inviterName = escapeHtml(params.inviterName);
+  const role = escapeHtml(params.role);
+  const acceptUrl = escapeHtml(params.acceptUrl);
 
   const subject = `You've been invited to join ${orgName} on Pinpoint`;
 

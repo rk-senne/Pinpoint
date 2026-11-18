@@ -8,7 +8,9 @@
 
 import type { Express, NextFunction, Request, Response } from 'express';
 
-import { createAuthMiddleware, type AuthMiddlewareDeps } from './auth.middleware.js';
+import { createAuthMiddleware, createOptionalAuthMiddleware, type AuthMiddlewareDeps } from './auth.middleware.js';
+import { createApiKeyOrJwtMiddleware } from '../../../middleware/apiKeyOrJwt.js';
+import type { ApiKeyRepo } from '../../../domain/org/ports/ApiKeyRepo.js';
 import { createAuthRoutes, type AuthRouteDeps } from './auth.routes.js';
 import { createProjectsRoutes, type ProjectsRouteDeps } from './projects.routes.js';
 import {
@@ -45,6 +47,7 @@ import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
 import { createTriageRoutes, type TriageRouteDeps } from './triage.routes.js';
 import { createAuditLogRoutes, type AuditLogRouteDeps } from './auditLog.routes.js';
 import { serveApiDocs } from './apiDocs.js';
+import { guardViewerWrites } from './access.js';
 
 export {
   createAuthMiddleware,
@@ -115,7 +118,8 @@ export { recordAudit } from './auditLog.routes.js';
  */
 export interface InboundHttpDeps {
   /** Wired authentication middleware factory inputs. */
-  auth: AuthMiddlewareDeps;
+  /** `apiKeyRepo` enables scoped org API keys on the automation routes. */
+  auth: AuthMiddlewareDeps & { apiKeyRepo?: ApiKeyRepo };
   authRoutes: Omit<AuthRouteDeps, never>;
   projectsRoutes: Omit<ProjectsRouteDeps, 'authMiddleware'>;
   annotationsRoutes: Omit<AnnotationRouteDeps, 'authMiddleware'>;
@@ -154,31 +158,46 @@ export interface InboundHttpDeps {
 export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   const authMiddleware: (req: Request, res: Response, next: NextFunction) => void =
     createAuthMiddleware(deps.auth);
+  // Standard org API keys (scoped feedback:read / feedback:write) are
+  // accepted ONLY on the automation surface the MCP server uses. Every
+  // other router stays session/JWT-only.
+  const automationAuth: (req: Request, res: Response, next: NextFunction) => void =
+    deps.auth.apiKeyRepo
+      ? createApiKeyOrJwtMiddleware({ apiKeyRepo: deps.auth.apiKeyRepo, jwtMiddleware: authMiddleware })
+      : authMiddleware;
 
-  const authRouter = createAuthRoutes(deps.authRoutes);
+  // PP-05: every tenant router gets the viewer write-guard by default.
+  const tenantAuth = guardViewerWrites(authMiddleware);
+  const tenantAutomationAuth = guardViewerWrites(automationAuth);
+
+  const authRouter = createAuthRoutes({
+    ...deps.authRoutes,
+    // Identifies the caller on /logout so their sessions can be revoked.
+    optionalAuth: createOptionalAuthMiddleware(deps.auth),
+  });
   const projectsRouter = createProjectsRoutes({
     ...deps.projectsRoutes,
-    authMiddleware,
+    authMiddleware: tenantAutomationAuth,
   });
   const { projectAnnotationsRouter, annotationRouter } = createAnnotationRoutes({
     ...deps.annotationsRoutes,
-    authMiddleware,
+    authMiddleware: tenantAutomationAuth,
   });
   const commentsRouter = createCommentsRoutes({
     ...deps.commentsRoutes,
-    authMiddleware,
+    authMiddleware: tenantAutomationAuth,
   });
   const teamsRouter = createTeamsRoutes({
     ...deps.teamsRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const { shareRouter, verifyRouter } = createSharedLinkRoutes({
     ...deps.sharedLinkRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const guidelinesRouter = createGuidelinesRoutes({
     ...deps.guidelinesRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const usersRouter = createUsersRoutes({
     ...deps.usersRoutes,
@@ -186,7 +205,7 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   });
   const webhooksRouter = createWebhookRoutes({
     ...deps.webhooksRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const notificationsRouter = createNotificationsRoutes({
     ...deps.notificationsRoutes,
@@ -194,35 +213,35 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   });
   const orgRouter = createOrgRoutes({
     ...deps.orgRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const apiKeysRouter = createApiKeyRoutes({
     ...deps.apiKeysRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const feedbackRouter = createFeedbackRoutes({
     ...deps.feedbackRoutes,
-    authMiddleware,
+    authMiddleware: tenantAutomationAuth,
   });
   const heatmapRouter = createHeatmapRoutes({
     ...deps.heatmapRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const premiumRouter = createPremiumRoutes({
     ...deps.premiumRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const clientPortalRouter = createClientPortalRoutes({
     ...deps.clientPortalRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const workflowRouter = createWorkflowRoutes({
     ...deps.workflowRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
   const reportingRouter = createReportingRoutes({
     ...deps.reportingRoutes,
-    authMiddleware,
+    authMiddleware: tenantAuth,
   });
 
   app.use('/api/v1/auth', authRouter);
@@ -254,35 +273,35 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
 
   // OAuth routes (optional — only mounted when provider credentials are configured)
   if (deps.oauthRoutes) {
-    const oauthRouter = createOAuthRoutes({ ...deps.oauthRoutes, authMiddleware });
+    const oauthRouter = createOAuthRoutes({ ...deps.oauthRoutes });
     app.use('/api/v1/auth/oauth', oauthRouter);
   }
 
   // Billing routes (optional — only mounted when STRIPE_SECRET_KEY is set)
   if (deps.billingRoutes) {
-    const billingRouter = createBillingRoutes({ ...deps.billingRoutes, authMiddleware });
+    const billingRouter = createBillingRoutes({ ...deps.billingRoutes, authMiddleware: tenantAuth });
     app.use('/api/v1/billing', billingRouter);
   }
 
   // Integrations routes (optional)
   if (deps.integrationsRoutes) {
-    const integrationsRouter = createIntegrationsRoutes({ ...deps.integrationsRoutes, authMiddleware });
+    const integrationsRouter = createIntegrationsRoutes({ ...deps.integrationsRoutes, authMiddleware: tenantAuth });
     app.use('/api/v1/integrations', integrationsRouter);
   }
 
   // Bulk actions route
-  const bulkRouter = createBulkRoutes({ ...deps.bulkRoutes, authMiddleware });
+  const bulkRouter = createBulkRoutes({ ...deps.bulkRoutes, authMiddleware: tenantAuth });
   app.use('/api/v1/projects', bulkRouter);
 
   // AI feedback triage route (read-only suggestions)
-  const triageRouter = createTriageRoutes({ ...deps.triageRoutes, authMiddleware });
+  const triageRouter = createTriageRoutes({ ...deps.triageRoutes, authMiddleware: tenantAuth });
   app.use('/api/v1/projects', triageRouter);
 
   // Activity feed route
-  const activityRouter = createActivityRoutes({ ...deps.activityRoutes, authMiddleware });
+  const activityRouter = createActivityRoutes({ ...deps.activityRoutes, authMiddleware: tenantAuth });
   app.use('/api/v1/projects/:id/activity', activityRouter);
 
   // Audit log route (mounted under /org)
-  const auditLogRouter = createAuditLogRoutes({ ...deps.auditLogRoutes, authMiddleware });
+  const auditLogRouter = createAuditLogRoutes({ ...deps.auditLogRoutes, authMiddleware: tenantAuth });
   app.use('/api/v1/org/audit-log', auditLogRouter);
 }

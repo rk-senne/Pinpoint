@@ -27,8 +27,9 @@ import {
   GetObjectCommand,
 } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
-import type {
-  ScreenshotStore,
+import {
+  StorageUnavailableError,
+  type ScreenshotStore,
   UploadScreenshotInput,
   UploadScreenshotResult,
   UploadMarkupInput,
@@ -54,6 +55,50 @@ export interface S3ScreenshotStoreConfig {
   keyPrefix?: string;
 }
 
+const UNAVAILABLE_NAMES = new Set([
+  'CredentialsProviderError', // no AWS credentials resolvable (storage not configured)
+  'NoSuchBucket',
+  'InvalidAccessKeyId',
+  'SignatureDoesNotMatch',
+  'AccessDenied',
+  'ExpiredToken',
+  'UnknownEndpoint',
+  'TimeoutError',
+  'NetworkingError',
+  'ServiceUnavailable',
+  'SlowDown',
+  'InternalError',
+  'RequestTimeout',
+]);
+const UNAVAILABLE_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH',
+]);
+
+/**
+ * Turn "the store is not configured / not reachable" failures into
+ * `StorageUnavailableError`; leave every other error (a genuine bug) as is.
+ */
+export function mapStorageError(err: unknown): unknown {
+  if (err instanceof StorageUnavailableError) return err;
+  const e = err as {
+    name?: string;
+    Code?: string;
+    code?: string;
+    errors?: Array<{ code?: string }>;
+    $metadata?: { httpStatusCode?: number };
+  } | null;
+  const status = e?.$metadata?.httpStatusCode;
+  const unavailable =
+    (e?.name !== undefined && UNAVAILABLE_NAMES.has(e.name)) ||
+    (e?.Code !== undefined && UNAVAILABLE_NAMES.has(e.Code)) ||
+    (e?.code !== undefined && UNAVAILABLE_CODES.has(e.code)) ||
+    (e?.errors?.some((x) => x.code !== undefined && UNAVAILABLE_CODES.has(x.code)) ?? false) ||
+    (typeof status === 'number' && status >= 500);
+  return unavailable
+    ? new StorageUnavailableError('Screenshot storage is not configured or is unreachable.', err)
+    : err;
+}
+
 const DEFAULT_KEY_PREFIX = 'annotations/screenshots';
 const MARKUP_KEY_SUFFIX = '.markup.json';
 
@@ -68,14 +113,18 @@ export class S3ScreenshotStore implements ScreenshotStore {
   ): Promise<UploadScreenshotResult> {
     const objectKey = this.buildScreenshotKey(input.annotationId);
 
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.config.bucket,
-        Key: objectKey,
-        Body: input.body,
-        ContentType: input.contentType,
-      }),
-    );
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.config.bucket,
+          Key: objectKey,
+          Body: input.body,
+          ContentType: input.contentType,
+        }),
+      );
+    } catch (err) {
+      throw mapStorageError(err);
+    }
 
     return { objectKey, url: this.buildScreenshotUrl(objectKey) };
   }
@@ -101,14 +150,18 @@ export class S3ScreenshotStore implements ScreenshotStore {
     const objectKey = this.buildMarkupKey(input.screenshotKey);
     const body = Buffer.from(JSON.stringify(input.markupDocument), 'utf8');
 
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.config.bucket,
-        Key: objectKey,
-        Body: body,
-        ContentType: 'application/json',
-      }),
-    );
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.config.bucket,
+          Key: objectKey,
+          Body: body,
+          ContentType: 'application/json',
+        }),
+      );
+    } catch (err) {
+      throw mapStorageError(err);
+    }
 
     return { objectKey, url: this.buildScreenshotUrl(objectKey) };
   }
@@ -155,7 +208,7 @@ export class S3ScreenshotStore implements ScreenshotStore {
       ) {
         return null;
       }
-      throw err;
+      throw mapStorageError(err);
     }
   }
 
@@ -214,7 +267,7 @@ export class S3ScreenshotStore implements ScreenshotStore {
       ) {
         return null;
       }
-      throw err;
+      throw mapStorageError(err);
     }
   }
 

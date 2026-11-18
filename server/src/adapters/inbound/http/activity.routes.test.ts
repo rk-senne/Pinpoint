@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.js';
 
@@ -14,7 +14,7 @@ function noopAuth(_req: express.Request, _res: express.Response, next: express.N
   next();
 }
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
 
 function makeMockDb(rows: any[] = [], total = 0, opts: { projectOwned?: boolean } = {}) {
   const { projectOwned = true } = opts;
@@ -36,7 +36,7 @@ function makeMockDb(rows: any[] = [], total = 0, opts: { projectOwned?: boolean 
       const builder: any = {};
       const chain = () => builder;
       builder.where = vi.fn(chain);
-      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID } : undefined));
+      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID, owner_id: 'u1' } : undefined));
       return builder;
     }
     callCount++;

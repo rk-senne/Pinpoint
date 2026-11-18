@@ -21,6 +21,8 @@ export interface FakeTokenIssuerOptions {
   accessTtlSeconds?: number;
   /** Sliding refresh window in seconds. Defaults to 7 days. */
   graceWindowSeconds?: number;
+  /** Absolute session lifetime in seconds. Defaults to 30 days. */
+  maxSessionSeconds?: number;
 }
 
 const DEFAULT_ACCESS_TTL_SECONDS = 24 * 60 * 60;
@@ -29,6 +31,7 @@ const DEFAULT_GRACE_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 export class FakeTokenIssuer implements TokenIssuer {
   private readonly accessTtlSeconds: number;
   readonly graceWindowSeconds: number;
+  readonly maxSessionSeconds: number;
 
   constructor(
     private readonly clock: Clock,
@@ -37,12 +40,14 @@ export class FakeTokenIssuer implements TokenIssuer {
     this.accessTtlSeconds = options.accessTtlSeconds ?? DEFAULT_ACCESS_TTL_SECONDS;
     this.graceWindowSeconds =
       options.graceWindowSeconds ?? DEFAULT_GRACE_WINDOW_SECONDS;
+    this.maxSessionSeconds = options.maxSessionSeconds ?? 30 * 24 * 60 * 60;
   }
 
   sign(payload: TokenPayload): string {
     const nowSeconds = Math.floor(this.clock.now().getTime() / 1000);
     const exp = nowSeconds + this.accessTtlSeconds;
-    return JSON.stringify({ ...payload, exp } satisfies VerifiedToken);
+    const sessionStart = payload.sessionStart ?? nowSeconds;
+    return JSON.stringify({ ...payload, sessionStart, exp } satisfies VerifiedToken);
   }
 
   verify(token: string): VerifiedToken {
@@ -85,6 +90,7 @@ export class FakeTokenIssuer implements TokenIssuer {
       role: claims.role,
       tokenVersion: claims.tokenVersion,
       exp: claims.exp,
+      ...(typeof claims.sessionStart === 'number' ? { sessionStart: claims.sessionStart } : {}),
     };
   }
 }

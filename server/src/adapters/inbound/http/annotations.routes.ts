@@ -27,6 +27,9 @@ import {
   PaginationParamsSchema,
   paginationMeta,
   SeveritySchema,
+  ConsoleLogsSchema,
+  JsErrorsSchema,
+  SessionReplaySchema,
 } from '@pinpoint/shared';
 
 import type { Knex } from 'knex';
@@ -38,8 +41,8 @@ import type { DeleteAnnotation } from '../../../domain/annotation/usecases/delet
 import type { AttachScreenshot } from '../../../domain/annotation/usecases/attachScreenshot.js';
 import type { AnnotationRepo } from '../../../domain/annotation/ports/AnnotationRepo.js';
 import type { AnnotationPatch } from '../../../domain/annotation/Annotation.js';
-import { sendDomainError, sendZodFailure, paramString } from './errors.js';
-import { invalidateCache } from '../../../middleware/cache.js';
+import { sendDomainError, sendZodFailure, sendError, paramString } from './errors.js';
+import { isOrgMember, registerSessionDb, requireAnnotationAccess, requireProjectAccess, requireWriteAccess } from './access.js';
 import { createTriageService } from '../../../services/triage.js';
 import { getSuggestions } from '../../../services/smartSuggestions.js';
 
@@ -68,6 +71,8 @@ export interface AnnotationRouteDeps {
   buildScreenshotUrl: (objectKey: string) => string;
   /** Fetches a screenshot PNG from the store by its object key. */
   fetchScreenshotBuffer: (objectKey: string) => Promise<Buffer | null>;
+  /** Fetches the Markup_Document stored next to a screenshot (null when absent). */
+  fetchMarkupDocument?: (screenshotObjectKey: string) => Promise<unknown | null>;
   /** Optional pre-upload buffer transform (e.g., redaction blur). */
   applyRedactionBlur?: (
     buffer: Buffer,
@@ -76,32 +81,43 @@ export interface AnnotationRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   /** Maximum allowed screenshot size in bytes. Defaults to 10 MB. */
   screenshotMaxBytes?: number;
-  /** Knex instance for premium feature queries (triage + suggestions). */
-  db?: Knex;
+  /** Knex instance: premium queries plus the project/annotation access checks. */
+  db: Knex;
 }
 
 const SCREENSHOT_MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
+
+/** First 8 bytes of every PNG file. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+export function hasPngSignature(buf: Buffer | undefined): boolean {
+  return !!buf && buf.length > PNG_SIGNATURE.length && buf.subarray(0, 8).equals(PNG_SIGNATURE);
+}
 
 const ClientRequestIdSchema = z.string().uuid();
 
 const CreateAnnotationBodySchema = z.object({
   type: AnnotationTypeSchema,
   severity: SeveritySchema.optional(),
-  body: z.string().min(1),
-  pageUrl: z.string().min(1),
+  body: z.string().min(1).max(10_000),
+  pageUrl: z.string().min(1).max(2048),
   target: DOMTargetSchema,
   environment: EnvironmentMetadataSchema.optional(),
-  guidelineId: z.string().optional(),
+  guidelineId: z.string().uuid().optional(),
   clientRequestId: ClientRequestIdSchema.optional(),
   capturedConsole: z.array(CapturedConsoleEntrySchema).nullable().optional(),
   capturedNetwork: z.array(CapturedNetworkEntrySchema).nullable().optional(),
+  // Bounded diagnostics (C2) + session replay (C3). Without these here,
+  // Zod stripped them and extension captures were silently discarded.
+  consoleLogs: ConsoleLogsSchema,
+  jsErrors: JsErrorsSchema,
+  sessionReplay: SessionReplaySchema,
 });
 
 const UpdateAnnotationBodySchema = z
   .object({
-    body: z.string().min(1).optional(),
+    body: z.string().min(1).max(10_000).optional(),
     severity: SeveritySchema.optional(),
-    assigneeId: z.string().nullable().optional(),
+    assigneeId: z.string().uuid().nullable().optional(),
     dueDate: z
       .string()
       .nullable()
@@ -136,7 +152,7 @@ function formatAnnotation(a: {
   severity: string;
   status: string;
   body: string;
-  authorId: string;
+  authorId: string | null;
   createdAt: string;
   updatedAt: string;
   target: unknown;
@@ -148,7 +164,13 @@ function formatAnnotation(a: {
   screenshotObjectKey?: string;
   capturedConsole?: unknown;
   capturedNetwork?: unknown;
+  consoleLogs?: unknown;
+  jsErrors?: unknown;
+  sessionReplay?: unknown;
   clientRequestId?: string;
+  isGuest?: boolean;
+  guestName?: string | null;
+  guestEmail?: string | null;
 }, pageUrl: string | undefined): Record<string, unknown> {
   return {
     id: a.id,
@@ -171,7 +193,16 @@ function formatAnnotation(a: {
     screenshotObjectKey: a.screenshotObjectKey,
     capturedConsole: a.capturedConsole,
     capturedNetwork: a.capturedNetwork,
+    // Persisted on create but previously never serialized, so the
+    // dashboard's Console & errors panel, replay player and "Unverified
+    // guest" badge could never render.
+    consoleLogs: a.consoleLogs ?? null,
+    jsErrors: a.jsErrors ?? null,
+    sessionReplay: a.sessionReplay ?? null,
     clientRequestId: a.clientRequestId,
+    isGuest: a.isGuest ?? false,
+    guestName: a.guestName ?? null,
+    guestEmail: a.guestEmail ?? null,
   };
 }
 
@@ -194,10 +225,13 @@ export function createAnnotationRoutes(
     annotationRepo,
     resolvePageUrls,
     applyRedactionBlur,
+    buildScreenshotUrl,
     authMiddleware,
     screenshotMaxBytes = SCREENSHOT_MAX_BYTES_DEFAULT,
     db,
   } = deps;
+
+  registerSessionDb(db);
 
   const screenshotUpload = multer({
     storage: multer.memoryStorage(),
@@ -208,7 +242,7 @@ export function createAnnotationRoutes(
   const projectAnnotationsRouter = Router({ mergeParams: true });
   projectAnnotationsRouter.use(authMiddleware);
 
-  projectAnnotationsRouter.post('/', async (req: Request, res: Response) => {
+  projectAnnotationsRouter.post('/', requireWriteAccess, requireProjectAccess(db), async (req: Request, res: Response) => {
     const parsed = CreateAnnotationBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendZodFailure(res, 'Invalid annotation payload.', parsed.error.flatten());
@@ -228,6 +262,7 @@ export function createAnnotationRoutes(
     const result = await createAnnotation.execute({
       projectId,
       authorUserId: userId,
+      orgId: req.user!.orgId,
       pageUrl: parsed.data.pageUrl,
       type: parsed.data.type,
       severity: parsed.data.severity ?? 'informational',
@@ -246,6 +281,11 @@ export function createAnnotationRoutes(
       ...(parsed.data.clientRequestId !== undefined
         ? { clientRequestId: parsed.data.clientRequestId }
         : {}),
+      // Diagnostics (C2) + session replay (C3) — previously validated but
+      // dropped here, so extension captures were never persisted.
+      ...(parsed.data.consoleLogs != null ? { consoleLogs: parsed.data.consoleLogs } : {}),
+      ...(parsed.data.jsErrors != null ? { jsErrors: parsed.data.jsErrors } : {}),
+      ...(parsed.data.sessionReplay != null ? { sessionReplay: parsed.data.sessionReplay } : {}),
     });
 
     if (!result.ok) {
@@ -258,11 +298,12 @@ export function createAnnotationRoutes(
       res.status(200).json({ annotation: formatAnnotation(annotation, pageUrl) });
       return;
     }
-    invalidateCache(`/api/v1/projects/${projectId}/analytics`);
     res.status(201).json({ annotation: formatAnnotation(annotation, pageUrl) });
   });
 
-  projectAnnotationsRouter.get('/', async (req: Request, res: Response) => {
+  // Listing requires access to the project (org match + owner/team member);
+  // a foreign or unknown project id is an indistinguishable 404.
+  projectAnnotationsRouter.get('/', requireProjectAccess(db), async (req: Request, res: Response) => {
     const projectId = paramString((req.params as { id?: string | string[] }).id);
     const statusRaw = typeof req.query.status === 'string' ? req.query.status : undefined;
     let statusFilter: AnnotationPatch['status'] | undefined;
@@ -300,11 +341,28 @@ export function createAnnotationRoutes(
   // ----- Standalone annotation routes (PUT, DELETE, status, screenshot) ---
   const annotationRouter = Router();
   annotationRouter.use(authMiddleware);
+  // Every `/:id` route is scoped to the caller's org and project access.
+  annotationRouter.use('/:id', requireAnnotationAccess(db));
 
-  annotationRouter.put('/:id', async (req: Request, res: Response) => {
+  annotationRouter.get('/:id', async (req: Request, res: Response) => {
+    const annotation = await annotationRepo.findById(paramString(req.params.id));
+    if (!annotation) {
+      sendError(res, 404, 'NOT_FOUND', 'Annotation not found.');
+      return;
+    }
+    const pageUrls = await resolvePageUrls([annotation], annotation.projectId);
+    res.status(200).json({ annotation: formatAnnotation(annotation, pageUrls.get(annotation.pageId)) });
+  });
+
+  annotationRouter.put('/:id', requireWriteAccess, async (req: Request, res: Response) => {
     const parsed = UpdateAnnotationBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendZodFailure(res, 'Invalid annotation update payload.', parsed.error.flatten());
+      return;
+    }
+    // PP-09: an assignee must be a member of the caller's org.
+    if (parsed.data.assigneeId && !(await isOrgMember(db, req.user!.orgId, parsed.data.assigneeId))) {
+      sendError(res, 400, 'VALIDATION', 'assigneeId must be a member of your organization.');
       return;
     }
     const patch: AnnotationPatch = {};
@@ -322,11 +380,10 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
-    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
   });
 
-  annotationRouter.delete('/:id', async (req: Request, res: Response) => {
+  annotationRouter.delete('/:id', requireWriteAccess, async (req: Request, res: Response) => {
     const result = await deleteAnnotation.execute({
       annotationId: paramString(req.params.id),
       actorUserId: req.user!.userId,
@@ -335,12 +392,10 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
-    // Invalidate analytics cache; projectId isn't returned by delete, so clear all analytics.
-    invalidateCache('/api/v1/projects/');
     res.status(200).json({ message: 'Annotation deleted successfully.' });
   });
 
-  annotationRouter.put('/:id/status', async (req: Request, res: Response) => {
+  annotationRouter.put('/:id/status', requireWriteAccess, async (req: Request, res: Response) => {
     const parsed = StatusBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendZodFailure(res, 'Invalid status payload.', parsed.error.flatten());
@@ -355,12 +410,44 @@ export function createAnnotationRoutes(
       sendDomainError(res, result.error);
       return;
     }
-    invalidateCache(`/api/v1/projects/${result.value.annotation.projectId}/analytics`);
     res.status(200).json({ annotation: formatAnnotation(result.value.annotation, undefined) });
+  });
+
+  // GET /:id/screenshot — resolves the bitmap URL (PP-18/PP-25). Access is
+  // enforced by `requireAnnotationAccess` on `/:id` (org + project membership);
+  // a missing capture is a plain 404.
+  annotationRouter.get('/:id/screenshot', async (req: Request, res: Response) => {
+    const annotation = await annotationRepo.findById(paramString(req.params.id));
+    if (!annotation?.screenshotObjectKey) {
+      sendError(res, 404, 'NOT_FOUND', 'No screenshot for this annotation.');
+      return;
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.status(200).json({
+      screenshotObjectKey: annotation.screenshotObjectKey,
+      screenshotUrl: buildScreenshotUrl(annotation.screenshotObjectKey),
+    });
+  });
+
+  // GET /:id/markup — the Markup_Document layered on the screenshot.
+  annotationRouter.get('/:id/markup', async (req: Request, res: Response) => {
+    const annotation = await annotationRepo.findById(paramString(req.params.id));
+    if (!annotation?.screenshotObjectKey || !deps.fetchMarkupDocument) {
+      sendError(res, 404, 'NOT_FOUND', 'No markup for this annotation.');
+      return;
+    }
+    const markupDocument = await deps.fetchMarkupDocument(annotation.screenshotObjectKey);
+    if (!markupDocument) {
+      sendError(res, 404, 'NOT_FOUND', 'No markup for this annotation.');
+      return;
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.status(200).json({ markupDocument });
   });
 
   annotationRouter.post(
     '/:id/screenshot',
+    requireWriteAccess,
     screenshotUpload.single('image'),
     async (req: Request, res: Response) => {
       const file = (req as Request & { file?: Express.Multer.File }).file;
@@ -371,7 +458,8 @@ export function createAnnotationRoutes(
         });
         return;
       }
-      if (file.mimetype !== 'image/png') {
+      // PP-18: the multipart Content-Type is client-declared; also require the PNG signature.
+      if (file.mimetype !== 'image/png' || !hasPngSignature(file.buffer)) {
         res
           .status(400)
           .json({ error: { code: 'VALIDATION', message: 'Image must be a PNG (Content-Type: image/png).' } });
@@ -417,9 +505,7 @@ export function createAnnotationRoutes(
           try {
             parsed = JSON.parse(raw);
           } catch {
-            res.status(400).json({
-              error: 'markupDocument must be a JSON-encoded Markup_Document.',
-            });
+            sendError(res, 400, 'VALIDATION', 'markupDocument must be a JSON-encoded Markup_Document.');
             return;
           }
         } else {
@@ -460,10 +546,6 @@ export function createAnnotationRoutes(
 
   // --- Suggestions endpoint (premium feature: triage + smart suggestions) ---
   annotationRouter.get('/:id/suggestions', async (req: Request, res: Response) => {
-    if (!db) {
-      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Suggestions not available.' } });
-      return;
-    }
     const annotationId = paramString(req.params.id);
     const annotation = await annotationRepo.findById(annotationId);
     if (!annotation) {
@@ -490,10 +572,6 @@ export function createAnnotationRoutes(
 
   // --- Visual regression check (premium feature) ---
   annotationRouter.post('/:id/check-regression', async (req: Request, res: Response) => {
-    if (!db) {
-      res.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: 'Visual regression not available.' } });
-      return;
-    }
     const annotationId = paramString(req.params.id);
     const annotation = await annotationRepo.findById(annotationId);
     if (!annotation) {
@@ -513,11 +591,15 @@ export function createAnnotationRoutes(
       return;
     }
     const buffer = Buffer.from(screenshot, 'base64');
+    if (!hasPngSignature(buffer)) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: 'screenshot must be a base64-encoded PNG.' } });
+      return;
+    }
     const { checkRegression } = await import('../../../services/visualRegression.js');
     const result = await checkRegression(
       {
         fetchAnnotation: async (id) => {
-          const row = await db!('annotations').where('id', id).first('screenshot_object_key');
+          const row = await db('annotations').where('id', id).first('screenshot_object_key');
           return row ? { screenshotObjectKey: row.screenshot_object_key as string | null } : null;
         },
         fetchScreenshotBuffer: deps.fetchScreenshotBuffer,

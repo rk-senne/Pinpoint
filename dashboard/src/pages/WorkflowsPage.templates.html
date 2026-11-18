@@ -1,0 +1,103 @@
+<!-- Loaded on demand with the page module (see lib/lazyTemplates.ts). -->
+    <!-- Workflows Page: automation rules + SLA policies. -->
+    <template id="tpl-workflows-page">
+      <div class="pp-page">
+        <header class="pp-page__header">
+          <h1 class="pp-page__title">Workflow Automation</h1>
+          <p class="pp-page__lede">Route feedback automatically and hold your team to response targets.</p>
+        </header>
+
+        <!-- Automation Rules -->
+        <section class="pp-section" aria-labelledby="wf-rules-title">
+          <div class="pp-section__header">
+            <h2 id="wf-rules-title" class="pp-section__title">Automation Rules</h2>
+            <button type="button" class="pp-btn pp-btn--primary" data-action="create-rule" data-role="create-rule-btn" aria-expanded="false" aria-controls="wf-rule-form">+ Create Rule</button>
+          </div>
+          <form id="wf-rule-form" class="pp-card pp-form" data-role="rule-form" data-action="submit:submit-rule" hidden novalidate>
+            <div class="pp-field">
+              <label for="wf-rule-name">Rule name</label>
+              <input id="wf-rule-name" data-role="rule-name" type="text" placeholder="e.g. Assign critical bugs to Daniel" autocomplete="off" />
+              <p class="pp-field__error" data-role="rule-name-error" hidden></p>
+            </div>
+            <div class="pp-form__row">
+              <div class="pp-field">
+                <label for="wf-rule-trigger">When</label>
+                <select id="wf-rule-trigger" data-role="rule-trigger">
+                  <option value="annotation.created">Annotation created</option>
+                  <option value="annotation.status_changed">Status changed</option>
+                  <option value="comment.created">Comment created</option>
+                </select>
+              </div>
+              <div class="pp-field">
+                <label for="wf-rule-action">Then</label>
+                <select id="wf-rule-action" data-role="rule-action">
+                  <option value="assign">Assign</option>
+                  <option value="set_status">Set status</option>
+                  <option value="set_due_date">Set due date</option>
+                  <option value="notify">Notify</option>
+                </select>
+              </div>
+            </div>
+            <div class="pp-field">
+              <label for="wf-rule-params">Action params (JSON)</label>
+              <textarea id="wf-rule-params" data-role="rule-params" rows="3" spellcheck="false" class="pp-mono"></textarea>
+              <p class="pp-field__hint" data-role="rule-params-hint"></p>
+              <p class="pp-field__error" data-role="rule-params-error" hidden></p>
+            </div>
+            <p class="pp-field__error" data-role="rule-form-error" role="alert" hidden></p>
+            <div class="pp-form__actions">
+              <button type="submit" class="pp-btn pp-btn--primary" data-role="rule-submit">Save Rule</button>
+              <button type="button" class="pp-btn pp-btn--secondary" data-action="cancel-rule">Cancel</button>
+            </div>
+          </form>
+          <div data-role="rules-list" class="pp-list" aria-live="polite"></div>
+        </section>
+
+        <!-- SLA Policies -->
+        <section class="pp-section" aria-labelledby="wf-sla-title">
+          <div class="pp-section__header">
+            <h2 id="wf-sla-title" class="pp-section__title">SLA Policies</h2>
+            <button type="button" class="pp-btn pp-btn--primary" data-action="create-sla" data-role="create-sla-btn" aria-expanded="false" aria-controls="wf-sla-form">+ Create SLA</button>
+          </div>
+          <form id="wf-sla-form" class="pp-card pp-form" data-role="sla-form" data-action="submit:submit-sla" hidden novalidate>
+            <div class="pp-field">
+              <label for="wf-sla-name">Policy name</label>
+              <input id="wf-sla-name" data-role="sla-name" type="text" placeholder="e.g. Critical: same-day fix" autocomplete="off" />
+            </div>
+            <div class="pp-form__row pp-form__row--3">
+              <div class="pp-field">
+                <label for="wf-sla-severity">Severity</label>
+                <select id="wf-sla-severity" data-role="sla-severity">
+                  <option value="critical">Critical</option>
+                  <option value="major">Major</option>
+                  <option value="minor">Minor</option>
+                </select>
+              </div>
+              <div class="pp-field">
+                <label for="wf-sla-response">Response (hours)</label>
+                <input id="wf-sla-response" data-role="sla-response" type="number" min="1" step="1" inputmode="numeric" />
+              </div>
+              <div class="pp-field">
+                <label for="wf-sla-resolution">Resolution (hours)</label>
+                <input id="wf-sla-resolution" data-role="sla-resolution" type="number" min="1" step="1" inputmode="numeric" />
+              </div>
+            </div>
+            <p class="pp-field__error" data-role="sla-form-error" role="alert" hidden></p>
+            <div class="pp-form__actions">
+              <button type="submit" class="pp-btn pp-btn--primary" data-role="sla-submit">Save SLA</button>
+              <button type="button" class="pp-btn pp-btn--secondary" data-action="cancel-sla">Cancel</button>
+            </div>
+          </form>
+          <div data-role="sla-list" class="pp-list" aria-live="polite"></div>
+        </section>
+
+        <!-- SLA breaches (read-only) -->
+        <section class="pp-section" aria-labelledby="wf-breach-title" data-role="breaches-section">
+          <div class="pp-section__header">
+            <h2 id="wf-breach-title" class="pp-section__title">SLA Breaches</h2>
+            <span class="pp-badge pp-badge--neutral" data-role="breach-count" hidden></span>
+          </div>
+          <div data-role="breach-list" class="pp-list" aria-live="polite"></div>
+        </section>
+      </div>
+    </template>

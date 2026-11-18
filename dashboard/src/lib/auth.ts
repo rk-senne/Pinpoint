@@ -41,9 +41,30 @@ export function setCsrfToken(token: string | null): void {
   csrfToken = token;
 }
 
-/** Read the CSRF token currently in memory, or `null` if not signed in. */
+/**
+ * Read the CSRF token: the in-memory value captured at login, falling back
+ * to the readable `fl_csrf` double-submit cookie. The fallback is what keeps
+ * a hard-refreshed tab working — the module variable is gone after a reload
+ * but the cookie (set by the server alongside the HttpOnly session cookie)
+ * is still there, and reading it is exactly what the double-submit pattern
+ * intends (Req 18.3/18.4). Returns `null` when signed out.
+ */
 export function getCsrfToken(): string | null {
-  return csrfToken;
+  if (csrfToken) return csrfToken;
+  return readCsrfCookie();
+}
+
+/** Value of the readable `fl_csrf` cookie, or `null`. */
+function readCsrfCookie(): string | null {
+  if (typeof document === 'undefined' || typeof document.cookie !== 'string') return null;
+  for (const part of document.cookie.split(';')) {
+    const [rawName, ...rest] = part.split('=');
+    if (rawName?.trim() === 'fl_csrf') {
+      const value = decodeURIComponent(rest.join('=').trim());
+      return value.length > 0 ? value : null;
+    }
+  }
+  return null;
 }
 
 // --- Bearer JWT (Socket.IO compatibility, in-memory only) -------------------

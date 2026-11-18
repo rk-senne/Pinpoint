@@ -245,7 +245,8 @@ function makeFakeApi(responses: Record<string, ApiResponse> = {}): FakeApi {
     fetch: async <T,>(path: string, init?: RequestInit): Promise<T> => {
       calls.push({ path, init });
       const method = init?.method ?? 'GET';
-      const keys = [`${method} ${path}`, path];
+      const bare = path.split('?')[0];
+      const keys = [`${method} ${path}`, path, `${method} ${bare}`, bare];
       for (const key of keys) {
         if (key in responses) {
           const value = responses[key];
@@ -592,15 +593,17 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [
-        makeGuideline({ id: 'g1', name: 'Default One', isDefault: true }),
-        makeGuideline({
-          id: 'g2',
-          name: 'Custom One',
-          isDefault: false,
-          description: 'Custom desc',
-        }),
-      ],
+      '/guidelines': {
+        data: [
+          makeGuideline({ id: 'g1', name: 'Default One', isDefault: true }),
+          makeGuideline({
+            id: 'g2',
+            name: 'Custom One',
+            isDefault: false,
+            description: 'Custom desc',
+          }),
+        ],
+      },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -630,13 +633,38 @@ describe('Guidelines tab', () => {
     expect(secondDesc.textContent).toBe('Custom desc');
   });
 
+  it('pages through every guideline (regression: only the first 25 were shown)', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const mk = (i: number) => makeGuideline({ id: `g${i}`, name: `Guideline ${i}`, isDefault: false });
+    const api = makeFakeApi({
+      '/users/me': makeUser(),
+      'GET /guidelines?page=1&pageSize=100': {
+        data: Array.from({ length: 100 }, (_, i) => mk(i)),
+        pagination: { page: 1, pageSize: 100, total: 130, totalPages: 2 },
+      } as ApiResponse,
+      'GET /guidelines?page=2&pageSize=100': {
+        data: Array.from({ length: 30 }, (_, i) => mk(100 + i)),
+        pagination: { page: 2, pageSize: 100, total: 130, totalPages: 2 },
+      } as ApiResponse,
+    });
+
+    mountSettingsPage(root, undefined, { apiFetch: api.fetch });
+    await flushAsync();
+    (root.querySelector('[data-role="tab-guidelines"]') as HTMLButtonElement).click();
+    await flushAsync(8);
+
+    expect(root.querySelectorAll('[data-role="guideline-row"]')).toHaveLength(130);
+    expect(api.calls.filter((c) => c.path.startsWith('/guidelines')).length).toBe(2);
+  });
+
   it('shows the empty state when no guidelines exist', async () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -659,7 +687,7 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -694,7 +722,7 @@ describe('Guidelines tab', () => {
     const list: Guideline[] = [];
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      'GET /guidelines': () => [...list],
+      'GET /guidelines': () => ({ data: [...list] }),
       'POST /guidelines': () => {
         list.push(
           makeGuideline({
@@ -756,7 +784,7 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });

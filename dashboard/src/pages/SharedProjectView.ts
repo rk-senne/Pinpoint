@@ -7,9 +7,12 @@
  * `lib/render.ts`, and `signal<T>` from the shared package. No React.
  *
  * Flow (Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6):
- *   1. Mount renders the password prompt for the given `linkId`.
+ *   1. Mount probes `GET /api/v1/shared/:linkId/annotations`: an open link
+ *      (or a still-valid unlock cookie) answers 200 and the read-only view is
+ *      shown straight away; 401 keeps the password prompt; 404 → not-found.
  *   2. Submit POSTs to `/api/v1/shared/:linkId/verify`.
- *      - 200 → render the read-only annotations view.
+ *      - 200 → the server sets a short-lived HttpOnly grant cookie; the page
+ *              then loads the annotations from the GET endpoint above.
  *      - 401 → display the inline error and the `attemptsRemaining` field
  *               from the response (falling back to a client-side counter
  *               when the server omits it).
@@ -22,12 +25,29 @@
  *   3. Unmounting (route change) clears the countdown interval.
  */
 
+import { registerTemplates } from '../lib/lazyTemplates';
+import templatesHtml from './SharedProjectView.templates.html?raw';
 import { signal, type Signal } from '@pinpoint/shared';
-import type { Annotation } from '@pinpoint/shared';
-import { SEVERITY_COLORS, STATUS_LABELS } from '@pinpoint/shared';
+import { STATUS_LABELS } from '@pinpoint/shared';
+import { severityTextColor } from '../lib/severity';
 
 import { API_BASE } from '../lib/api';
+import { createEmptyState } from '../components/EmptyState';
 import { attr, bindEvents, cloneTemplate, mount, text } from '../lib/render';
+
+/**
+ * Row shape served by `GET /api/v1/shared/:linkId/annotations` — a strict
+ * allow-list (no ids, emails, diagnostics). Anything else is not displayed.
+ */
+interface SharedAnnotation {
+  pinNumber: number;
+  type: string;
+  severity: string;
+  status: string;
+  body: string;
+  createdAt?: string;
+  pageUrl?: string | null;
+}
 
 /** Visible top-level state of the page. */
 type ViewState = 'prompt' | 'locked' | 'not_found' | 'authenticated';
@@ -53,6 +73,7 @@ export function mountSharedProjectView(
   node: HTMLElement,
   params: Record<string, string>,
 ): () => void {
+  registerTemplates('SharedProjectView', templatesHtml);
   const linkId = params.linkId ?? '';
 
   // --- View signals ---------------------------------------------------
@@ -61,7 +82,7 @@ export function mountSharedProjectView(
   const password: Signal<string> = signal<string>('');
   const verifying: Signal<boolean> = signal<boolean>(false);
   const failedAttempts: Signal<number> = signal<number>(0);
-  const annotations: Signal<Annotation[]> = signal<Annotation[]>([]);
+  const annotations: Signal<SharedAnnotation[]> = signal<SharedAnnotation[]>([]);
   /** Seconds remaining on the active lockout. 0 when not locked. */
   const lockSecondsRemaining: Signal<number> = signal<number>(0);
 
@@ -73,6 +94,7 @@ export function mountSharedProjectView(
   const submitBtn = root.querySelector<HTMLButtonElement>('[data-slot="submit-btn"]')!;
   const lockedMessageEl = root.querySelector<HTMLElement>('[data-slot="locked-message"]')!;
   const emptyStateEl = root.querySelector<HTMLElement>('[data-slot="empty-state"]')!;
+  emptyStateEl.replaceChildren(createEmptyState('no-shared-annotations'));
   const tableEl = root.querySelector<HTMLElement>('[data-slot="annotations-table"]')!;
   const tbodyEl = root.querySelector<HTMLElement>('[data-slot="annotations-tbody"]')!;
 
@@ -155,12 +177,12 @@ export function mountSharedProjectView(
           'pin-number': String(a.pinNumber),
           type: a.type,
           severity: a.severity,
-          status: STATUS_LABELS[a.status] ?? a.status,
+          status: (STATUS_LABELS as Record<string, string>)[a.status] ?? a.status,
           body: a.body ?? '',
         });
         const severityEl = fragment.querySelector<HTMLElement>('[data-slot="severity"]');
         if (severityEl) {
-          attr(severityEl, 'style', `font-weight: 500; color: ${SEVERITY_COLORS[a.severity] ?? '#333'};`);
+          attr(severityEl, 'style', `font-weight: 500; color: ${severityTextColor(a.severity)};`);
         }
         tbodyEl.appendChild(fragment);
       }
@@ -197,6 +219,37 @@ export function mountSharedProjectView(
     }
   }
 
+  // --- Annotation read ------------------------------------------------
+  /**
+   * Fetch the read-only list. `unauthorized` = password required (or the
+   * 30-minute grant expired); `error` = anything else (network, 5xx, bad body).
+   */
+  async function loadAnnotations(): Promise<'ok' | 'unauthorized' | 'not_found' | 'error'> {
+    try {
+      const res = await fetch(`${API_BASE}/shared/${encodeURIComponent(linkId)}/annotations`, {
+        credentials: 'include',
+      });
+      if (!res) return 'error';
+      if (res.status === 401) return 'unauthorized';
+      if (res.status === 404) return 'not_found';
+      if (!res.ok) return 'error';
+      const data = (await res.json().catch(() => null)) as { annotations?: SharedAnnotation[] } | null;
+      if (!data || !Array.isArray(data.annotations)) return 'error';
+      annotations.set(data.annotations);
+      return 'ok';
+    } catch {
+      return 'error';
+    }
+  }
+
+  // Open links (and visitors whose unlock cookie is still valid) skip the
+  // prompt. 401 / errors simply leave the prompt showing.
+  void loadAnnotations().then((outcome) => {
+    if (view.get() !== 'prompt') return; // user already moved on (verify / lock)
+    if (outcome === 'ok') view.set('authenticated');
+    else if (outcome === 'not_found') view.set('not_found');
+  });
+
   // --- Verify network call -------------------------------------------
   async function verify(): Promise<void> {
     if (!linkId || verifying.get() || view.get() === 'locked') return;
@@ -209,14 +262,22 @@ export function mountSharedProjectView(
     try {
       const res = await fetch(`${API_BASE}/shared/${encodeURIComponent(linkId)}/verify`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: pwd }),
       });
 
       if (res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { annotations?: Annotation[] };
-        annotations.set(data.annotations ?? []);
-        view.set('authenticated');
+        // The verify response only grants access (HttpOnly cookie); the
+        // annotations come from the dedicated read endpoint.
+        const outcome = await loadAnnotations();
+        if (outcome === 'ok') {
+          view.set('authenticated');
+        } else if (outcome === 'not_found') {
+          view.set('not_found');
+        } else {
+          error.set('Unlocked, but the annotations could not be loaded. Please try again.');
+        }
         return;
       }
 
@@ -298,7 +359,7 @@ function baseSubmitStyle(isVerifying: boolean): string {
   return [
     'width: 100%',
     'padding: 8px',
-    'background: #4f46e5',
+    'background: var(--pp-accent)',
     'color: #fff',
     'border: none',
     'border-radius: 4px',

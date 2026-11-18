@@ -1,0 +1,116 @@
+<!-- Loaded on demand with the page module (see lib/lazyTemplates.ts). -->
+    <!-- Shared project view (Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6). -->
+    <template id="tpl-shared-project-view">
+      <div data-fl-shared-root style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <!-- Password prompt -->
+        <section
+          data-section="prompt"
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
+        >
+          <div
+            style="background: var(--pp-bg-primary); border-radius: 8px; padding: 32px; width: 340px; max-width: calc(100vw - 32px); box-sizing: border-box; box-shadow: 0 4px 16px rgba(0,0,0,0.12); text-align: center;"
+          >
+            <div style="font-size: 32px; margin-bottom: 8px;">🔗</div>
+            <h2 style="margin: 0 0 4px; font-size: 18px;">Shared Project</h2>
+            <p style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 20px;">
+              Enter the password to view this project.
+            </p>
+            <form data-action="submit:verify" novalidate>
+              <input
+                data-slot="password-input"
+                type="password"
+                placeholder="Password"
+                autofocus
+                style="width: 100%; padding: 8px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;"
+              />
+              <p
+                data-slot="prompt-error"
+                hidden
+                style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"
+              ></p>
+              <button
+                type="submit"
+                data-slot="submit-btn"
+                style="width: 100%; padding: 8px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
+              >
+                Unlock
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <!-- Lockout screen with countdown -->
+        <section
+          data-section="locked"
+          hidden
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
+        >
+          <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🔒</div>
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Access Locked</h2>
+            <p data-slot="locked-message" style="color: var(--pp-text-secondary); font-size: 14px;"></p>
+          </div>
+        </section>
+
+        <!-- Not-found screen (404 from server) -->
+        <section
+          data-section="not_found"
+          hidden
+          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
+        >
+          <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 12px;">🔗</div>
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Link Not Found</h2>
+            <p style="color: var(--pp-text-secondary); font-size: 14px;">
+              This shared link does not exist or has been revoked.
+            </p>
+          </div>
+        </section>
+
+        <!-- Authenticated read-only project view -->
+        <section
+          data-section="authenticated"
+          hidden
+          style="max-width: 800px; margin: 0 auto; padding: 24px;"
+        >
+          <h1 style="font-size: 20px; margin: 0 0 4px;">Shared Project</h1>
+          <p style="color: var(--pp-text-tertiary); font-size: 13px; margin: 0 0 20px;">Read-only view</p>
+
+          <div data-slot="empty-state" hidden></div>
+
+          <table
+            data-slot="annotations-table"
+            hidden
+            tabindex="0"
+            aria-label="Shared annotations"
+            style="width: 100%; border-collapse: collapse; font-size: 13px;"
+          >
+            <thead>
+              <tr style="border-bottom: 2px solid var(--pp-border-heavy); text-align: left;">
+                <th style="padding: 8px 6px;">#</th>
+                <th style="padding: 8px 6px;">Type</th>
+                <th style="padding: 8px 6px;">Severity</th>
+                <th style="padding: 8px 6px;">Status</th>
+                <th style="padding: 8px 6px;">Body</th>
+              </tr>
+            </thead>
+            <tbody data-slot="annotations-tbody"></tbody>
+          </table>
+        </section>
+      </div>
+    </template>
+    <!-- One row of the shared-project annotation table. -->
+    <template id="tpl-shared-project-view-row">
+      <tr style="border-bottom: 1px solid var(--pp-border-light);">
+        <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
+        <td data-slot="type" style="padding: 8px 6px;"></td>
+        <td style="padding: 8px 6px;">
+          <span data-slot="severity" style="font-weight: 500;"></span>
+        </td>
+        <td data-slot="status" style="padding: 8px 6px;"></td>
+        <td
+          data-slot="body"
+          style="padding: 8px 6px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+        ></td>
+      </tr>
+    </template>

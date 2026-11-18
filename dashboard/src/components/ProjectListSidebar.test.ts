@@ -112,6 +112,21 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
+/**
+ * Wrap a row list in the REAL `{ data, pagination }` envelope the server
+ * returns for `GET /api/v1/projects` (see responses captured from the live API). Single-page
+ * by default so the sidebar's page-walk stops after one request.
+ */
+function projectsEnvelope<T>(rows: T[]): {
+  data: T[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+} {
+  return {
+    data: rows,
+    pagination: { page: 1, pageSize: 100, total: rows.length, totalPages: 1 },
+  };
+}
+
 interface FakeApi {
   /** All recorded calls in order. */
   calls: Array<{ path: string; init?: RequestInit }>;
@@ -130,16 +145,29 @@ function makeFakeApi(
     fetch: async <T,>(path: string, init?: RequestInit): Promise<T> => {
       calls.push({ path, init });
       const method = init?.method ?? 'GET';
-      const key = `${method} ${path}`;
-      if (key in responses) {
-        const value = responses[key];
-        const out = typeof value === 'function' ? (value as (i?: RequestInit) => unknown)(init) : value;
-        return out as T;
-      }
-      if (path in responses) {
-        const value = responses[path];
-        const out = typeof value === 'function' ? (value as (i?: RequestInit) => unknown)(init) : value;
-        return out as T;
+      // Match on the path without its query string too, so configs keyed on
+      // `/projects` still resolve when the component requests
+      // `/projects?page=1&pageSize=100` (the real paginated call).
+      const pathNoQuery = path.split('?')[0];
+      const candidates = [
+        `${method} ${path}`,
+        `${method} ${pathNoQuery}`,
+        path,
+        pathNoQuery,
+      ];
+      for (const key of candidates) {
+        if (key in responses) {
+          const value = responses[key];
+          const out = typeof value === 'function' ? (value as (i?: RequestInit) => unknown)(init) : value;
+          // The component reads `GET /projects` as the shared
+          // `{ data, pagination }` envelope (ground truth: responses captured from the live API).
+          // Tests configure the bare row array for brevity; wrap it here so the
+          // fake returns the REAL shape the production reader expects.
+          if (method === 'GET' && pathNoQuery === '/projects' && Array.isArray(out)) {
+            return projectsEnvelope(out) as T;
+          }
+          return out as T;
+        }
       }
       // Default: no-op response. Callers that depend on a payload must
       // configure it explicitly.
@@ -179,7 +207,10 @@ describe('mountProjectListSidebar — initial render', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(api.calls[0]?.path).toBe('/projects');
+    // The sidebar requests the paginated projects list with the server's
+    // max pageSize (ground truth: `{ data, pagination }`, pageSize cap 100).
+    expect(api.calls[0]?.path.split('?')[0]).toBe('/projects');
+    expect(api.calls[0]?.path).toContain('pageSize=100');
 
     const list = host.querySelector('[data-role="list"]')!;
     const names = Array.from(list.querySelectorAll('[data-slot="name"]')).map(
@@ -203,6 +234,42 @@ describe('mountProjectListSidebar — initial render', () => {
 
     const list = host.querySelector('[data-role="list"]')!;
     expect(list.textContent).toContain('No projects found.');
+
+    handle.dispose();
+  });
+
+  it('pages through every project when the server reports multiple pages', async () => {
+    // The real `GET /projects` caps pageSize at 100. When `total` exceeds the
+    // page, the sidebar must walk pages until it has every row — the previous
+    // code read only the first (default-25) page AND mis-read the shape.
+    const page1 = [makeProject({ id: 'p1', name: 'Alpha', status: 'active' })];
+    const page2 = [makeProject({ id: 'p2', name: 'Bravo', status: 'active' })];
+    let pageCalls = 0;
+    const handle = mountProjectListSidebar(host, {
+      navigate: vi.fn(),
+      apiFetch: (async <T,>(path: string): Promise<T> => {
+        if (path.split('?')[0] === '/projects') {
+          pageCalls += 1;
+          const rows = pageCalls === 1 ? page1 : page2;
+          return {
+            data: rows,
+            pagination: { page: pageCalls, pageSize: 100, total: 2, totalPages: 2 },
+          } as T;
+        }
+        return undefined as T;
+      }) as <T>(path: string, init?: RequestInit) => Promise<T>,
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pageCalls).toBe(2);
+    const names = Array.from(
+      host.querySelectorAll('[data-role="list"] [data-slot="name"]'),
+    ).map((n) => n.textContent);
+    expect(names).toEqual(['Alpha', 'Bravo']);
 
     handle.dispose();
   });
@@ -451,6 +518,10 @@ describe('context menu', () => {
     expect(confirmFn).toHaveBeenCalledOnce();
     const deleteCall = api.calls.find((c) => c.init?.method === 'DELETE');
     expect(deleteCall?.path).toBe('/projects/p1');
+    // The API rejects a delete without the project name as confirmationToken.
+    expect(JSON.parse(String(deleteCall?.init?.body))).toEqual({
+      confirmationToken: expect.any(String),
+    });
 
     handle.dispose();
   });
@@ -609,6 +680,73 @@ describe('create-project dialog', () => {
       .click();
     expect(document.body.querySelector('[data-role="overlay"]')).toBeNull();
 
+    handle.dispose();
+  });
+});
+
+describe('keyboard access', () => {
+  it('rows are focusable links that open the project on Enter', async () => {
+    const api = makeFakeApi({ '/projects': [makeProject({ id: 'p1', name: 'Alpha' })] });
+    const navigate = vi.fn();
+    const handle = mountProjectListSidebar(host, { navigate, apiFetch: api.fetch });
+    await Promise.resolve();
+    await Promise.resolve();
+    const row = host.querySelector<HTMLElement>('[data-role="list"] [data-role="row"]')!;
+    expect(row.getAttribute('tabindex')).toBe('0');
+    expect(row.getAttribute('role')).toBe('link');
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(navigate).toHaveBeenCalledWith('/projects/p1');
+    handle.dispose();
+  });
+
+  it('Escape closes the context menu and the create dialog', async () => {
+    const api = makeFakeApi({ '/projects': [makeProject({ id: 'p1', name: 'Alpha' })] });
+    const handle = mountProjectListSidebar(host, { navigate: vi.fn(), apiFetch: api.fetch });
+    await Promise.resolve();
+    await Promise.resolve();
+    const menuBtn = host.querySelector<HTMLElement>('[data-role="list"] [data-role="menu-button"]')!;
+    menuBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.body.querySelector('[data-role="menu"]')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.body.querySelector('[data-role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(menuBtn);
+
+    host.querySelector<HTMLButtonElement>('[data-role="create"]')!.click();
+    expect(document.body.querySelector('[data-role="overlay"]')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.body.querySelector('[data-role="overlay"]')).toBeNull();
+    handle.dispose();
+  });
+});
+
+describe('export dialog', () => {
+  it('turns the streamed report into a download link (no JSON downloadUrl needed)', async () => {
+    const api = makeFakeApi({ 'GET /projects': [{ id: 'p1', name: 'Alpha', urls: ['https://a.test'], status: 'active' }] });
+    const blob = new Blob(['"Pin Number","Browser Family"\n1,Chrome'], { type: 'text/csv' });
+    const apiFetchBlob = vi.fn().mockResolvedValue({ blob, filename: 'alpha.csv' });
+    const createObjectURL = vi.fn(() => 'blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }));
+
+    const handle = mountProjectListSidebar(host, { navigate: vi.fn(), apiFetch: api.fetch, apiFetchBlob });
+    await Promise.resolve();
+    await Promise.resolve();
+    host.querySelector<HTMLElement>('[data-role="list"] [data-role="menu-button"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    document.body.querySelector<HTMLButtonElement>('[data-action="export"]')!.click();
+    const dialog = document.body.querySelector<HTMLElement>('[data-role="overlay"]')!;
+    dialog.querySelector<HTMLButtonElement>('[data-role="format-csv"]')!.click();
+    dialog.querySelector<HTMLButtonElement>('[data-role="export-button"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(apiFetchBlob).toHaveBeenCalledWith('/projects/p1/export', {
+      method: 'POST',
+      body: JSON.stringify({ format: 'csv' }),
+    });
+    const link = dialog.querySelector<HTMLAnchorElement>('[data-role="download-link"]')!;
+    expect(dialog.querySelector<HTMLElement>('[data-role="download"]')!.hidden).toBe(false);
+    expect(link.getAttribute('href')).toBe('blob:mock-url');
+    expect(link.download).toBe('alpha.csv');
     handle.dispose();
   });
 });

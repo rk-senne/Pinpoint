@@ -1,0 +1,61 @@
+<!-- Loaded on demand with the page module (see lib/lazyTemplates.ts). -->
+    <!-- Client Portal page. -->
+    <template id="tpl-client-portal-page">
+      <div class="pp-page">
+        <header class="pp-page__header pp-page__header--row">
+          <div>
+            <h1 class="pp-page__title">Client Portals</h1>
+            <p class="pp-page__lede">Give clients a branded, read-only view of the feedback on one project.</p>
+          </div>
+          <button type="button" class="pp-btn pp-btn--primary" data-action="showCreate" data-role="create-btn" aria-expanded="false" aria-controls="portal-form">+ Create Portal</button>
+        </header>
+
+        <div data-role="portal-form" id="portal-form" hidden>
+          <form class="pp-card pp-form" data-role="create-form" data-action="submit:submitPortal" novalidate>
+            <h2 class="pp-form__title" data-role="form-title">New portal</h2>
+            <div class="pp-field" data-role="project-field">
+              <label for="portal-project">Project</label>
+              <select id="portal-project" name="projectId" data-role="project-select">
+                <option value="">Select a project</option>
+              </select>
+              <p class="pp-field__error" data-role="err-projectId" hidden></p>
+            </div>
+            <div class="pp-form__row">
+              <div class="pp-field">
+                <label for="portal-title">Portal title</label>
+                <input id="portal-title" name="title" type="text" placeholder="e.g. Northwind: client review" autocomplete="off" />
+                <p class="pp-field__error" data-role="err-title" hidden></p>
+              </div>
+              <div class="pp-field">
+                <label for="portal-slug">URL slug</label>
+                <input id="portal-slug" name="slug" type="text" placeholder="northwind-review" autocomplete="off" spellcheck="false" />
+                <p class="pp-field__hint" data-role="slug-hint">Lowercase letters, numbers and hyphens. Can’t be changed later.</p>
+                <p class="pp-field__error" data-role="err-slug" hidden></p>
+              </div>
+            </div>
+            <div class="pp-field">
+              <label for="portal-welcome">Welcome message <span class="pp-field__opt">(optional)</span></label>
+              <input id="portal-welcome" name="welcomeMessage" type="text" placeholder="Shown at the top of the portal" autocomplete="off" />
+            </div>
+            <div class="pp-form__row">
+              <div class="pp-field">
+                <label for="portal-color">Brand colour</label>
+                <input id="portal-color" name="brandColor" type="color" value="#4f46e5" class="pp-color" />
+              </div>
+              <div class="pp-field">
+                <label for="portal-logo">Logo URL <span class="pp-field__opt">(optional)</span></label>
+                <input id="portal-logo" name="logoUrl" type="url" placeholder="https://example.com/logo.png" autocomplete="off" />
+                <p class="pp-field__error" data-role="err-logoUrl" hidden></p>
+              </div>
+            </div>
+            <p class="pp-field__error" data-role="error" role="alert" hidden></p>
+            <div class="pp-form__actions">
+              <button type="submit" class="pp-btn pp-btn--primary" data-role="form-submit">Create</button>
+              <button type="button" class="pp-btn pp-btn--secondary" data-action="cancelForm">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <div data-role="portal-list" class="pp-list" aria-live="polite"></div>
+      </div>
+    </template>

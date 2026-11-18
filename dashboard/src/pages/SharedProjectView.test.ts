@@ -12,12 +12,13 @@
  *   countdown that returns to the prompt when it elapses.
  * - 404 switches to the not-found screen.
  * - The verify request encodes `linkId` and posts the password.
+ * - Annotations come from `GET /shared/:linkId/annotations`: loaded on mount for
+ *   open links, after unlock for password links; 401 keeps the prompt.
  *
  * Validates: Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Annotation } from '@pinpoint/shared';
 
 import { mountSharedProjectView } from './SharedProjectView';
 
@@ -63,32 +64,36 @@ function makeRoot(): HTMLElement {
   return document.getElementById('root') as HTMLElement;
 }
 
-function makeAnnotation(overrides: Partial<Annotation> = {}): Annotation {
+/** Row shape of GET /shared/:linkId/annotations (server-side allow-list). */
+function makeRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id: 'ann-1',
-    projectId: 'proj-1',
-    pageId: 'page-1',
     pinNumber: 1,
     type: 'note',
     severity: 'major',
     status: 'active',
     body: 'Something is off here.',
-    target: { selector: 'body', xpath: '/html/body', textContent: '', framePath: [] },
-    pageX: 100,
-    pageY: 200,
-    environment: {
-      browserFamily: 'Chrome',
-      browserVersion: '124',
-      osFamily: 'macOS',
-      osVersion: '14.5',
-      deviceType: 'desktop',
-      userAgentRaw: 'test',
-    },
-    authorId: 'user-1',
     createdAt: new Date('2024-01-01T00:00:00Z').toISOString(),
-    updatedAt: new Date('2024-01-01T00:00:00Z').toISOString(),
+    pageUrl: 'https://example.com/',
     ...overrides,
-  } as Annotation;
+  };
+}
+
+/**
+ * Route-aware fetch mock: `verify` answers POST .../verify, `list` answers
+ * GET .../annotations. Defaults model a password-protected link before unlock.
+ */
+function routeFetch(
+  fetchMock: ReturnType<typeof vi.fn>,
+  handlers: { verify?: () => Response; list?: () => Response },
+): void {
+  fetchMock.mockImplementation((url: string) => {
+    if (String(url).endsWith('/verify')) {
+      return Promise.resolve(handlers.verify ? handlers.verify() : mockResponse({ status: 200, body: { access: true } }));
+    }
+    return Promise.resolve(
+      handlers.list ? handlers.list() : mockResponse({ status: 401, body: { error: { code: 'SHARED_ACCESS_REQUIRED' } } }),
+    );
+  });
 }
 
 interface MockResponseInit {
@@ -127,10 +132,9 @@ function isVisible(el: HTMLElement): boolean {
 }
 
 async function flush(): Promise<void> {
-  // Drain microtasks for fetch resolution and signal subscribers.
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  // Drain microtasks for fetch resolution and signal subscribers (the unlock
+  // path chains verify -> annotations fetch -> json, so allow several hops).
+  for (let i = 0; i < 12; i++) await Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------
@@ -177,9 +181,9 @@ describe('SharedProjectView', () => {
   });
 
   it('encodes the linkId and posts the password to the verify endpoint', async () => {
+    routeFetch(fetchMock, {});
     const root = makeRoot();
     mountSharedProjectView(root, { linkId: 'link with space' });
-    fetchMock.mockResolvedValue(mockResponse({ status: 200, body: { annotations: [] } }));
 
     const input = root.querySelector<HTMLInputElement>('[data-slot="password-input"]')!;
     input.value = 'pw';
@@ -188,35 +192,50 @@ describe('SharedProjectView', () => {
 
     await flush();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('/api/v1/shared/link%20with%20space/verify');
-    expect(opts.method).toBe('POST');
-    expect(opts.body).toBe(JSON.stringify({ password: 'pw' }));
-    expect((opts.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    const verifyCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/verify')) as [string, RequestInit];
+    expect(verifyCall[0]).toBe('/api/v1/shared/link%20with%20space/verify');
+    expect(verifyCall[1].method).toBe('POST');
+    expect(verifyCall[1].body).toBe(JSON.stringify({ password: 'pw' }));
+    expect(verifyCall[1].credentials).toBe('include');
+    expect((verifyCall[1].headers as Record<string, string>)['Content-Type']).toBe('application/json');
   });
 
-  it('renders the annotations table on a 200 response', async () => {
+  it('loads annotations from the read endpoint (with the grant cookie) after a successful unlock', async () => {
+    let unlocked = false;
+    routeFetch(fetchMock, {
+      verify: () => {
+        unlocked = true;
+        return mockResponse({ status: 200, body: { access: true, projectId: 'p' } });
+      },
+      list: () =>
+        unlocked
+          ? mockResponse({
+              status: 200,
+              body: {
+                annotations: [
+                  makeRow({ pinNumber: 1, body: 'first' }),
+                  makeRow({ pinNumber: 2, body: 'second', severity: 'critical' }),
+                ],
+              },
+            })
+          : mockResponse({ status: 401, body: {} }),
+    });
     const root = makeRoot();
     mountSharedProjectView(root, { linkId: 'link-1' });
-    fetchMock.mockResolvedValue(
-      mockResponse({
-        status: 200,
-        body: {
-          annotations: [
-            makeAnnotation({ id: 'a', pinNumber: 1, body: 'first' }),
-            makeAnnotation({ id: 'b', pinNumber: 2, body: 'second', severity: 'critical' }),
-          ],
-        },
-      }),
-    );
+    await flush();
+    // Before unlock the probe is 401 → prompt stays.
+    expect(isVisible(getSection('prompt'))).toBe(true);
+    expect(isVisible(getSection('authenticated'))).toBe(false);
 
     const input = root.querySelector<HTMLInputElement>('[data-slot="password-input"]')!;
     input.value = 'pw';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-
     await flush();
+
+    const listCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/annotations')) as Array<[string, RequestInit]>;
+    expect(listCalls.at(-1)![0]).toBe('/api/v1/shared/link-1/annotations');
+    expect(listCalls.at(-1)![1].credentials).toBe('include');
 
     expect(isVisible(getSection('authenticated'))).toBe(true);
     expect(isVisible(getSection('prompt'))).toBe(false);
@@ -227,21 +246,51 @@ describe('SharedProjectView', () => {
     expect(rows[1].querySelector('[data-slot="severity"]')!.textContent).toBe('critical');
   });
 
-  it('shows the empty-state when 200 returns no annotations', async () => {
+  it('open link: shows the annotations immediately on mount without asking for a password', async () => {
+    routeFetch(fetchMock, {
+      list: () => mockResponse({ status: 200, body: { annotations: [makeRow({ body: 'public note' })] } }),
+    });
+    const root = makeRoot();
+    mountSharedProjectView(root, { linkId: 'open-link' });
+    await flush();
+
+    expect(isVisible(getSection('authenticated'))).toBe(true);
+    expect(isVisible(getSection('prompt'))).toBe(false);
+    expect(document.querySelector('[data-slot="annotations-tbody"] tr [data-slot="body"]')!.textContent).toBe('public note');
+  });
+
+  it('shows the empty-state when the read endpoint returns no annotations', async () => {
+    routeFetch(fetchMock, { list: () => mockResponse({ status: 200, body: { annotations: [] } }) });
     const root = makeRoot();
     mountSharedProjectView(root, { linkId: 'link-1' });
-    fetchMock.mockResolvedValue(mockResponse({ status: 200, body: { annotations: [] } }));
-
-    const input = root.querySelector<HTMLInputElement>('[data-slot="password-input"]')!;
-    input.value = 'pw';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-
     await flush();
 
     expect(isVisible(getSection('authenticated'))).toBe(true);
     expect(isVisible(document.querySelector('[data-slot="empty-state"]') as HTMLElement)).toBe(true);
     expect(isVisible(document.querySelector('[data-slot="annotations-table"]') as HTMLElement)).toBe(false);
+  });
+
+  it('on mount a 404 from the read endpoint shows not-found (missing link)', async () => {
+    routeFetch(fetchMock, { list: () => mockResponse({ status: 404, body: {} }) });
+    const root = makeRoot();
+    mountSharedProjectView(root, { linkId: 'gone' });
+    await flush();
+    expect(isVisible(getSection('not_found'))).toBe(true);
+  });
+
+  it('keeps the prompt and explains when unlock succeeds but the list cannot be loaded', async () => {
+    routeFetch(fetchMock, { list: () => mockResponse({ status: 500, body: {} }) });
+    const root = makeRoot();
+    mountSharedProjectView(root, { linkId: 'link-1' });
+    const input = root.querySelector<HTMLInputElement>('[data-slot="password-input"]')!;
+    input.value = 'pw';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await flush();
+
+    expect(isVisible(getSection('prompt'))).toBe(true);
+    expect(isVisible(getSection('authenticated'))).toBe(false);
+    expect((document.querySelector('[data-slot="prompt-error"]') as HTMLElement).textContent).toMatch(/could not be loaded/);
   });
 
   it('on 401 displays attempts-remaining from the server response', async () => {

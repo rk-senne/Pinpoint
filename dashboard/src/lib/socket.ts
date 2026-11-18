@@ -2,16 +2,64 @@ import { io, Socket } from 'socket.io-client';
 import { getToken } from './auth';
 import type { Annotation, Comment } from '@pinpoint/shared';
 
-// WebSocket event types matching the server's broadcast events
+/** Payload of `annotation.status_changed`: the full annotation plus change metadata. */
+export type AnnotationStatusChange = Annotation & {
+  previousStatus?: string;
+  changedBy?: string;
+  pageUrl?: string | null;
+};
+
+/** Payload of `comment.created`: the comment wrapped with routing ids. */
+export interface CommentCreatedEvent {
+  comment: Comment;
+  annotationId: string;
+  projectId: string;
+}
+
+/**
+ * Canonical realtime events. Domain events use dotted names (the same
+ * vocabulary as webhooks); `annotation:viewers` / `presence:update` are
+ * socket-only presence signals and keep their colon names.
+ */
 export interface SocketEvents {
-  'annotation:created': (annotation: Annotation) => void;
-  'annotation:updated': (annotation: Annotation) => void;
-  'annotation:status': (data: { id: string; status: string }) => void;
+  'annotation.created': (annotation: Annotation) => void;
+  'annotation.updated': (annotation: Annotation) => void;
+  'annotation.status_changed': (annotation: AnnotationStatusChange) => void;
+  'comment.created': (event: CommentCreatedEvent) => void;
   'annotation:viewers': (data: { id: string; userIds: string[] }) => void;
-  'comment:created': (comment: Comment) => void;
   'presence:update': (data: { userId: string; online: boolean }) => void;
   'notification.created': (notification: { id: string; title: string; body: string; read: boolean; createdAt: string }) => void;
 }
+
+/**
+ * @deprecated Legacy colon event names with their pre-dotted payload shapes.
+ * They are served by subscribing to the canonical dotted event and adapting
+ * the payload, so existing call sites keep working. Remove once
+ * `pages/ProjectView.ts` (the last caller of `annotation:created|updated|status`)
+ * subscribes to the dotted names.
+ */
+export interface LegacySocketEvents {
+  'annotation:created': (annotation: Annotation) => void;
+  'annotation:updated': (annotation: Annotation) => void;
+  'annotation:status': (data: { id: string; status: string }) => void;
+  'comment:created': (comment: Comment) => void;
+}
+
+const LEGACY_EVENT_MAP: Record<
+  keyof LegacySocketEvents,
+  { event: keyof SocketEvents; adapt: (payload: any) => unknown }
+> = {
+  'annotation:created': { event: 'annotation.created', adapt: (p) => p },
+  'annotation:updated': { event: 'annotation.updated', adapt: (p) => p },
+  'annotation:status': {
+    event: 'annotation.status_changed',
+    adapt: (p) => ({ id: p?.id, status: p?.status }),
+  },
+  'comment:created': {
+    event: 'comment.created',
+    adapt: (p) => (p && typeof p === 'object' && 'comment' in p ? p.comment : p),
+  },
+};
 
 let socket: Socket | null = null;
 let currentProjectId: string | null = null;
@@ -29,11 +77,14 @@ function getBaseUrl(): string {
 function getSocket(): Socket {
   if (socket && socket.connected) return socket;
 
+  // After a hard refresh the in-memory bearer is gone; the HttpOnly
+  // `fl_session` cookie still rides on the same-origin handshake and the
+  // server accepts it from the dashboard origin. So connect either way.
   const token = getToken();
-  if (!token) throw new Error('Not authenticated');
 
   socket = io(`${getBaseUrl()}/collab`, {
-    auth: { token },
+    ...(token ? { auth: { token } } : {}),
+    withCredentials: true,
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
@@ -148,11 +199,20 @@ export function emitAnnotationClose(annotationId: string): void {
 export function onSocketEvent<K extends keyof SocketEvents>(
   event: K,
   handler: SocketEvents[K],
-): () => void {
+): () => void;
+/** @deprecated Colon event names — use the dotted equivalents (see `LegacySocketEvents`). */
+export function onSocketEvent<K extends keyof LegacySocketEvents>(
+  event: K,
+  handler: LegacySocketEvents[K],
+): () => void;
+export function onSocketEvent(event: string, handler: (payload: any) => void): () => void {
   const s = getSocket();
-  s.on(event as string, handler as any);
+  const legacy = LEGACY_EVENT_MAP[event as keyof LegacySocketEvents];
+  const wire = legacy ? legacy.event : event;
+  const listener = legacy ? (payload: unknown) => handler(legacy.adapt(payload)) : handler;
+  s.on(wire, listener);
   return () => {
-    s.off(event as string, handler as any);
+    s.off(wire, listener);
   };
 }
 

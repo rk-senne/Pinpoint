@@ -12,11 +12,10 @@
 
 ---
 
-## Multi-Tenancy: Shared DB + Row-Level Security
+## Multi-Tenancy: Shared DB, application-layer isolation (RLS = future hardening)
 
 - `org_id` column on all tenant tables
-- PostgreSQL RLS policies enforce isolation at DB level
-- Knex transaction wrapper sets `SET LOCAL app.current_org_id` per request
+- Tenant isolation is enforced in the application layer (org_id predicates + access checks). PostgreSQL RLS policies exist but are inert today (no `app.current_org_id` is ever set and the app role bypasses RLS) — see docs/SECURITY_REVIEW.md PP-08; a per-request `SET LOCAL app.current_org_id` wrapper with a non-superuser role is planned future hardening
 - JWT extended with `org_id` + `role` claims
 
 ---

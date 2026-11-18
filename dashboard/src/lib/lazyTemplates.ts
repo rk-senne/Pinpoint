@@ -18,6 +18,7 @@ const registered = new Set<string>();
 export function registerTemplates(key: string, markup: string): void {
   if (registered.has(key)) return;
   const holder = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- markup is a build-time constant from this repo, parsed inertly in a <template>
   holder.innerHTML = markup;
   for (const tpl of Array.from(holder.content.querySelectorAll('template[id]'))) {
     if (!document.getElementById(tpl.id)) document.body.appendChild(tpl);

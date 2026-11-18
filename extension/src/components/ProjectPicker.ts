@@ -126,6 +126,7 @@ const PICKER_CSS = `
  */
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${PICKER_CSS}</style>
     <div class="fl-project-picker" part="picker" role="dialog" aria-label="Pick a project">
@@ -138,6 +139,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-project-picker-item" role="option" tabindex="0">
       <span class="fl-project-picker-name"></span>

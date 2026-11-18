@@ -55,6 +55,7 @@ import { withBoundary } from '../lib/withBoundary';
  */
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <div
       class="fl-toolbar"

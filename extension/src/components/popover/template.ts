@@ -28,6 +28,7 @@ export const TEMPLATE = (() => {
   // on `.fl-popover-create` / `.fl-popover-view` — avoids re-stamping
   // templates on every state change and keeps the focus-trap target
   // (the `<dialog>`) stable.
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${POPOVER_CSS}</style>
     <dialog class="fl-popover" part="dialog" data-pinpoint="popover">

@@ -31,36 +31,6 @@ export interface SocketEvents {
   'notification.created': (notification: { id: string; title: string; body: string; read: boolean; createdAt: string }) => void;
 }
 
-/**
- * @deprecated Legacy colon event names with their pre-dotted payload shapes.
- * They are served by subscribing to the canonical dotted event and adapting
- * the payload, so existing call sites keep working. Remove once
- * `pages/ProjectView.ts` (the last caller of `annotation:created|updated|status`)
- * subscribes to the dotted names.
- */
-export interface LegacySocketEvents {
-  'annotation:created': (annotation: Annotation) => void;
-  'annotation:updated': (annotation: Annotation) => void;
-  'annotation:status': (data: { id: string; status: string }) => void;
-  'comment:created': (comment: Comment) => void;
-}
-
-const LEGACY_EVENT_MAP: Record<
-  keyof LegacySocketEvents,
-  { event: keyof SocketEvents; adapt: (payload: any) => unknown }
-> = {
-  'annotation:created': { event: 'annotation.created', adapt: (p) => p },
-  'annotation:updated': { event: 'annotation.updated', adapt: (p) => p },
-  'annotation:status': {
-    event: 'annotation.status_changed',
-    adapt: (p) => ({ id: p?.id, status: p?.status }),
-  },
-  'comment:created': {
-    event: 'comment.created',
-    adapt: (p) => (p && typeof p === 'object' && 'comment' in p ? p.comment : p),
-  },
-};
-
 let socket: Socket | null = null;
 let currentProjectId: string | null = null;
 let currentOpenAnnotationId: string | null = null;
@@ -200,19 +170,11 @@ export function onSocketEvent<K extends keyof SocketEvents>(
   event: K,
   handler: SocketEvents[K],
 ): () => void;
-/** @deprecated Colon event names — use the dotted equivalents (see `LegacySocketEvents`). */
-export function onSocketEvent<K extends keyof LegacySocketEvents>(
-  event: K,
-  handler: LegacySocketEvents[K],
-): () => void;
 export function onSocketEvent(event: string, handler: (payload: any) => void): () => void {
   const s = getSocket();
-  const legacy = LEGACY_EVENT_MAP[event as keyof LegacySocketEvents];
-  const wire = legacy ? legacy.event : event;
-  const listener = legacy ? (payload: unknown) => handler(legacy.adapt(payload)) : handler;
-  s.on(wire, listener);
+  s.on(event, handler);
   return () => {
-    s.off(wire, listener);
+    s.off(event, handler);
   };
 }
 

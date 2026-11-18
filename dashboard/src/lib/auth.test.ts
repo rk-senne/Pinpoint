@@ -175,3 +175,26 @@ describe('probeIsAuthed', () => {
     await expect(auth.probeIsAuthed()).resolves.toBe(false);
   });
 });
+
+describe('CSRF cookie fallback after a reload', () => {
+  const clearCookies = () => {
+    for (const n of ['fl_csrf', '__Host-fl_csrf']) document.cookie = `${n}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+  };
+  afterEach(clearCookies);
+
+  it('reads the legacy fl_csrf cookie (plain-HTTP local stack)', async () => {
+    clearCookies();
+    document.cookie = 'fl_csrf=legacy-token; path=/';
+    const auth = await importAuth();
+    expect(auth.getCsrfToken()).toBe('legacy-token');
+  });
+
+  it('reads the __Host-fl_csrf cookie (Secure deployments, PP-15)', async () => {
+    clearCookies();
+    // jsdom refuses to set real __Host- cookies over http, so stub the jar.
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue('other=1; __Host-fl_csrf=host-token');
+    const auth = await importAuth();
+    expect(auth.getCsrfToken()).toBe('host-token');
+    vi.restoreAllMocks();
+  });
+});

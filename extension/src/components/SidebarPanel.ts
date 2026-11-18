@@ -187,6 +187,7 @@ const PANEL_CSS = `
  */
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${PANEL_CSS}</style>
     <div class="fl-sidebar" data-pinpoint="sidebar" part="sidebar">
@@ -243,6 +244,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-sidebar-item" role="option" aria-selected="false" tabindex="-1">
       <div class="fl-sidebar-row-head">

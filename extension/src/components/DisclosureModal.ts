@@ -246,6 +246,7 @@ const TEMPLATE = (() => {
   // `DATA_CATEGORIES` in the constructor so the test suite can drive
   // the canonical set off the exported constant rather than reading
   // rendered HTML.
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${DISCLOSURE_CSS}</style>
     <dialog class="fl-disclosure-modal" part="dialog" role="dialog" aria-modal="true" aria-labelledby="fl-disclosure-title">

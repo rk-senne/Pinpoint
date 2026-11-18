@@ -1,6 +1,6 @@
 // Pure DOM/format helpers used by <fl-popover> (extracted from Popover.ts).
 
-import type { CapturedConsoleEntry, CapturedNetworkEntry, EnvironmentMetadata } from '@pinpoint/shared';
+import type { CapturedConsoleEntry, CapturedNetworkEntry } from '@pinpoint/shared';
 
 /**
  * Derive an initial-bubble label (1–2 chars) from a user id when the

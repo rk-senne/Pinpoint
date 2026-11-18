@@ -44,6 +44,7 @@ export interface CommentThreadSubmitDetail {
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <ol class="fl-comment-thread" part="comments" hidden></ol>
     <div class="fl-comment-composer">
@@ -77,6 +78,7 @@ const TEMPLATE = (() => {
  */
 const COMMENT_ITEM_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-comment">
       <span class="fl-comment-author"></span>

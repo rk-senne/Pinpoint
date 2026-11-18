@@ -349,8 +349,14 @@ export const sharedStyleSheet: CSSStyleSheet | undefined = (() => {
  */
 export function adoptStyles(root: ShadowRoot): void {
   if (sharedStyleSheet && 'adoptedStyleSheets' in Document.prototype) {
-    root.adoptedStyleSheets = [sharedStyleSheet];
-    return;
+    try {
+      root.adoptedStyleSheets = [sharedStyleSheet];
+      return;
+    } catch {
+      // Firefox content scripts see the page's ShadowRoot through an Xray
+      // wrapper, which rejects a sheet built in the extension's compartment
+      // ("Accessing from Xray wrapper is not supported"). Use <style> instead.
+    }
   }
   const style = document.createElement('style');
   style.textContent = SHARED_STYLE_FALLBACK_CSS;

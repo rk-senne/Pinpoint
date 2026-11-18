@@ -15,7 +15,7 @@
  * the device-pixel-ratio scaling, and the wire-format serializer the
  * Popover passes to FormData.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type BoundingBox,

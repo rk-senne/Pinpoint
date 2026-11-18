@@ -44,6 +44,13 @@ bearer JWT instead of the dashboard's cookie+CSRF flow:
 - Bearer-authenticated requests are CSRF-exempt — the bearer is itself
   proof of possession.
 
+> **Decision (Nov 2026): the token stays in `chrome.storage.local`.** Only the
+> extension's own pages and service worker read it (content scripts go through the
+> service-worker relay), it is never exposed to web pages, the server caps every
+> session at 30 days, and `token_version` revocation logs a device out instantly.
+> `storage.session` would force a fresh sign-in after every browser restart for
+> little extra protection against an attacker who already controls the local profile.
+
 ## Networking: the content-script → service-worker API relay
 
 A content script runs in the **host page's network origin**, so a direct

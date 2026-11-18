@@ -54,12 +54,14 @@ export function getCsrfToken(): string | null {
   return readCsrfCookie();
 }
 
-/** Value of the readable `fl_csrf` cookie, or `null`. */
+/** Value of the readable CSRF cookie (`__Host-fl_csrf` or `fl_csrf`), or `null`. */
 function readCsrfCookie(): string | null {
   if (typeof document === 'undefined' || typeof document.cookie !== 'string') return null;
   for (const part of document.cookie.split(';')) {
     const [rawName, ...rest] = part.split('=');
-    if (rawName?.trim() === 'fl_csrf') {
+    // `__Host-fl_csrf` on Secure deployments, `fl_csrf` on plain-HTTP local stacks.
+    const name = rawName?.trim();
+    if (name === '__Host-fl_csrf' || name === 'fl_csrf') {
       const value = decodeURIComponent(rest.join('=').trim());
       return value.length > 0 ? value : null;
     }

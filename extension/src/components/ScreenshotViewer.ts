@@ -51,6 +51,7 @@ const VIEWER_CSS = `
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${VIEWER_CSS}</style>
     <div class="fl-screenshot-stage" part="stage" role="img" tabindex="0" hidden>
@@ -211,6 +212,7 @@ export class FlScreenshotViewer extends HTMLElement {
     // safe here because shape values originate in the user's own
     // markup editor (and the server validates them on the way in via
     // `MarkupDocumentSchema`).
+    // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
     this.#overlay.innerHTML = svg;
   }
 }

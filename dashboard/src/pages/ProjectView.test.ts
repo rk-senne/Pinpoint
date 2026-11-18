@@ -16,7 +16,7 @@
  *   list optimistically.
  * - Detail view shows the bug-report assignee dropdown populated from
  *   the members fetch and saves assignment + due date.
- * - Real-time `annotation:created` updates the list and analytics totals.
+ * - Real-time `annotation.created` updates the list and analytics totals.
  * - Real-time `annotation:viewers` repaints the co-viewer indicator with
  *   avatars or initials, suppressing the local user.
  * - Reconnecting banner toggles when the socket reports a state change.
@@ -518,8 +518,10 @@ describe('mountProjectView', () => {
       'unknown',
     ] as const;
     for (const key of expectedKeys) {
-      expect(rendered.has(key)).toBe(true);
-      expect(rendered.get(key)).toBe(String(browserCounts[key]));
+      // The `unknown` bucket is displayed as "Unknown".
+      const label = key === 'unknown' ? 'Unknown' : key;
+      expect(rendered.has(label)).toBe(true);
+      expect(rendered.get(label)).toBe(String(browserCounts[key]));
     }
   });
 
@@ -820,7 +822,7 @@ describe('mountProjectView', () => {
     expect(getSection('reconnecting').hidden).toBe(true);
   });
 
-  it('annotation:created broadcast appends to the list and bumps analytics totals', async () => {
+  it('annotation.created broadcast appends to the list and bumps analytics totals', async () => {
     vi.stubGlobal('fetch', makeFetch({ annotations: [], analytics: makeAnalytics({
       total: 0,
       bySeverity: { critical: 0, major: 0, minor: 0, informational: 0 },
@@ -834,7 +836,7 @@ describe('mountProjectView', () => {
     mountProjectView(root, { id: 'proj-1' });
     await flush();
 
-    const handler = socketHandlers.get('annotation:created');
+    const handler = socketHandlers.get('annotation.created');
     expect(handler).toBeDefined();
     handler!(makeAnnotation({ id: 'b1', body: 'realtime row', severity: 'major', status: 'active' }));
 
@@ -847,6 +849,25 @@ describe('mountProjectView', () => {
     const sevRows = rowsForCard(analytics, 'bySeverity');
     const major = sevRows.find((row) => row.firstChild?.textContent === 'major')!;
     expect(major.lastChild!.textContent).toBe('1');
+  });
+
+  it('annotation.status_changed / annotation.updated broadcasts update the row in place', async () => {
+    vi.stubGlobal('fetch', makeFetch({ annotations: [makeAnnotation({ id: 'a1', body: 'orig', status: 'active' })] }));
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    expect(socketHandlers.has('annotation:status')).toBe(false);
+    socketHandlers.get('annotation.status_changed')!(
+      makeAnnotation({ id: 'a1', body: 'orig', status: 'resolved' }),
+    );
+    socketHandlers.get('annotation.updated')!(
+      makeAnnotation({ id: 'a1', body: 'edited', status: 'resolved' }),
+    );
+    const rows = root.querySelectorAll('[data-role="list-body"] tr');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector('[data-slot="body"]')!.textContent).toBe('edited');
   });
 
   it('annotation:viewers broadcast paints avatars and suppresses the local user', async () => {

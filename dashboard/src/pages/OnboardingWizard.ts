@@ -641,7 +641,3 @@ async function copyToClipboard(text: string, sourceEl: HTMLTextAreaElement): Pro
     return false;
   }
 }
-
-export function isOnboardingComplete(): boolean {
-  return localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true';
-}

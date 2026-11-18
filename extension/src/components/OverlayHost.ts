@@ -285,6 +285,7 @@ function readTransformCoords(el: HTMLElement): { x: number; y: number } | null {
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <div class="fl-overlay-root" data-pinpoint="overlay-host" part="root">
       <div class="fl-reconnecting" hidden part="reconnecting" role="status" aria-live="polite">

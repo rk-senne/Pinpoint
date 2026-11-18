@@ -39,7 +39,6 @@ import {
   loadProjects,
   projectsStore,
   setProjectListFilter,
-  type ProjectListFilter,
 } from '../lib/stores';
 
 // --- Public API -------------------------------------------------------
@@ -90,7 +89,6 @@ export function mountProjectListSidebar(
 
   const tabActiveBtn = root.querySelector<HTMLButtonElement>('[data-role="tab-active"]')!;
   const tabArchivedBtn = root.querySelector<HTMLButtonElement>('[data-role="tab-archived"]')!;
-  const searchInput = root.querySelector<HTMLInputElement>('[data-role="search"]')!;
   const listEl = root.querySelector<HTMLElement>('[data-role="list"]')!;
 
   const cleanups: Array<() => void> = [];

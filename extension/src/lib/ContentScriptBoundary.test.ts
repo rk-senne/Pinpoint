@@ -119,7 +119,6 @@ describe('withContentScriptBoundary', () => {
   it('handles non-Error throw values without crashing', () => {
     expect(() => {
       withContentScriptBoundary(() => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw 'string reason';
       });
     }).not.toThrow();

@@ -114,8 +114,7 @@ export function showToast(options: ToastOptions): void {
   container.appendChild(toast);
 
   // Force a reflow so the CSS transition from `translateY(100%)` kicks in.
-  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-  toast.offsetHeight;
+  void toast.offsetHeight;
   toast.classList.add('pp-toast--visible');
 
   // Schedule auto-dismiss.

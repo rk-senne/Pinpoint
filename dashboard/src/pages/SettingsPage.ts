@@ -188,7 +188,7 @@ export function mountSettingsPage(
   // Replace static "Loading…" text with form-field skeletons.
   guidelinesLoading.textContent = '';
   guidelinesLoading.appendChild(createFormSkeleton(2));
-  const guidelineForm = requireRole(contentRoot, 'guideline-form') as HTMLFormElement;
+  requireRole(contentRoot, 'guideline-form'); // asserts the form exists in the template
   const guidelineNameInput = requireRole(
     contentRoot,
     'guideline-name',

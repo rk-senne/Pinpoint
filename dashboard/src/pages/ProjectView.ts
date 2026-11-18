@@ -18,8 +18,8 @@
  *     assignee dropdown + due date (Reqs 8.3, 8.4, 17.3, 17.4, 22.6).
  *   - Co-viewer indicator with avatars/initials, tooltips and +N overflow
  *     (Reqs 6.6, 6.7).
- *   - Real-time updates via `onSocketEvent` for `annotation:created`,
- *     `annotation:updated`, `annotation:status`, `annotation:viewers`.
+ *   - Real-time updates via `onSocketEvent` for `annotation.created`,
+ *     `annotation.updated`, `annotation.status_changed`, `annotation:viewers`.
  *   - `emitAnnotationOpen` / `emitAnnotationClose` on annotation selection
  *     (Reqs 6.6, 6.7).
  *
@@ -112,8 +112,6 @@ interface Analytics {
 }
 
 type ViewMode = 'list' | 'kanban';
-
-const KANBAN_COLUMNS: AnnotationStatus[] = ['active', 'in_progress', 'resolved'];
 
 const MAX_COVIEWER_AVATARS = 4;
 
@@ -244,7 +242,6 @@ export function mountProjectView(
   const selectAllCheckbox = contentRoot.querySelector<HTMLInputElement>('[data-role="select-all"]')!;
 
   // Filter bar DOM refs (Mission B3).
-  const filterBar = contentRoot.querySelector<HTMLElement>('[data-role="filter-bar"]')!;
   const filterSearchInput = contentRoot.querySelector<HTMLInputElement>('[data-role="filter-search"]')!;
   const filterSeveritySelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-severity"]')!;
   const filterStatusSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-status"]')!;
@@ -688,7 +685,7 @@ export function mountProjectView(
     }
 
     socketUnsubs.push(
-      onSocketEvent('annotation:created', (annotation) => {
+      onSocketEvent('annotation.created', (annotation) => {
         const list = currentAnnotationsStore.list.get();
         if (list.some((a) => a.id === annotation.id)) return;
         setAnnotations([...list, annotation]);
@@ -697,14 +694,14 @@ export function mountProjectView(
     );
 
     socketUnsubs.push(
-      onSocketEvent('annotation:updated', (annotation) => {
+      onSocketEvent('annotation.updated', (annotation) => {
         const list = currentAnnotationsStore.list.get();
         setAnnotations(list.map((a) => (a.id === annotation.id ? annotation : a)));
       }),
     );
 
     socketUnsubs.push(
-      onSocketEvent('annotation:status', (data) => {
+      onSocketEvent('annotation.status_changed', (data) => {
         const list = currentAnnotationsStore.list.get();
         setAnnotations(
           list.map((a) =>
@@ -1565,6 +1562,7 @@ export function mountProjectView(
             'load',
             () => {
               if (selectedAnnotationId.get() !== annotationId) return;
+              // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
               overlay.innerHTML = renderMarkupSvg(
                 doc,
                 img.naturalWidth || img.clientWidth || 0,
@@ -1575,6 +1573,7 @@ export function mountProjectView(
           );
           return;
         }
+        // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
         overlay.innerHTML = renderMarkupSvg(doc, w, h);
       })
       .catch(() => {

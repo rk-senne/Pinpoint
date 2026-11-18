@@ -178,7 +178,7 @@ export class PinpointClient {
   }
 
   onAnnotationCreated(cb: (annotation: Annotation) => void): () => void {
-    return this.on('annotation:created', cb as (data: unknown) => void);
+    return this.on('annotation.created', cb as (data: unknown) => void);
   }
 
   onNotification(cb: (notification: Notification) => void): () => void {

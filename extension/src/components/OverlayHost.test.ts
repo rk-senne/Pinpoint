@@ -22,7 +22,7 @@
  *   - `disconnectedCallback` disposes the PinPositioner, disconnects the
  *     socket, and unsubscribes signal listeners.
  */
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import './OverlayHost';
 import {
@@ -805,7 +805,7 @@ describe('<fl-overlay-host>', () => {
     });
 
     it('stops forwarding store changes to children after disconnect', () => {
-      const { host, socket, cleanup } = mountHost();
+      const { host, cleanup } = mountHost();
       host.store.annotations.set([makeAnnotation({ id: 'a1' })]);
       const sidebar = host.shadowRoot!.querySelector('fl-sidebar-panel') as HTMLElement & {
         annotations: readonly Annotation[];

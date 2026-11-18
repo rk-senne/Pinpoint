@@ -87,6 +87,7 @@ const PIN_ELEMENT_CSS = `
 `;
 
 const PIN_TEMPLATE = document.createElement('template');
+// eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
 PIN_TEMPLATE.innerHTML = `<style>${PIN_ELEMENT_CSS}</style><span class="pin-number" part="number"></span>`;
 
 export class AnnotationPin extends HTMLElement {

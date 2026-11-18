@@ -172,6 +172,7 @@ class PinpointWidget {
 
     const trigger = document.createElement('button');
     trigger.className = `pinpoint-trigger position-${this.config.position}`;
+    // eslint-disable-next-line no-restricted-syntax -- FEEDBACK_ICON is a static SVG constant
     trigger.innerHTML = FEEDBACK_ICON;
     trigger.setAttribute('aria-label', 'Send feedback');
     trigger.setAttribute('aria-haspopup', 'dialog');

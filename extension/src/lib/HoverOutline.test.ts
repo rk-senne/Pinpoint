@@ -14,7 +14,7 @@
  *   - Elements inside the overlay's own shadow tree are skipped (the
  *     outline is hidden rather than redrawn).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { HoverOutline } from './HoverOutline';
 

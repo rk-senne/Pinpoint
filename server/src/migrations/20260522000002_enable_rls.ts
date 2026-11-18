@@ -2,10 +2,18 @@ import type { Knex } from 'knex';
 
 /**
  * Enable Row-Level Security on tenant-scoped tables.
- * RLS ensures data isolation at the database level — even if application
- * code has a bug, cross-tenant data access is impossible.
  *
- * The application sets `app.current_org_id` at the start of each transaction.
+ * IMPORTANT (PP-08, docs/SECURITY_REVIEW.md): these policies are currently
+ * INERT and are NOT a tenant-isolation control. (1) Nothing in `server/src`
+ * ever sets `app.current_org_id`, and (2) the application connects as a role
+ * with SUPERUSER / BYPASSRLS in dev and Compose, which skips policies entirely.
+ * Tenant isolation is enforced in the APPLICATION layer (org_id predicates in
+ * every repository / `access.ts` checks, covered by the tenant-isolation
+ * integration tests). The migration is kept so a future hardening step
+ * (non-superuser app role + per-request `set_config('app.current_org_id', …,
+ * true)` + policies for every org-scoped table) can build on it. Do not rely on
+ * it, and do not "fix" only the role: with the GUC unset every query would
+ * return zero rows.
  */
 export async function up(knex: Knex): Promise<void> {
   // Enable RLS on tenant tables

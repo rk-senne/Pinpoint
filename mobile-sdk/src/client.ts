@@ -17,6 +17,27 @@ export interface PinpointConfig {
   onAuthRequired?: () => void;
 }
 
+/**
+ * The shared `{ data, pagination }` envelope every list endpoint returns
+ * (`server` uses `paginationMeta` from `@pinpoint/shared`). The SDK only
+ * needs `data`, so `pagination` is typed loosely.
+ */
+interface PaginatedEnvelope<T> {
+  data: T[];
+  pagination?: unknown;
+}
+
+/**
+ * Unwrap a list response: prefer the `{ data }` envelope, fall back to a
+ * bare array (tolerant of older server builds), and coerce anything else to
+ * an empty array so callers always get an iterable.
+ */
+function unwrapList<T>(res: PaginatedEnvelope<T> | T[] | null | undefined): T[] {
+  if (Array.isArray(res)) return res;
+  const data = (res as PaginatedEnvelope<T> | null | undefined)?.data;
+  return Array.isArray(data) ? data : [];
+}
+
 export class PinpointClient {
   private config: PinpointConfig;
   private ws: WebSocket | null = null;
@@ -57,26 +78,36 @@ export class PinpointClient {
 
   async listProjects(params?: { search?: string; status?: string }): Promise<Project[]> {
     const qs = params ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v != null) as [string, string][]).toString() : '';
-    return this.request<Project[]>('GET', `/projects${qs}`);
+    // `GET /projects` returns the shared `{ data, pagination }` envelope, not
+    // a bare array. Unwrap `data`; stay tolerant of a bare array in case an
+    // older server build is on the other end.
+    const res = await this.request<PaginatedEnvelope<Project> | Project[]>('GET', `/projects${qs}`);
+    return unwrapList(res);
   }
 
   async getProject(id: string): Promise<Project> {
-    return this.request<Project>('GET', `/projects/${id}`);
+    // `GET /projects/:id` returns `{ project }`, not a bare `Project`.
+    const res = await this.request<{ project: Project } | Project>('GET', `/projects/${id}`);
+    return (res as { project?: Project }).project ?? (res as Project);
   }
 
   // --- Annotations ---
 
   async listAnnotations(projectId: string, params?: { status?: string }): Promise<Annotation[]> {
     const qs = params?.status ? `?status=${params.status}` : '';
-    return this.request<Annotation[]>('GET', `/projects/${projectId}/annotations${qs}`);
+    // `{ data, pagination }` envelope, not a bare array.
+    const res = await this.request<PaginatedEnvelope<Annotation> | Annotation[]>('GET', `/projects/${projectId}/annotations${qs}`);
+    return unwrapList(res);
   }
 
   async createAnnotation(projectId: string, data: CreateAnnotationInput): Promise<Annotation> {
-    return this.request<Annotation>('POST', `/projects/${projectId}/annotations`, data);
+    const res = await this.request<{ data: Annotation } | Annotation>('POST', `/projects/${projectId}/annotations`, data);
+    return (res as { data?: Annotation }).data ?? (res as Annotation);
   }
 
   async updateAnnotation(id: string, data: UpdateAnnotationInput): Promise<Annotation> {
-    return this.request<Annotation>('PUT', `/annotations/${id}`, data);
+    const res = await this.request<{ data: Annotation } | Annotation>('PUT', `/annotations/${id}`, data);
+    return (res as { data?: Annotation }).data ?? (res as Annotation);
   }
 
   async deleteAnnotation(id: string): Promise<void> {
@@ -84,17 +115,21 @@ export class PinpointClient {
   }
 
   async changeStatus(id: string, status: string): Promise<Annotation> {
-    return this.request<Annotation>('PUT', `/annotations/${id}/status`, { status });
+    const res = await this.request<{ data: Annotation } | Annotation>('PUT', `/annotations/${id}/status`, { status });
+    return (res as { data?: Annotation }).data ?? (res as Annotation);
   }
 
   // --- Comments ---
 
   async listComments(annotationId: string): Promise<Comment[]> {
-    return this.request<Comment[]>('GET', `/annotations/${annotationId}/comments`);
+    // `{ data, pagination }` envelope, not a bare array.
+    const res = await this.request<PaginatedEnvelope<Comment> | Comment[]>('GET', `/annotations/${annotationId}/comments`);
+    return unwrapList(res);
   }
 
   async createComment(annotationId: string, body: string): Promise<Comment> {
-    return this.request<Comment>('POST', `/annotations/${annotationId}/comments`, { body });
+    const res = await this.request<{ data: Comment } | Comment>('POST', `/annotations/${annotationId}/comments`, { body });
+    return (res as { data?: Comment }).data ?? (res as Comment);
   }
 
   // --- Screenshots ---
@@ -184,13 +219,36 @@ export class PinpointClient {
   private async handleError(res: Response): Promise<never> {
     if (res.status === 401) this.config.onAuthRequired?.();
     const text = await res.text().catch(() => '');
-    throw new PinpointApiError(res.status, text);
+    // Surface the canonical `{ error: { code, message, details } }` envelope
+    // when the body is JSON, while keeping the raw text as `body` for
+    // callers/tests that inspect it verbatim.
+    let code: string | undefined;
+    let message: string | undefined;
+    try {
+      const parsed = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
+      if (parsed && typeof parsed === 'object' && parsed.error) {
+        if (typeof parsed.error.code === 'string') code = parsed.error.code;
+        if (typeof parsed.error.message === 'string') message = parsed.error.message;
+      }
+    } catch {
+      /* non-JSON body (plain text / empty) — fall back to raw text */
+    }
+    throw new PinpointApiError(res.status, text, code, message);
   }
 }
 
 export class PinpointApiError extends Error {
-  constructor(public readonly status: number, public readonly body: string) {
-    super(`Pinpoint API error ${status}: ${body}`);
+  /** Structured `error.code` from the API envelope, when present. */
+  readonly code?: string;
+
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+    code?: string,
+    message?: string,
+  ) {
+    super(`Pinpoint API error ${status}: ${message ?? body}`);
     this.name = 'PinpointApiError';
+    this.code = code;
   }
 }

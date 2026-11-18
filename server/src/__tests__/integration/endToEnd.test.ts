@@ -185,17 +185,17 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     };
 
     const receivedByA = new Promise<any>((resolve) => {
-      memberA.on('annotation:created', (data) => resolve(data));
+      memberA.on('annotation.created', (data) => resolve(data));
     });
     const receivedByB = new Promise<any>((resolve) => {
-      memberB.on('annotation:created', (data) => resolve(data));
+      memberB.on('annotation.created', (data) => resolve(data));
     });
 
     // Broadcast (simulating what the REST handler does after DB insert).
     // The hex idiom: emit a `DomainEvent` with an explicit `room` field
     // so the bus targets `project:<id>` inside the `/collab` namespace.
     eventBus.emit({
-      type: 'annotation:created',
+      type: 'annotation.created',
       room: `project:${projectId}`,
       payload: newAnnotation,
     });
@@ -230,10 +230,10 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     memberC.removeAllListeners('presence:update');
 
     let memberCReceived = false;
-    memberC.on('annotation:created', () => { memberCReceived = true; });
+    memberC.on('annotation.created', () => { memberCReceived = true; });
 
     eventBus.emit({
-      type: 'annotation:created',
+      type: 'annotation.created',
       room: 'project:project-1',
       payload: { id: 'ann-x', body: 'test' },
     });
@@ -259,11 +259,11 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     memberB.removeAllListeners('presence:update');
 
     const statusPromise = new Promise<any>((resolve) => {
-      memberB.on('annotation:status', (data) => resolve(data));
+      memberB.on('annotation.status_changed', (data) => resolve(data));
     });
 
     eventBus.emit({
-      type: 'annotation:status',
+      type: 'annotation.status_changed',
       room: `project:${projectId}`,
       payload: { id: 'ann-1', status: 'resolved' },
     });
@@ -299,11 +299,11 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     };
 
     const receivedPromise = new Promise<any>((resolve) => {
-      memberB.on('comment:created', (data) => resolve(data));
+      memberB.on('comment.created', (data) => resolve(data));
     });
 
     eventBus.emit({
-      type: 'comment:created',
+      type: 'comment.created',
       room: `project:${projectId}`,
       payload: commentData,
     });

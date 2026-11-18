@@ -1,3 +1,4 @@
+import { readSessionCookie } from './sessionCookies.js';
 import type { Request, Response, NextFunction } from 'express';
 
 /**
@@ -74,7 +75,7 @@ export function orgIdFromVerifiedToken(
     const bearer =
       typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     const cookie =
-      typeof req.cookies?.fl_session === 'string' ? (req.cookies.fl_session as string) : '';
+      readSessionCookie(req.cookies) ?? '';
     // Same precedence as the auth middleware: bearer wins over the cookie.
     const token = bearer || cookie;
     if (!token) return undefined;

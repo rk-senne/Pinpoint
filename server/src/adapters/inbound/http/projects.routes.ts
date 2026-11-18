@@ -333,6 +333,7 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
       return;
     }
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'project.deleted',

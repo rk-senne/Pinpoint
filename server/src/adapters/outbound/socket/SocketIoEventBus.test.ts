@@ -12,35 +12,17 @@ function fakeIo() {
   return { io: { of: () => ns } as unknown as Server, emitted };
 }
 
-describe('SocketIoEventBus client aliases', () => {
-  it('emits status_changed under the dotted name and the colon name both clients handle', () => {
+describe('SocketIoEventBus', () => {
+  it.each([
+    ['annotation.status_changed', { id: 'a1', projectId: 'p1', status: 'resolved', previousStatus: 'active' }],
+    ['annotation.updated', { id: 'a1', body: 'edited' }],
+    ['annotation.created', { id: 'a1' }],
+    ['comment.created', { comment: { id: 'c1' }, annotationId: 'a1', projectId: 'p1' }],
+  ])('emits %s once, under its dotted name, with the untouched payload', (type, payload) => {
     const { io, emitted } = fakeIo();
-    new SocketIoEventBus(io).emit({
-      type: 'annotation.status_changed',
-      room: 'project:p1',
-      payload: { id: 'a1', projectId: 'p1', status: 'resolved', previousStatus: 'active' },
-    });
-    expect(emitted.map((e) => e.name)).toEqual(['annotation.status_changed', 'annotation:status']);
-    expect(emitted.every((e) => e.room === 'project:p1')).toBe(true);
-    expect(emitted[1]!.payload).toEqual({ id: 'a1', status: 'resolved', projectId: 'p1' });
-  });
-
-  it('emits annotation.updated as annotation:updated with the full annotation', () => {
-    const { io, emitted } = fakeIo();
-    const payload = { id: 'a1', body: 'edited' };
-    new SocketIoEventBus(io).emit({ type: 'annotation.updated', room: 'project:p1', payload });
-    expect(emitted.map((e) => e.name)).toEqual(['annotation.updated', 'annotation:updated']);
-    expect(emitted[1]!.payload).toBe(payload);
-  });
-
-  it('unwraps comment.created for the colon-named listener', () => {
-    const { io, emitted } = fakeIo();
-    new SocketIoEventBus(io).emit({
-      type: 'comment.created',
-      room: 'project:p1',
-      payload: { comment: { id: 'c1' }, annotationId: 'a1', projectId: 'p1' },
-    });
-    expect(emitted.find((e) => e.name === 'comment:created')!.payload).toEqual({ id: 'c1' });
+    new SocketIoEventBus(io).emit({ type, room: 'project:p1', payload });
+    expect(emitted).toEqual([{ room: 'project:p1', name: type, payload }]);
+    expect(emitted[0]!.payload).toBe(payload);
   });
 
   it('drops room-less emits instead of broadcasting namespace-wide (PP-01)', () => {

@@ -55,6 +55,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
     const result = await registerWebhook.execute({ orgId: req.user!.orgId, ...parsed.data });
     if (!result.ok) { sendDomainError(res, result.error); return; }
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'webhook.created',
@@ -137,6 +138,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Router {
     const result = await deleteWebhook.execute(paramString(req.params.id), req.user!.orgId);
     if (!result.ok) { sendDomainError(res, result.error); return; }
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'webhook.deleted',

@@ -93,6 +93,7 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
     });
 
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'api_key.created',
@@ -130,6 +131,7 @@ export function createApiKeyRoutes(deps: ApiKeyRouteDeps): Router {
 
     await apiKeyRepo.revoke(req.params.id as string);
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'api_key.revoked',

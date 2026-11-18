@@ -1,9 +1,13 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { Knex } from 'knex';
 import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
 import { sendError, sendZodFailure } from './errors.js';
+import {
+  createWidgetRateLimit,
+  type WidgetRateLimitRedis,
+} from '../../../middleware/widgetRateLimit.js';
 import {
   findAccessibleAnnotation,
   findAccessibleProject,
@@ -17,9 +21,39 @@ const PUBLIC_POST_COLUMNS = ['id', 'title', 'body', 'author_name', 'status', 'vo
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
+/** PP-20 public-surface quotas. `window` = per hour, `day` = per UTC day. */
+export interface BoardQuotaConfig {
+  submitPerBoardWindow: number;
+  submitPerBoardDay: number;
+  submitPerIpWindow: number;
+  submitPerIpDay: number;
+  votePerBoardWindow: number;
+  votePerBoardDay: number;
+  votePerIpWindow: number;
+  votePerIpDay: number;
+  windowMs: number;
+}
+
+export const DEFAULT_BOARD_QUOTAS: BoardQuotaConfig = {
+  submitPerBoardWindow: 20,
+  submitPerBoardDay: 200,
+  submitPerIpWindow: 5,
+  submitPerIpDay: 20,
+  votePerBoardWindow: 120,
+  votePerBoardDay: 2000,
+  votePerIpWindow: 30,
+  votePerIpDay: 200,
+  windowMs: 60 * 60 * 1000,
+};
+
 export interface PremiumRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   db: Knex;
+  /** Shared Redis counters (multi-instance); in-memory otherwise. */
+  rateLimitRedis?: WidgetRateLimitRedis;
+  /** Key for hashing voter IPs (the raw address is never stored). */
+  voterHashSecret?: string;
+  quotas?: Partial<BoardQuotaConfig>;
 }
 
 // --- Zod schemas for premium route inputs ---
@@ -70,6 +104,39 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   const router = Router();
   registerSessionDb(db);
 
+  // PP-20: per-board and per-IP quotas on the unauthenticated board write
+  // endpoints, built on the shared fail-closed limiter. Counters are namespaced
+  // per surface so submit and vote budgets never mix.
+  const q: BoardQuotaConfig = { ...DEFAULT_BOARD_QUOTAS, ...(deps.quotas ?? {}) };
+  const voterKey = createHmac('sha256', deps.voterHashSecret ?? 'pinpoint-board-voter').update('pinpoint:board-voter:v1').digest();
+  const ipHash = (req: Request): string =>
+    createHmac('sha256', voterKey).update(req.ip ?? 'unknown').digest('hex').slice(0, 32);
+  const store = deps.rateLimitRedis
+    ? { store: 'redis' as const, redis: deps.rateLimitRedis }
+    : { store: 'memory' as const };
+  const limiter = (prefix: string, id: (req: Request) => string | undefined, max: number, dailyQuota: number) =>
+    createWidgetRateLimit(
+      {
+        getIdentity: (req) => {
+          const identity = id(req);
+          return identity ? { id: identity, dailyQuota } : undefined;
+        },
+      },
+      { keyPrefix: prefix, windowMs: q.windowMs, max, failMode: 'closed', ...store },
+    );
+  const boardOf = (req: Request): string | undefined => {
+    const slug = String(req.params.slug ?? '');
+    return /^[a-z0-9-]{2,100}$/.test(slug) ? slug : undefined;
+  };
+  const submitLimiters = [
+    limiter('bsb', boardOf, q.submitPerBoardWindow, q.submitPerBoardDay),
+    limiter('bsi', ipHash, q.submitPerIpWindow, q.submitPerIpDay),
+  ];
+  const voteLimiters = [
+    limiter('bvb', boardOf, q.votePerBoardWindow, q.votePerBoardDay),
+    limiter('bvi', ipHash, q.votePerIpWindow, q.votePerIpDay),
+  ];
+
   // ==================== PUBLIC FEEDBACK BOARD ====================
 
   // POST /api/v1/boards — create board (auth required)
@@ -95,7 +162,7 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   });
 
   // POST /board/:slug/posts — submit to public board
-  router.post('/board/:slug/posts', async (req: Request, res: Response) => {
+  router.post('/board/:slug/posts', ...submitLimiters, async (req: Request, res: Response) => {
     const board = await db('feedback_boards').where({ slug: req.params.slug, active: true, allow_submissions: true }).first();
     if (!board) { sendError(res, 404, 'NOT_FOUND', 'Board not found or submissions disabled'); return; }
     const parsed = CreateBoardPostSchema.safeParse(req.body);
@@ -106,7 +173,7 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
   });
 
   // POST /board/:slug/posts/:postId/vote — vote on a post
-  router.post('/board/:slug/posts/:postId/vote', async (req: Request, res: Response) => {
+  router.post('/board/:slug/posts/:postId/vote', ...voteLimiters, async (req: Request, res: Response) => {
     const parsed = VoteSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid vote payload.', parsed.error.flatten()); return; }
     const voter = parsed.data.email.trim().toLowerCase();
@@ -119,12 +186,14 @@ export function createPremiumRoutes(deps: PremiumRouteDeps): Router {
       // The post must belong to the board named in the URL.
       const post = await trx('board_posts').where({ id: postId, board_id: board.id }).first('id');
       if (!post) return 'missing' as const;
-      // One vote per voter per post; the PK (post_id, voter_email) makes the
-      // insert the atomic dedupe point, and the counter only moves when a new
-      // row was actually inserted.
+      // One vote per voter per post. The e-mail is self-declared (unverified),
+      // so identity is the (post, e-mail) PK AND the (post, hashed IP) unique
+      // index: typing a new address does not buy a second vote. Either conflict
+      // makes the insert a no-op, and the counter only moves when a new row was
+      // actually inserted.
       const inserted = await trx('board_votes')
-        .insert({ board_id: board.id, post_id: postId, voter_email: voter })
-        .onConflict(['post_id', 'voter_email'])
+        .insert({ board_id: board.id, post_id: postId, voter_email: voter, voter_key: `ip:${ipHash(req)}` })
+        .onConflict()
         .ignore()
         .returning('post_id');
       if (!inserted.length) return 'duplicate' as const;

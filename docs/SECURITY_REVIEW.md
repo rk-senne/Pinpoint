@@ -5,8 +5,8 @@
 | Date | 2026-11-16 |
 | Branch / state reviewed | `feat/enhancement-roadmap`, uncommitted working tree (server `dist` as running on `127.0.0.1:3001`, dashboard Vite **dev** server on `:5173`) |
 | Type | Internal white-box + live black-box review. **This is not an independent penetration test** and must not be presented as one. |
-| Scope | API (`server/`), Socket.IO `/collab`, public surfaces (widget, shared links, review proxy, portals, boards, CSAT), dashboard, Chrome extension, MCP server, DB schema, Terraform / CI. |
-| Out of scope / not done | Mobile SDK; real S3/CloudFront (not configured in the live stack, so upload/serve paths are code-reviewed only); real OAuth providers (not configured); Stripe; load/DoS testing; `npm audit`/SCA (would send the dependency list to an external registry — run it in CI instead); infrastructure as deployed (Terraform read only); browser-level XSS execution (DOM sinks reviewed in source, not driven in a browser). |
+| Scope | API (`server/`), Socket.IO `/collab`, public surfaces (widget, shared links, review proxy, portals, boards, CSAT), dashboard, Chrome extension, MCP server, DB schema, deployment config / CI. |
+| Out of scope / not done | Mobile SDK; real object storage / CDN (not configured in the live stack, so upload/serve paths are code-reviewed only); real OAuth providers (not configured); Stripe; load/DoS testing; `npm audit`/SCA (would send the dependency list to an external registry — run it in CI instead); infrastructure as deployed (deployment config read only); browser-level XSS execution (DOM sinks reviewed in source, not driven in a browser). |
 
 ## 1. Result summary
 
@@ -30,7 +30,7 @@ Severity uses CVSS 3.1-style base scores (rough, internal estimate; AV:N unless 
 suffices). They are triage aids, not formal scores.
 
 > **Remediation status (2026-11-16, same branch):** all 8 Medium findings are fixed with regression tests and were
-> re-verified live against the running stack; 10 of 14 Low findings are fixed, 2 more partially (PP-15, PP-21), 2 are deferred (PP-20, PP-22);
+> re-verified live against the running stack; all 14 Low findings are fixed (PP-15, PP-20, PP-21 and PP-22 in a follow-up pass — see §8);
 > of the 3 Informational findings 2 are fixed and 1 is accepted. Everything not fully fixed carries a rationale. See [§8 Remediation status](#8-remediation-status) for the per-finding
 > file:line and test names, and [§9 Pending client changes](#9-pending-client-changes) for the extension / widget /
 > dashboard diffs that belong to other owners.
@@ -53,7 +53,7 @@ suffices). They are triage aids, not formal scores.
    session fixation, password reset (reuse, weak password, session revocation), login/reset/register enumeration and
    timing, rate-limit behaviour.
 6. **SSRF**: review proxy with 17 hostile targets (decimal / octal / hex / short IPv4, IPv6 loopback, IPv4-mapped IPv6,
-   `localhost.`, `nip.io`, `localtest.me`, userinfo, metadata hostnames, AWS IMDSv6); webhook URL registration with 8
+   `localhost.`, `nip.io`, `localtest.me`, userinfo, metadata hostnames, cloud instance-metadata (IMDS) IPv6); webhook URL registration with 8
    schemes/targets; redirect/DNS-pinning logic reviewed in `services/egressGuard.ts`.
 7. **Public-surface abuse**: widget key origin binding, quotas, revocation, widget key as bearer, standard key scope and
    route allow-list, shared-link grant forgery/replay/extension, lockout, guest feedback on password-protected links.
@@ -64,8 +64,8 @@ suffices). They are triage aids, not formal scores.
    pagination/heatmap/audit-log filters; e-mail template HTML injection.
 10. **Extension / MCP**: manifest permissions, `externally_connectable`, service-worker message handlers, API relay path
     allow-list, auth bridge sender check, sub-frame `postMessage` relay, MCP key handling.
-11. **Config / infra** (read only): helmet/CSP, cookies, `/metrics` gating, RLS migration vs. DB role, Terraform SGs,
-    RDS/S3/Redis encryption, CI workflow permissions.
+11. **Config / infra** (read only): helmet/CSP, cookies, `/metrics` gating, RLS migration vs. DB role, firewall/network rules,
+    database/object-store/Redis encryption, CI workflow permissions.
 12. **Cleanup**: all throwaway users, orgs and dependent rows were deleted (`@pentest.example` users: 0 remaining;
     orphans from PP-10 removed by hand). The SMTP sink log (`$stack/mail.log`) still contains the test addresses.
 
@@ -191,8 +191,8 @@ DB: `victim-never-registered@…|verified=t|token_version=0`; old token → 200;
 #### PP-07 — `/metrics` is world-readable behind a reverse proxy when `METRICS_TOKEN` is unset
 Medium (5.3, `AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N`) · CODE (live stack is not behind a proxy)
 
-Without a token the gate is `isPrivateAddress(req.socket.remoteAddress)`. Behind the ALB the socket peer is always the
-ALB's private IP, so *every* public request passes. Terraform injects `METRICS_TOKEN`, but the boot preflight does not
+Without a token the gate is `isPrivateAddress(req.socket.remoteAddress)`. Behind a reverse proxy the socket peer is always the
+proxy's private IP, so *every* public request passes. The deployment config injects `METRICS_TOKEN`, but the boot preflight did not
 require it (README calls it "recommended").
 
 - Where: `server/src/infrastructure/metrics.ts:105`; `server/src/config.ts` (preflight).
@@ -431,10 +431,10 @@ Tenant isolation (46-request IDOR matrix; every cross-org call returned 403/404,
 
 ## 6. Residual risk / not covered
 
-External pentest, dependency/SCA and container scanning, real-browser XSS execution, S3/CloudFront object-level
+External pentest, dependency/SCA and container scanning, real-browser XSS execution, object-store/CDN object-level
 authorization, Redis-backed multi-instance behaviour (rate limits, Socket.IO adapter, PP-02 pub/sub), Stripe webhook
-signature handling, OAuth provider flows, mobile SDK, denial-of-service/load, and the deployed AWS account configuration
-(Terraform reviewed statically only).
+signature handling, OAuth provider flows, mobile SDK, denial-of-service/load, and the deployed hosting-environment configuration
+(deployment config reviewed statically only).
 
 ## 7. Machine-readable findings
 
@@ -470,14 +470,14 @@ Medium against the rebuilt API on `127.0.0.1:3001` — all passed.
 | PP-12 | **Fixed** | `auth.routes.ts:58` e-mail format / length, name ≤ 100; `shared/src/passwordPolicy.ts:62-85` max 128, ≥ 5 distinct characters, blocklist applied to the stem (`Password1234`, `Qwerty123456!`, `P@ssw0rd1234` rejected). **Deferred:** HIBP/zxcvbn and purging unverified accounts (needs a network call / scheduler; the blocklist stem rule covers the reviewer's examples). | `shared/src/passwordPolicy.test.ts` ("PP-12 hardening"), `securityFindings.test.ts` ("PP-12"). |
 | PP-13 | **Fixed** | Zod `.max()` on names / URLs / texts across register, login, users, projects, teams, guidelines, comments, annotations, webhooks, portals, workflows, boards; audit-log `dateFrom/dateTo` validated (400). | `securityFindings.test.ts` ("PP-13"), `updateProfile.test.ts`. |
 | PP-14 | **Fixed** | Guest feedback on a password link needs the signed grant (`guestFeedback.routes.ts:182`, 401 `SHARED_ACCESS_REQUIRED`). Lockout is per **(link, IP)** (`sharedLinks.routes.ts:76,169`, 3 strikes / 15 min) with a high per-link ceiling (30, `composition/usecases.ts`) as backstop. Limiter is in-memory per instance (a throttle, not authorisation state). | `securityFindings.test.ts` ("PP-14"). |
-| PP-15 | **Fixed** (a, b) / **Deferred** (c, d) | (a) absolute session lifetime: `sessionStart` claim carried across refreshes, 30 d max (`adapters/outbound/jwt/JwtTokenIssuer.ts`, `domain/auth/usecases/refreshToken.ts:96`). (b) `algorithms: ['HS256']` pinned for verify + sign. **Deferred:** (c) session-bound CSRF token / `__Host-` prefix and (d) `Max-Age` on `fl_session` — cookie-tossing needs control of a sibling subdomain, and renaming cookies is a coordinated client+server change (dashboard, extension auth bridge, e2e). | `adapters/outbound/jwt/JwtTokenIssuer.test.ts`, `domain/auth/__tests__/refreshToken.test.ts` ("absolute session lifetime"). |
+| PP-15 | **Fixed** (a–d) | (a) absolute session lifetime: `sessionStart` claim carried across refreshes **and org switches** (`org.routes.ts` previously minted a fresh `sessionStart`, silently resetting the 30 d cap), 30 d max (`adapters/outbound/jwt/JwtTokenIssuer.ts`, `domain/auth/usecases/refreshToken.ts`). (b) `algorithms: ['HS256']` pinned for verify + sign. (c) CSRF token is `<nonce>.<HMAC(nonce, userId, sessionStart)>` keyed from the JWT secret (`middleware/sessionCookies.ts` `createCsrfBinder`, enforced in `middleware/csrf.ts`): a cookie-tossed or other-session token fails even though cookie == header. Cookies use the `__Host-` prefix (`__Host-fl_session`, `__Host-fl_csrf`: Secure, `Path=/`, no `Domain`) **only when Secure**; with `COOKIE_INSECURE=true` (local HTTP stack) the legacy names are kept. Every server reader accepts both names; logout clears both generations. (d) `Max-Age=86400` on both cookies (matches the access token; refresh slides it). **Needs a one-line dashboard change on Secure deployments** — see §9 "Dashboard — read the `__Host-fl_csrf` cookie". Sessions created before this deploy hold an unbound CSRF cookie and get `403 CSRF_INVALID` on their next mutation until they log in again (or refresh). | `middleware/sessionCookies.test.ts`, `adapters/outbound/jwt/JwtTokenIssuer.test.ts`, `domain/auth/__tests__/refreshToken.test.ts`, `__tests__/integration/securityHardening.test.ts` ("PP-15"). |
 | PP-16 | **Fixed** | `mcp-server/src/client.ts:76` https-only except loopback; upstream error bodies truncated to 300 chars; every tool result is preceded by an explicit "untrusted third-party content" block (`mcp-server/src/server.ts:139`). README: use a `feedback:read` key for triage agents. | `mcp-server/src/client.test.ts`, `mcp.test.ts`. |
 | PP-17 | **Fixed** | `domain/notification/usecases/dispatchPendingNotifications.ts:110-260`: every interpolated value HTML-escaped, CR/LF stripped from subjects, CTA URL/label escaped. | same file's test ("renderTemplate escaping"). |
 | PP-18 | **Fixed** | `adapters/inbound/http/annotations.routes.ts:91,462` PNG signature required (also for `check-regression`); `middleware/inputSanitizer.ts` allows 12 MB for `POST /annotations/:id/screenshot` only (multer enforces the 10 MB file cap); `GET /annotations/:id/screenshot|markup` added (`annotations.routes.ts:416`, access via `requireAnnotationAccess`). **Deferred:** `sharp` decode/re-encode and client-side `MarkupDocumentSchema.parse` before rendering (`shared/src/markupRender.ts`, owned by the client stages; server validates numbers with zod today). | `middleware/inputSanitizer.test.ts`, `securityFindings.test.ts` ("PP-24 / PP-25"). |
 | PP-19 | **Fixed** | `updateProfile.ts` `isAllowedAvatarUrl`: https only, no credentials, ≤ 1024 chars. Clients: see §9. | `updateProfile.test.ts` ("avatar URL"). |
-| PP-20 | **Deferred** | Board vote / post abuse controls (per-board + per-IP quotas, verified votes) were explicitly out of scope for this pass. Today: global per-IP limiter only. | — |
-| PP-21 | **Fixed** (state) / **Deferred** (exchange) | State cookie is signed over `(state, org, provider, uid, exp)`, expiry enforced server-side, bound to the admin who started the flow (callback now requires that admin's session), always `Secure` (`integrations.routes.ts:61,98,112,178`). The code→token exchange is still a placeholder (`exchanged_<code>`): a real exchange needs per-provider client credentials and `safeFetch` plumbing — **must be implemented before enabling the integrations feature in production**. | `adapters/inbound/http/integrations.routes.test.ts` ("PP-21"). |
-| PP-22 | **Deferred** | Audit-log expansion (login, reset, e-mail change, share/portal/board creation, exports, append-only table). E-mail changes are now confirmable events but are not yet written to `audit_logs`. Tracked with `docs/SOC2_READINESS.md`. | — |
+| PP-20 | **Fixed** | Public board writes run behind the shared fail-closed limiter (`middleware/widgetRateLimit.ts`, Redis-backed when `REDIS_URL` is set) with **per-board and per-IP** burst + daily quotas (`premium.routes.ts`, `DEFAULT_BOARD_QUOTAS`): submit 20/h·200/d per board and 5/h·20/d per IP; vote 120/h·2000/d per board and 30/h·200/d per IP; 429 `RATE_LIMITED` + `Retry-After`. Vote dedupe is now per `(post, keyed IP hash)` **in addition to** `(post, e-mail)` (`board_votes.voter_key`, migration `20261118000201_board_vote_dedupe.ts`; the raw IP is never stored): typing a fresh e-mail no longer buys another vote. Limitation: the e-mail on a public vote is still self-declared, not verified — real verification would need a mail round-trip per voter; IP-hash dedupe is the compensating control, so several legitimate voters behind one NAT share one vote per post. Behind a proxy set `TRUST_PROXY` so `req.ip` is the client. | `__tests__/integration/securityHardening.test.ts` ("PP-20"), `authzSecurity.test.ts` (F-12). |
+| PP-21 | **Fixed** | Real authorization-code flow (`services/integrations/oauthExchange.ts`): `connect` returns the provider's authorize URL (client id, `redirect_uri=${APP_URL}/api/v1/integrations/:provider/callback`, scopes, state) and the callback exchanges the code at the provider token endpoint through `safeFetch` (https-only, DNS-pinned, no redirects, 10 s timeout, 64 KB cap). A provider is enabled only when `INTEGRATION_<SLACK\|JIRA\|LINEAR\|GITHUB>_CLIENT_ID` **and** `_CLIENT_SECRET` are set (optional `_SCOPES`); otherwise `connect`/callback answer `501 INTEGRATION_NOT_CONFIGURED` — the `exchanged_<code>` placeholder and the `example.com` redirect are gone. Provider failures → `502 OAUTH_EXCHANGE_FAILED` with a generic message (provider body never echoed); consent denial → `400 OAUTH_DENIED`. Tokens are encrypted with `SecretBox` by `PgIntegrationRepo` (`v1.` envelope; verified against the real table). State: signed over `(state, org, provider, uid, exp)`, expiry enforced server-side, bound to the admin and org, `Secure` unless `COOKIE_INSECURE`. Tested against a fake token endpoint only — **no real provider (Slack/Atlassian/Linear/GitHub) was contacted**, so register the redirect URI with each provider and run one real consent before enabling in production. | `adapters/inbound/http/integrations.routes.test.ts` ("PP-21"), `__tests__/integration/securityHardening.test.ts` ("PP-21"). |
+| PP-22 | **Fixed** | `audit_logs` is append-only: trigger `audit_logs_no_update_delete` rejects UPDATE/DELETE and `audit_logs_no_truncate` rejects TRUNCATE (migration `20261118000101_audit_log_append_only.ts`); FK actions (org erasure cascade, actor `SET NULL`) are exempt via `pg_trigger_depth() > 1`, so tenant/user deletion still works. New columns `user_agent`, `request_id`; `ip_address` is now populated; `org_id` nullable for tenant-less events. `middleware/auditTrail.ts` records, after the response, successful mutations: `auth.login_succeeded` / `auth.login_failed` (unknown address ⇒ no tenant; e-mail only as hash prefix + domain), `auth.logout`, `auth.password_reset_requested` / `_completed`, `auth.email_change_requested` / `_confirmed`, `auth.email_verified`, `auth.sessions_revoked`, `org.switched`, `export.created`, `share_link.saved`, `portal.created/updated/deleted`, `board.created`, `integration.connected/disconnected`, `webhook.updated`, `invitation.created/accepted`, `team.member_invited/role_changed/member_removed`; the pre-existing `api_key.*`, `webhook.created/deleted`, `member.*`, `org.settings_updated`, `project.deleted` rows now carry ip/UA/request id too. Request/response bodies and secrets are never stored. `GET /org/audit-log` gained `actionPrefix`, `resourceType`, `resourceId`, `ip`, `requestId` filters and returns `ipAddress`, `userAgent`, `requestId`. `X-Request-Id` is now a UUID (pino-http's per-process counter repeated after restarts). Not covered: login attempts rejected by the rate limiter (429) are not written (avoids a DB write per blocked request); board-update/delete, workflow-rule and SLA mutations are not audited; DB superusers can still `ALTER TABLE … DISABLE TRIGGER`, so ship rows to an external store for SOC 2 evidence. | `__tests__/integration/securityHardening.test.ts` ("PP-22"). |
 
 ### Informational
 
@@ -575,6 +575,27 @@ No extension or widget change is needed for PP-01, PP-03 – PP-05, PP-14 or PP-
 full suite: `extension/src/lib/connectionMonitor.ts` imports `@pinpoint/shared/dist/signal.js`, which the root Vitest
 alias maps to `shared/src/index.ts/dist/signal.js`, so 18 extension test files fail to load; import `signal` from
 `@pinpoint/shared` instead.)
+
+### Dashboard — read the `__Host-fl_csrf` cookie (PP-15)
+
+On a Secure deployment (`COOKIE_INSECURE` unset) the server now names the CSRF cookie `__Host-fl_csrf` (and the session
+cookie `__Host-fl_session`, which is HttpOnly and never read by the dashboard). The dashboard only reads the cookie as a
+fallback after a hard refresh (the login response body is held in memory otherwise), so until this lands a reloaded tab
+on a Secure deployment sends no `X-CSRF-Token` and mutations fail with `CSRF_INVALID` until the user logs in again. The
+local stack (`COOKIE_INSECURE=true`) keeps `fl_csrf` and is unaffected. In `dashboard/src/lib/auth.ts`, `readCsrfCookie()`:
+
+```diff
+   for (const part of document.cookie.split(';')) {
+     const [rawName, ...rest] = part.split('=');
+-    if (rawName?.trim() === 'fl_csrf') {
++    const name = rawName?.trim();
++    if (name === '__Host-fl_csrf' || name === 'fl_csrf') {
+       const value = decodeURIComponent(rest.join('=').trim());
+```
+
+The CSRF value is now `<48 hex>.<64 hex>` (session-bound); the dashboard treats it as opaque, so nothing else changes. Extension
+(Bearer) and widget are unaffected. `dashboard/src/lib/api.test.ts` / `auth` tests that set `document.cookie = 'fl_csrf=…'` keep
+passing; add one case for `__Host-fl_csrf=…`.
 
 ### E2E — `e2e/teams.spec.ts` (PP-04 behaviour change)
 

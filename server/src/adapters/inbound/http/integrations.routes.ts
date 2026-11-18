@@ -3,6 +3,13 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Integration, IntegrationRepo } from '../../../domain/integration/ports/IntegrationRepo.js';
 import { requireOrgAdmin } from './access.js';
+import type { EgressGuardOptions } from '../../../services/egressGuard.js';
+import {
+  OAuthExchangeError,
+  buildAuthorizeUrl,
+  exchangeAuthorizationCode,
+  type IntegrationOAuthProvider,
+} from '../../../services/integrations/oauthExchange.js';
 
 /** Lifetime of the OAuth state cookie, enforced server-side via the signed `exp`. */
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -19,6 +26,18 @@ export interface IntegrationsRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
   integrationRepo: IntegrationRepo;
   oauthStateSecret: string;
+  /**
+   * Providers with OAuth client credentials configured (PP-21). A provider that
+   * is absent here cannot start or complete an OAuth connect (501), instead of
+   * the former placeholder that stored `exchanged_<code>` as a token.
+   */
+  oauthProviders?: Partial<Record<string, IntegrationOAuthProvider>>;
+  /** Public origin of the dashboard/API (`APP_URL`); the provider redirects back to it. */
+  callbackBaseUrl?: string;
+  /** Plain-HTTP loopback stacks only: drops `Secure` from the state cookie. */
+  cookieInsecure?: boolean;
+  /** Egress policy for the token exchange (tests inject a fake endpoint resolver). */
+  egress?: EgressGuardOptions;
 }
 
 const ConnectSchema = z.object({
@@ -52,6 +71,8 @@ export function toIntegrationDto(i: Integration): Record<string, unknown> {
 
 export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
   const { authMiddleware, integrationRepo, oauthStateSecret } = deps;
+  const redirectUriFor = (provider: string): string =>
+    `${(deps.callbackBaseUrl ?? '').replace(/\/+$/, '')}/api/v1/integrations/${provider}/callback`;
   const router = Router();
 
   // GET /api/v1/integrations/:provider/callback — handle OAuth callback
@@ -68,8 +89,14 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       return;
     }
 
-    const code = req.query.code as string | undefined;
-    const state = req.query.state as string | undefined;
+    const code = typeof req.query.code === 'string' ? req.query.code : undefined;
+    const state = typeof req.query.state === 'string' ? req.query.state : undefined;
+    if (typeof req.query.error === 'string') {
+      // The user denied consent (or the provider failed); nothing to exchange.
+      res.clearCookie('integration_oauth_state');
+      res.status(400).json({ error: { code: 'OAUTH_DENIED', message: 'The provider did not grant access.' } });
+      return;
+    }
     if (!code) {
       res.status(400).json({ error: { code: 'VALIDATION', message: 'Missing code parameter' } });
       return;
@@ -121,9 +148,29 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
     // Derive orgId from the COOKIE (never from the query param)
     const orgId = stateCookie.orgId;
 
+    const providerCfg = deps.oauthProviders?.[provider];
+    if (!providerCfg) {
+      res.status(501).json({ error: { code: 'INTEGRATION_NOT_CONFIGURED', message: `OAuth for ${provider} is not configured on this server.` } });
+      return;
+    }
+    let tokens;
+    try {
+      tokens = await exchangeAuthorizationCode(providerCfg, {
+        code,
+        redirectUri: redirectUriFor(provider),
+        ...(deps.egress ? { egress: deps.egress } : {}),
+      });
+    } catch (e) {
+      const message = e instanceof OAuthExchangeError ? e.message : 'Token exchange failed.';
+      res.status(502).json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message } });
+      return;
+    }
+    // The repository encrypts access/refresh tokens with SecretBox before persisting.
     const integration = await integrationRepo.upsert(orgId, provider, {
-      accessToken: `exchanged_${code}`,
-      config: {},
+      accessToken: tokens.accessToken,
+      ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
+      ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
+      config: tokens.config,
     });
     res.json({ integration: { id: integration.id, provider, enabled: integration.enabled } });
   });
@@ -150,8 +197,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       return;
     }
 
-    // Placeholder: in production, this would generate an OAuth redirect URL.
-    // For now, if tokens are provided, store them directly.
+    // Admins may also store a token they already hold (e.g. a Slack bot token).
     if (parsed.data.accessToken) {
       const integration = await integrationRepo.upsert(req.user!.orgId, provider, {
         accessToken: parsed.data.accessToken,
@@ -162,7 +208,13 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       return;
     }
 
-    // Return placeholder redirect URL with cryptographically-bound state
+    const providerCfg = deps.oauthProviders?.[provider];
+    if (!providerCfg) {
+      res.status(501).json({ error: { code: 'INTEGRATION_NOT_CONFIGURED', message: `OAuth for ${provider} is not configured on this server.` } });
+      return;
+    }
+
+    // State bound to this admin + org + provider with a signed expiry.
     const state = randomBytes(16).toString('hex');
     const exp = Date.now() + OAUTH_STATE_TTL_MS;
     const uid = req.user!.userId;
@@ -174,11 +226,10 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: OAUTH_STATE_TTL_MS,
-      // Always Secure (PP-21): browsers accept it on http://localhost too.
-      secure: true,
+      // Secure unless this is the plain-HTTP loopback stack (COOKIE_INSECURE).
+      secure: !deps.cookieInsecure,
     });
-    const redirectUrl = `https://${provider}.example.com/oauth/authorize?client_id=PLACEHOLDER&state=${state}`;
-    res.json({ redirectUrl });
+    res.json({ redirectUrl: buildAuthorizeUrl(providerCfg, { state, redirectUri: redirectUriFor(provider) }) });
   });
 
   // DELETE /api/v1/integrations/:provider — disconnect

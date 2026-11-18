@@ -13,7 +13,13 @@
 // cases and supplies them here.
 
 import { Router, type Request, type Response , type NextFunction} from 'express';
-import { randomBytes } from 'node:crypto';
+import {
+  buildClearCookies,
+  buildCsrfCookie,
+  buildSessionCookie,
+  readSessionCookie,
+  type CsrfBinder,
+} from '../../../middleware/sessionCookies.js';
 import { z } from 'zod';
 
 import type { Login } from '../../../domain/auth/usecases/login.js';
@@ -49,6 +55,8 @@ export interface AuthRouteDeps {
    * root passes `process.env.NODE_ENV === 'test'` here.
    */
   cookieInsecure?: boolean;
+  /** PP-15: binds the CSRF token to the issued session. Without it a random nonce is used. */
+  csrfBinder?: CsrfBinder;
 }
 
 // --- Zod schemas (re-used by handlers) ------------------------------------
@@ -79,24 +87,6 @@ const ResendVerificationBodySchema = z.object({
 
 // --- Cookie helpers --------------------------------------------------------
 
-function buildSessionCookie(token: string, insecure: boolean): string {
-  const parts = [`fl_session=${token}`, 'HttpOnly', 'SameSite=Lax', 'Path=/'];
-  if (!insecure) parts.splice(2, 0, 'Secure');
-  return parts.join('; ');
-}
-
-function buildCsrfCookie(csrf: string): string {
-  return [`fl_csrf=${csrf}`, 'SameSite=Lax', 'Path=/'].join('; ');
-}
-
-function buildClearCookies(): string[] {
-  // Issue both cookies with `Max-Age=0` so the browser deletes them.
-  return [
-    'fl_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0',
-    'fl_csrf=; SameSite=Lax; Path=/; Max-Age=0',
-  ];
-}
-
 // --- Router factory --------------------------------------------------------
 
 export function createAuthRoutes(deps: AuthRouteDeps): Router {
@@ -111,6 +101,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
     resendVerification,
     logout,
     cookieInsecure = false,
+    csrfBinder,
   } = deps;
 
   const router = Router();
@@ -142,10 +133,11 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       sendDomainError(res, result.error);
       return;
     }
-    const { user, token, csrfToken } = result.value;
+    const { user, token } = result.value;
+    const csrfToken = csrfBinder ? csrfBinder.mintForToken(token) : result.value.csrfToken;
     res.setHeader('Set-Cookie', [
       buildSessionCookie(token, cookieInsecure),
-      buildCsrfCookie(csrfToken),
+      buildCsrfCookie(csrfToken, cookieInsecure),
     ]);
     res.status(200).json({ user, token, csrfToken });
   });
@@ -192,10 +184,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       const value = header.slice(7).trim();
       if (value.length > 0) bearerToken = value;
     }
-    const cookieToken =
-      typeof req.cookies?.fl_session === 'string' && req.cookies.fl_session.length > 0
-        ? (req.cookies.fl_session as string)
-        : null;
+    const cookieToken = readSessionCookie(req.cookies);
     const usedCookie = bearerToken === null && cookieToken !== null;
     const token = bearerToken ?? cookieToken ?? '';
 
@@ -211,10 +200,10 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       // Use a fresh CSRF nonce for the session refresh; the use case's
       // own value is fine but we re-issue here to keep the cookie pair
       // and body in sync without trusting the client's stale token.
-      const csrfToken = randomBytes(32).toString('hex');
+      const csrfToken = csrfBinder ? csrfBinder.mintForToken(fresh) : result.value.csrfToken;
       res.setHeader('Set-Cookie', [
         buildSessionCookie(fresh, cookieInsecure),
-        buildCsrfCookie(csrfToken),
+        buildCsrfCookie(csrfToken, cookieInsecure),
       ]);
       res.status(200).json({ token: fresh, csrfToken });
       return;
@@ -231,7 +220,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       sendDomainError(res, result.error);
       return;
     }
-    res.setHeader('Set-Cookie', buildClearCookies());
+    res.setHeader('Set-Cookie', buildClearCookies(cookieInsecure));
     res.status(200).json({ success: true });
   });
 

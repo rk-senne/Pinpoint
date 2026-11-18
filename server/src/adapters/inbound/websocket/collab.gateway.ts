@@ -164,7 +164,8 @@ export function installCollabGateway(
       const origin = socket.handshake.headers.origin;
       const cookieOk =
         typeof origin === 'string' && trustedCookieOrigins.length > 0 && trustedCookieOrigins.includes(origin);
-      token = cookieOk ? readCookie(socket.handshake.headers.cookie, 'fl_session') : null;
+      token = cookieOk ? (readCookie(socket.handshake.headers.cookie, '__Host-fl_session') ??
+          readCookie(socket.handshake.headers.cookie, 'fl_session')) : null;
     }
     if (!token || typeof token !== 'string') {
       return next(new Error('Authentication required'));

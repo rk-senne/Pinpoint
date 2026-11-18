@@ -23,6 +23,7 @@
 // The `Express.Request.user` augmentation lives in `./types.d.ts`.
 
 import type { NextFunction, Request, Response } from 'express';
+import { readSessionCookie } from '../../../middleware/sessionCookies.js';
 import type { Knex } from 'knex';
 import type { TokenIssuer, TokenPayload } from '../../../domain/auth/ports/TokenIssuer.js';
 import { getRegisteredSessionDb } from './access.js';
@@ -46,11 +47,7 @@ function extractToken(req: Request): string | null {
     const value = header.slice(7).trim();
     if (value.length > 0) bearerToken = value;
   }
-  const cookieToken =
-    typeof req.cookies?.fl_session === 'string' && req.cookies.fl_session.length > 0
-      ? (req.cookies.fl_session as string)
-      : null;
-  return bearerToken ?? cookieToken;
+  return bearerToken ?? readSessionCookie(req.cookies);
 }
 
 export type SessionCheck =
@@ -129,6 +126,7 @@ export function createAuthMiddleware(
     }
 
     req.user = { userId: payload.userId, email: payload.email, orgId: payload.orgId, role: session.role };
+    if (payload.sessionStart !== undefined) req.user.sessionStart = payload.sessionStart;
     (req as AuthedRequest).user!.tokenVersion = session.tokenVersion;
     next();
   };

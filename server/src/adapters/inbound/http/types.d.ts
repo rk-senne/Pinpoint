@@ -14,6 +14,8 @@ export interface AuthPayload {
   email: string;
   orgId: string;
   role: string;
+  /** Epoch seconds the login session began (PP-15 absolute lifetime). */
+  sessionStart?: number;
 }
 
 declare global {

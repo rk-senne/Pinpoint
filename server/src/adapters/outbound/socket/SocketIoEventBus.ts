@@ -33,37 +33,10 @@ const DEFAULT_NAMESPACE_PATH = '/collab';
 export const SESSION_REVOKED_EVENT = 'session.revoked';
 
 /**
- * Canonical realtime event names are the dotted domain names
- * (`annotation.created`, `annotation.updated`, `annotation.status_changed`,
- * `comment.created` — also the webhook vocabulary). They are always emitted
- * as-is.
- *
- * @deprecated The colon aliases below (`annotation:created`, `annotation:updated`,
- * `annotation:status`, `comment:created`) exist only for clients that have not
- * migrated yet — today that is the Chrome extension's OverlayHost/Syncer, which
- * still listens to the colon names for updated/status. REMOVAL CONDITION: delete
- * this table (and the second emit in `emit()`) once the extension subscribes to
- * the dotted names and no supported extension release older than that is still
- * in the field. The dashboard (`dashboard/src/lib/socket.ts`) is already on the
- * dotted names. Clients dedupe by annotation/comment id, so receiving an event
- * under both names is harmless.
+ * Realtime event names are the dotted domain names (`annotation.created`,
+ * `annotation.updated`, `annotation.status_changed`, `comment.created` — also
+ * the webhook vocabulary) and are emitted as-is, with the domain payload.
  */
-const CLIENT_ALIASES: Record<string, { name: string; shape: (payload: unknown) => unknown }> = {
-  'annotation.created': { name: 'annotation:created', shape: (p) => p },
-  'annotation.updated': { name: 'annotation:updated', shape: (p) => p },
-  'annotation.status_changed': {
-    name: 'annotation:status',
-    shape: (p) => {
-      const a = (p ?? {}) as { id?: string; status?: string; projectId?: string };
-      return { id: a.id, status: a.status, projectId: a.projectId };
-    },
-  },
-  'comment.created': {
-    name: 'comment:created',
-    // The dashboard expects the bare comment; the dotted event wraps it.
-    shape: (p) => (p && typeof p === 'object' && 'comment' in p ? (p as { comment: unknown }).comment : p),
-  },
-};
 
 export class SocketIoEventBus implements EventBus {
   private readonly namespacePath: string;
@@ -86,10 +59,6 @@ export class SocketIoEventBus implements EventBus {
       namespace.in(event.room).disconnectSockets(true);
       return;
     }
-    const target = namespace.to(event.room);
-    target.emit(event.type, event.payload);
-    // Deprecated colon alias — see CLIENT_ALIASES for the removal condition.
-    const alias = CLIENT_ALIASES[event.type];
-    if (alias) target.emit(alias.name, alias.shape(event.payload));
+    namespace.to(event.room).emit(event.type, event.payload);
   }
 }

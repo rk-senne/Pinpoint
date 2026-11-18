@@ -3,6 +3,7 @@
 
 import { createHmac } from 'node:crypto';
 import { isExposedDeployment } from '../config.js';
+import { loadIntegrationOAuthProviders } from '../services/integrations/oauthExchange.js';
 
 // =======================================================================
 // Configuration Interfaces
@@ -79,6 +80,8 @@ export interface Config {
   tenantRateLimitMax: number;
   /** HMAC key for the OAuth state cookie (OAUTH_STATE_SECRET). */
   oauthStateSecret: string;
+  /** PP-21: integration OAuth app credentials (providers without both id and secret are absent). */
+  integrationOAuth: ReturnType<typeof loadIntegrationOAuthProviders>;
   logLevel: string;
   notificationIntervalMs: number;
   notificationBatchSize: number;
@@ -153,6 +156,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config 
     exposed: isExposedDeployment(env),
     // validateConfig() requires OAUTH_STATE_SECRET on exposed deployments; in
     // local dev derive a domain-separated key from the JWT secret instead.
+    integrationOAuth: loadIntegrationOAuthProviders(env),
     oauthStateSecret:
       env.OAUTH_STATE_SECRET?.trim() ||
       createHmac('sha256', jwtSecret).update('pinpoint:oauth-state:v1').digest('hex'),

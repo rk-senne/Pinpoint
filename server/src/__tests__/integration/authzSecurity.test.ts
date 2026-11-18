@@ -692,12 +692,18 @@ describe('Integration: authorization, tenancy, roles, sessions', () => {
       expect((await request(app).post(`/api/v1/board/${slug1}/posts/${postId}/vote`).send({ email: 'v@x.test' })).status).toBe(201);
       expect((await request(app).post(`/api/v1/board/${slug1}/posts/${postId}/vote`).send({ email: 'V@X.test' })).status).toBe(409);
       expect(Number((await db!('board_posts').where({ id: postId }).first('vote_count')).vote_count)).toBe(1);
-      // concurrent duplicates from one voter still count once
+      // PP-20: the same network cannot add a second vote on this post by typing a fresh e-mail
+      expect((await request(app).post(`/api/v1/board/${slug1}/posts/${postId}/vote`).send({ email: 'fresh@x.test' })).status).toBe(409);
+      expect(Number((await db!('board_posts').where({ id: postId }).first('vote_count')).vote_count)).toBe(1);
+      // concurrent duplicates on a fresh post still count once
+      const post2 = await request(app).post(`/api/v1/board/${slug1}/posts`).send({ title: 't2', body: 'b', email: 'other@person.test' });
+      expect(post2.status).toBe(201);
+      const postId2 = post2.body.post.id as string;
       const racers = await Promise.all(
-        Array.from({ length: 5 }, () => request(app).post(`/api/v1/board/${slug1}/posts/${postId}/vote`).send({ email: 'race@x.test' })),
+        Array.from({ length: 5 }, () => request(app).post(`/api/v1/board/${slug1}/posts/${postId2}/vote`).send({ email: 'race@x.test' })),
       );
       expect(racers.filter((r) => r.status === 201)).toHaveLength(1);
-      expect(Number((await db!('board_posts').where({ id: postId }).first('vote_count')).vote_count)).toBe(2);
+      expect(Number((await db!('board_posts').where({ id: postId2 }).first('vote_count')).vote_count)).toBe(1);
     });
 
     it('approval decisions: assigned approver or admin only, and cannot double-advance', async (ctx) => {

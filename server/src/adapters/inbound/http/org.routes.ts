@@ -10,6 +10,7 @@ import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
 import { sendDomainError, sendZodFailure, validateUuidParam } from './errors.js';
 import { recordAudit } from './auditLog.routes.js';
 import { registerSessionDb } from './access.js';
+import { buildSessionCookie } from '../../../middleware/sessionCookies.js';
 
 // --- Zod schemas for org route inputs ---
 
@@ -80,6 +81,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     const { name, slug } = parsed.data;
     const org = await orgRepo.update(req.user!.orgId, { name, slug });
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'org.settings_updated',
@@ -135,6 +137,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
       .whereNull('revoked_at')
       .update({ revoked_at: db.fn.now() });
     await recordAudit(db, {
+      request: req,
       orgId,
       actorId: req.user!.userId,
       action: 'member.removed',
@@ -167,6 +170,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
     // Demotion must cut live rooms joined under the old role (PP-02).
     deps.revokeUserSockets?.(userId);
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'member.role_changed',
@@ -234,13 +238,14 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
       orgId: membership.orgId,
       role: membership.role,
       tokenVersion: (req as any).user!.tokenVersion ?? 0,
+      // PP-15: switching org must not reset the absolute session lifetime
+      // (nor orphan the session-bound CSRF token).
+      ...(req.user!.sessionStart !== undefined ? { sessionStart: req.user!.sessionStart } : {}),
     });
     // The dashboard authenticates with the HttpOnly session cookie, so the
     // switch must replace it too — returning the token only in the body
     // left cookie sessions on the old org. CSRF cookie is unchanged.
-    const cookie = ['fl_session=' + token, 'HttpOnly', 'SameSite=Lax', 'Path=/'];
-    if (!deps.cookieInsecure) cookie.splice(2, 0, 'Secure');
-    res.setHeader('Set-Cookie', cookie.join('; '));
+    res.setHeader('Set-Cookie', buildSessionCookie(token, !!deps.cookieInsecure));
     res.json({ token, orgId: membership.orgId, role: membership.role });
   });
 

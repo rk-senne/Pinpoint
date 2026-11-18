@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import type { TokenIssuer } from '../domain/auth/ports/TokenIssuer.js';
 import type { ApiKeyRepo } from '../domain/org/ports/ApiKeyRepo.js';
+import { readCsrfCookie, readSessionCookie, type CsrfBinder } from './sessionCookies.js';
 
 /**
  * CSRF protection middleware (Task 7.2 / Requirements 18.4, 18.5, 18.6, 18.7).
@@ -49,6 +50,12 @@ export interface CsrfDeps {
   tokenIssuer?: Pick<TokenIssuer, 'verify'>;
   /** Resolves `pk_` API keys. Without it key bearers never earn the exemption. */
   apiKeyRepo?: Pick<ApiKeyRepo, 'findByHash'>;
+  /**
+   * PP-15: when supplied, the double-submit token must also be bound to the
+   * session (HMAC over the nonce + user id + session start), so a token tossed
+   * from a sibling subdomain or minted for another session is rejected.
+   */
+  binder?: CsrfBinder;
 }
 
 function bearerOf(req: Request): string | null {
@@ -84,7 +91,7 @@ export function createCsrfMiddleware(deps: CsrfDeps = {}) {
       return;
     }
 
-    const sessionCookie: string | undefined = req.cookies?.fl_session;
+    const sessionCookie = readSessionCookie(req.cookies);
 
     // (2 & 3) Enforce CSRF only when the request carries a Dashboard
     // `fl_session` cookie (Bearer-only and pre-session requests skip it).
@@ -101,7 +108,7 @@ export function createCsrfMiddleware(deps: CsrfDeps = {}) {
     }
 
     // (Cookie session present) Enforce double-submit (Req 18.5).
-    const csrfCookie = req.cookies?.fl_csrf;
+    const csrfCookie = readCsrfCookie(req.cookies);
     const csrfHeaderRaw = req.headers['x-csrf-token'];
     const csrfHeader = Array.isArray(csrfHeaderRaw) ? csrfHeaderRaw[0] : csrfHeaderRaw;
 
@@ -110,7 +117,8 @@ export function createCsrfMiddleware(deps: CsrfDeps = {}) {
       typeof csrfCookie !== 'string' ||
       !csrfHeader ||
       typeof csrfHeader !== 'string' ||
-      csrfHeader !== csrfCookie
+      csrfHeader !== csrfCookie ||
+      (deps.binder !== undefined && !deps.binder.isBoundTo(csrfCookie, sessionCookie))
     ) {
       res.status(403).json({
         error: { code: 'CSRF_INVALID', message: 'CSRF token mismatch.' },

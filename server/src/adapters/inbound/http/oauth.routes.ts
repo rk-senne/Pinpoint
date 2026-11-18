@@ -3,6 +3,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { buildCsrfCookie, buildSessionCookie, type CsrfBinder } from '../../../middleware/sessionCookies.js';
 import type { OAuthLogin, OAuthProvider } from '../../../domain/auth/usecases/oauthLogin.js';
 
 export interface OAuthRouteDeps {
@@ -11,6 +12,7 @@ export interface OAuthRouteDeps {
   callbackBaseUrl: string;
   appUrl: string;
   cookieInsecure?: boolean;
+  csrfBinder?: CsrfBinder;
   /**
    * HMAC key (OAUTH_STATE_SECRET) signing the `oauth_state` cookie. Required:
    * an unsigned state cookie lets an attacker who can plant a cookie (sibling
@@ -28,16 +30,6 @@ export interface OAuthRouteDeps {
    * that still pass it keep type-checking.
    */
   authMiddleware?: (req: Request, res: Response, next: NextFunction) => void;
-}
-
-function buildSessionCookie(token: string, insecure: boolean): string {
-  const parts = [`fl_session=${token}`, 'HttpOnly', 'SameSite=Lax', 'Path=/'];
-  if (!insecure) parts.splice(2, 0, 'Secure');
-  return parts.join('; ');
-}
-
-function buildCsrfCookie(csrf: string): string {
-  return [`fl_csrf=${csrf}`, 'SameSite=Lax', 'Path=/'].join('; ');
 }
 
 /** PKCE S256: base64url(sha256(code_verifier)) === code_challenge */
@@ -104,7 +96,7 @@ export function verifyOAuthState(
 }
 
 export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
-  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false, stateSecret } = deps;
+  const { oauthLogin, providers, callbackBaseUrl, appUrl, cookieInsecure = false, stateSecret, csrfBinder } = deps;
   if (typeof stateSecret !== 'string' || stateSecret.length === 0) {
     throw new Error('createOAuthRoutes: stateSecret (OAUTH_STATE_SECRET) is required');
   }
@@ -197,7 +189,7 @@ export function createOAuthRoutes(deps: OAuthRouteDeps): Router {
     // Web flow: redirect with cookies
     const { token, csrfToken } = result.value;
     // append (not set): keep the state-cookie clearing header queued above.
-    res.append('Set-Cookie', [buildSessionCookie(token, cookieInsecure), buildCsrfCookie(csrfToken)]);
+    res.append('Set-Cookie', [buildSessionCookie(token, cookieInsecure), buildCsrfCookie(csrfBinder ? csrfBinder.mintForToken(token) : csrfToken, cookieInsecure)]);
     res.redirect(appUrl);
   }
 

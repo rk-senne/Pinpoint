@@ -89,6 +89,8 @@ import {
 import { authRateLimiter, loginRateLimiter } from '../middleware/authRateLimit.js';
 import { createErrorHandler, uuidPathGuard } from './httpGuards.js';
 import { createCsrfMiddleware } from '../middleware/csrf.js';
+import { createAuditTrail } from '../middleware/auditTrail.js';
+import { createCsrfBinder } from '../middleware/sessionCookies.js';
 import { legacyApiCatchAll } from '../middleware/legacyApi.js';
 import { securityHeaders } from '../middleware/securityHeaders.js';
 import { inputSanitizer } from '../middleware/inputSanitizer.js';
@@ -322,9 +324,13 @@ export function buildContainer(config: Config): Container {
   });
   app.use('/api/', generalLimiter);
 
-  app.use('/api/v1', createCsrfMiddleware({ tokenIssuer: adapters.tokenIssuer, apiKeyRepo: adapters.apiKeyRepo }));
+  // PP-15: CSRF tokens are HMAC-bound to the session (user id + session start).
+  const csrfBinder = createCsrfBinder({ secret: config.jwt.secret, tokenIssuer: adapters.tokenIssuer });
+  app.use('/api/v1', createCsrfMiddleware({ tokenIssuer: adapters.tokenIssuer, apiKeyRepo: adapters.apiKeyRepo, binder: csrfBinder }));
   // Malformed UUID path ids → 400 instead of a Postgres 22P02 → 500 (F-14).
   app.use('/api/v1', uuidPathGuard);
+  // PP-22: security audit trail (auth events, exports, sharing, integrations, invitations, roles).
+  app.use('/api/v1', createAuditTrail({ db, tokenIssuer: adapters.tokenIssuer }));
 
   const redisRateLimitClient: RedisRateLimitClient | undefined = redisClients
     ? createRedisRateLimitStore(redisClients.primary)
@@ -373,6 +379,7 @@ export function buildContainer(config: Config): Container {
       completePasswordReset: useCases.completePasswordReset,
       logout: useCases.logout,
       cookieInsecure: config.cookieInsecure,
+      csrfBinder,
     },
     projectsRoutes: {
       createProject: useCases.createProject,
@@ -468,6 +475,8 @@ export function buildContainer(config: Config): Container {
     },
     premiumRoutes: {
       db,
+      voterHashSecret: config.jwt.secret,
+      ...(redisRateLimitClient ? { rateLimitRedis: redisRateLimitClient } : {}),
     },
     clientPortalRoutes: {
       db,
@@ -487,6 +496,7 @@ export function buildContainer(config: Config): Container {
       appUrl: config.appUrl,
       cookieInsecure: config.cookieInsecure,
       stateSecret: config.oauthStateSecret,
+      csrfBinder,
     } : undefined,
     billingRoutes: billingRouteDeps ? {
       createCheckoutSession: billingRouteDeps.createCheckoutSession,
@@ -499,6 +509,9 @@ export function buildContainer(config: Config): Container {
       integrationRepo: adapters.integrationRepo,
       // Dedicated HMAC key, not the JWT signing key (key separation).
       oauthStateSecret: config.oauthStateSecret,
+      oauthProviders: config.integrationOAuth,
+      callbackBaseUrl: config.appUrl,
+      cookieInsecure: config.cookieInsecure,
     },
     guestFeedbackRoutes: {
       sharedLinkRepo: adapters.sharedLinkRepo,

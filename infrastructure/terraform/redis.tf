@@ -26,13 +26,13 @@ resource "aws_security_group" "redis" {
 }
 
 resource "aws_elasticache_replication_group" "main" {
-  replication_group_id = "pinpoint-${var.environment}"
-  description          = "Pinpoint ${var.environment} Redis"
-  node_type            = var.redis_node_type
-  num_cache_clusters   = var.environment == "production" ? 2 : 1
-  port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [aws_security_group.redis.id]
+  replication_group_id       = "pinpoint-${var.environment}"
+  description                = "Pinpoint ${var.environment} Redis"
+  node_type                  = var.redis_node_type
+  num_cache_clusters         = var.environment == "production" ? 2 : 1
+  port                       = 6379
+  subnet_group_name          = aws_elasticache_subnet_group.main.name
+  security_group_ids         = [aws_security_group.redis.id]
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
   automatic_failover_enabled = var.environment == "production"

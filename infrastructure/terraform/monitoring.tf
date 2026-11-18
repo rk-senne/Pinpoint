@@ -32,7 +32,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   statistic           = "Average"
   threshold           = 50
   alarm_actions       = [aws_sns_topic.alerts.arn]
-  dimensions = { DBInstanceIdentifier = aws_db_instance.main.id }
+  dimensions          = { DBInstanceIdentifier = aws_db_instance.main.id }
 }
 
 # ALB 5xx errors

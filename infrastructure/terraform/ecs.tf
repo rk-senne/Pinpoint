@@ -9,9 +9,16 @@ resource "aws_ecs_cluster" "main" {
 }
 
 # ECR repository
+#
+# image_tag_mutability is MUTABLE because the deploy workflows push the moving
+# tags `:latest` / `:production` (and the task definition below deploys
+# `:latest`); an IMMUTABLE repo rejects the second push of any tag, so every
+# deploy after the first failed. Each build is still pushed under its immutable
+# git-sha tag for rollback/audit, and scan_on_push stays enabled so every push
+# (including re-tags) is vulnerability-scanned.
 resource "aws_ecr_repository" "api" {
   name                 = "pinpoint-api"
-  image_tag_mutability = "IMMUTABLE"
+  image_tag_mutability = "MUTABLE"
   image_scanning_configuration { scan_on_push = true }
 }
 
@@ -132,8 +139,8 @@ resource "aws_iam_role" "ecs_task_execution" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -144,13 +151,35 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# AmazonECSTaskExecutionRolePolicy does NOT grant SSM read access, which the
+# task definition's `secrets` block needs to inject the SecureString parameters
+# at container start. Least privilege: only the parameters the task consumes.
+resource "aws_iam_role_policy" "ecs_task_execution_ssm" {
+  name = "read-task-secrets"
+  role = aws_iam_role.ecs_task_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["ssm:GetParameters"]
+      Resource = [
+        aws_ssm_parameter.db_password.arn,
+        aws_ssm_parameter.jwt_secret.arn,
+        aws_ssm_parameter.integration_encryption_key.arn,
+        aws_ssm_parameter.oauth_state_secret.arn,
+        aws_ssm_parameter.metrics_token.arn,
+      ]
+    }]
+  })
+}
+
 resource "aws_iam_role" "ecs_task" {
   name = "pinpoint-${var.environment}-ecs-task"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -180,12 +209,34 @@ resource "aws_ecs_task_definition" "api" {
   task_role_arn            = aws_iam_role.ecs_task.arn
 
   container_definitions = jsonencode([{
-    name  = "api"
-    image = "${aws_ecr_repository.api.repository_url}:latest"
+    name         = "api"
+    image        = "${aws_ecr_repository.api.repository_url}:latest"
     portMappings = [{ containerPort = 3001, protocol = "tcp" }]
     environment = [
       { name = "NODE_ENV", value = "production" },
       { name = "PORT", value = "3001" },
+      # Exactly one trusted proxy hop (the ALB): makes req.ip the real client
+      # address from X-Forwarded-For so the per-IP rate limiters key on the
+      # caller instead of the ALB. Never "true" (spoofable; rejected by the
+      # config preflight on exposed deployments).
+      { name = "TRUST_PROXY", value = "1" },
+      # --- SSRF / IMDS hardening (Mission A5a) ---
+      # Fargate tasks do not run on an EC2 instance the container can reach, so
+      # the classic EC2 IMDS at 169.254.169.254 is not directly exposed; the
+      # only metadata surface is the ECS Task Metadata Endpoint at
+      # 169.254.170.2 (v4) reached via the ECS_CONTAINER_METADATA_URI_V4 env
+      # var that the agent injects. We still defence-in-depth here:
+      #   1. The application-layer egressGuard (services/egressGuard.ts) blocks
+      #      all link-local / RFC1918 / metadata targets on every outbound
+      #      fetch, DNS-pinned against rebinding — this is the primary control.
+      #   2. Disable the AWS SDK's EC2 IMDS credential lookup so a code path can
+      #      never fall back to the instance metadata service for creds; task
+      #      role credentials come from the ECS relative URI instead.
+      #   3. On EC2 launch types (not Fargate) the equivalent control is an
+      #      instance-level IMDSv2 requirement with http_put_response_hop_limit
+      #      = 1 on aws_instance.metadata_options — documented here so the same
+      #      posture is applied if this service is ever moved off Fargate.
+      { name = "AWS_EC2_METADATA_DISABLED", value = "true" },
       { name = "DB_HOST", value = aws_db_instance.main.address },
       { name = "DB_PORT", value = "5432" },
       { name = "DB_NAME", value = "pinpoint" },
@@ -199,6 +250,12 @@ resource "aws_ecs_task_definition" "api" {
     secrets = [
       { name = "DB_PASSWORD", valueFrom = aws_ssm_parameter.db_password.arn },
       { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn },
+      { name = "INTEGRATION_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.integration_encryption_key.arn },
+      # Required by the production config preflight (signs the OAuth state cookie).
+      { name = "OAUTH_STATE_SECRET", valueFrom = aws_ssm_parameter.oauth_state_secret.arn },
+      # Bearer token for GET /metrics. Behind the ALB every caller appears to come
+      # from a private address, so without a token /metrics would be open.
+      { name = "METRICS_TOKEN", valueFrom = aws_ssm_parameter.metrics_token.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -255,4 +312,29 @@ resource "aws_ssm_parameter" "jwt_secret" {
   name  = "/pinpoint/${var.environment}/jwt-secret"
   type  = "SecureString"
   value = var.jwt_secret
+}
+
+# Integration token encryption key (Mission A4/A5b). Carried into the ECS task
+# as a secret so integration OAuth tokens + client secrets are encrypted at
+# rest with a real 32-byte key — the config preflight rejects boot without it.
+resource "aws_ssm_parameter" "integration_encryption_key" {
+  name  = "/pinpoint/${var.environment}/integration-encryption-key"
+  type  = "SecureString"
+  value = var.integration_encryption_key
+}
+
+# HMAC key signing the OAuth state cookie. The production config preflight
+# (server/src/config.ts) refuses to boot without it.
+resource "aws_ssm_parameter" "oauth_state_secret" {
+  name  = "/pinpoint/${var.environment}/oauth-state-secret"
+  type  = "SecureString"
+  value = var.oauth_state_secret
+}
+
+# Bearer token required to scrape GET /metrics (Prometheus config must send
+# `Authorization: Bearer <token>`).
+resource "aws_ssm_parameter" "metrics_token" {
+  name  = "/pinpoint/${var.environment}/metrics-token"
+  type  = "SecureString"
+  value = var.metrics_token
 }

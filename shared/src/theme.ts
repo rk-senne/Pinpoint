@@ -125,3 +125,38 @@ export const sharedStyleSheet: CSSStyleSheet | undefined = (() => {
     return undefined;
   }
 })();
+
+/**
+ * Brand / UI accent tokens (Mission B4 / GAP 8).
+ *
+ * Single source of truth for the brand indigo and the semantic
+ * success/danger/muted accents that premium dashboard pages previously
+ * hardcoded (`#4f46e5`, `#38a169`, `#dc2626`, …). Dynamic content built in
+ * TypeScript reads from here so a palette change lands in one place and the
+ * pages stay visually identical.
+ */
+export const BRAND_COLORS = {
+  /** Primary brand indigo — buttons, sparkline bars, replay ripple. */
+  primary: '#4f46e5',
+  /** Success accent (connected / active states). */
+  success: '#16a34a',
+  /** Danger accent (disconnect / destructive buttons). */
+  danger: '#dc2626',
+  /** Muted foreground (secondary labels, inactive states). */
+  muted: '#6b7280',
+  /** Muted alt — slightly lighter muted used for inactive dots. */
+  mutedAlt: '#a0aec0',
+  /** On-brand foreground (text/icons placed on a brand-colored surface). */
+  onBrand: '#ffffff',
+} as const;
+
+/**
+ * Status "pill" token pairs (background + foreground) for the small
+ * connected/active vs disconnected/inactive badges rendered on the
+ * Integrations and Client-Portal pages. Values match the prior hardcoded
+ * hex so the rendered pills are byte-for-byte identical.
+ */
+export const STATUS_PILL_COLORS = {
+  positive: { bg: '#dcfce7', fg: '#166534' },
+  neutral: { bg: '#f3f4f6', fg: '#6b7280' },
+} as const;

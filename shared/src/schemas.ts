@@ -47,6 +47,7 @@ export const AuthTokenKindSchema = z.enum([
   'verify_email',
   'reset_password',
   'team_invite',
+  'change_email',
 ]);
 
 // Capture_Buffer (Req 36) — rolling console + network entries attached to a
@@ -68,6 +69,71 @@ export const CapturedNetworkEntrySchema = z.object({
   transferSize: z.number().nonnegative().optional(),
   responseStatus: z.number().int().optional(),
 });
+
+// Diagnostics capture (Mission C2) — bounded, PII-scrubbed console + uncaught
+// error snapshots attached to a create-annotation payload. The client scrubs
+// secrets and truncates each message/stack before attaching; the schema is
+// the server-side safety net. Both arrays are capped at 50 entries and each
+// message/stack length is re-enforced here, and the whole diagnostics payload
+// is additionally gated by `DIAGNOSTICS_MAX_SERIALIZED_BYTES` on the client.
+export const DIAGNOSTICS_MAX_ENTRIES = 50;
+export const DIAGNOSTICS_MESSAGE_MAX = 500;
+export const DIAGNOSTICS_STACK_MAX = 2000;
+/** Hard cap on the serialized `{consoleLogs, jsErrors}` payload (Mission C2). */
+export const DIAGNOSTICS_MAX_SERIALIZED_BYTES = 32 * 1024;
+
+export const ConsoleLogLevelSchema = z.enum(['log', 'warn', 'error']);
+
+export const ConsoleLogEntrySchema = z.object({
+  level: ConsoleLogLevelSchema,
+  message: z.string().max(DIAGNOSTICS_MESSAGE_MAX),
+  timestamp: iso8601,
+  stack: z.string().max(DIAGNOSTICS_STACK_MAX).optional(),
+});
+
+export const JsErrorKindSchema = z.enum(['error', 'unhandledrejection']);
+
+export const JsErrorEntrySchema = z.object({
+  kind: JsErrorKindSchema,
+  message: z.string().max(DIAGNOSTICS_MESSAGE_MAX),
+  timestamp: iso8601,
+  stack: z.string().max(DIAGNOSTICS_STACK_MAX).optional(),
+  source: z.string().max(2048).optional(),
+  lineno: z.number().int().nonnegative().optional(),
+  colno: z.number().int().nonnegative().optional(),
+});
+
+export const ConsoleLogsSchema = z
+  .array(ConsoleLogEntrySchema)
+  .max(DIAGNOSTICS_MAX_ENTRIES)
+  .nullable()
+  .optional();
+
+export const JsErrorsSchema = z
+  .array(JsErrorEntrySchema)
+  .max(DIAGNOSTICS_MAX_ENTRIES)
+  .nullable()
+  .optional();
+
+// Session replay (Mission C3) — the extension recorder emits a bounded
+// array of `ReplayEvent`s (last ~10 s before submission) with redaction
+// already applied. Persisted per annotation and replayed in the dashboard's
+// ReplayPlayer. The event `data` payload is opaque at the schema seam
+// (type-specific shapes vary); the array length is bounded so a malicious
+// client cannot store an unbounded blob.
+export const REPLAY_EVENTS_MAX = 5000;
+
+export const ReplayEventSchema = z.object({
+  type: z.enum(['mousemove', 'click', 'scroll', 'input', 'mutation', 'resize']),
+  timestamp: z.number(),
+  data: z.unknown(),
+});
+
+export const SessionReplaySchema = z
+  .array(ReplayEventSchema)
+  .max(REPLAY_EVENTS_MAX)
+  .nullable()
+  .optional();
 
 // --- Domain schemas ---
 
@@ -134,6 +200,12 @@ export const AnnotationSchema = z.object({
   // payload can carry an explicit `null` round-tripped from the JSONB column.
   capturedConsole: z.array(CapturedConsoleEntrySchema).nullable().optional(),
   capturedNetwork: z.array(CapturedNetworkEntrySchema).nullable().optional(),
+  // Diagnostics capture (Mission C2) — bounded, PII-scrubbed console +
+  // uncaught-error snapshots. Nullable so a JSONB `null` round-trips.
+  consoleLogs: ConsoleLogsSchema,
+  jsErrors: JsErrorsSchema,
+  // Session replay (Mission C3) — bounded, redaction-applied event list.
+  sessionReplay: SessionReplaySchema,
   // Client-supplied UUID for offline-replay idempotency (Req 44.3).
   clientRequestId: z.string().uuid().optional(),
   // Client-only flag (Req 44.6) — re-derived locally on each replay; the

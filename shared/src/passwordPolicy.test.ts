@@ -59,3 +59,20 @@ describe('validatePassword', () => {
     expect(getCommonPasswordCount()).toBeLessThanOrEqual(10000);
   });
 });
+
+describe('validatePassword — PP-12 hardening', () => {
+  it.each(['Password1234', 'password123456', 'aaaaaaaaaaaa', 'Qwerty123456', 'abababababab', 'P@ssw0rd1234!'])(
+    'rejects %s',
+    (pw) => {
+      expect(validatePassword(pw).ok).toBe(false);
+    },
+  );
+
+  it.each(['correcthorsebatterystaple', 'Sunr1se-Studio-Demo!', 'P@ssw0rd-E2E-1!', 'tr0ub4dor&3-horse'])('accepts %s', (pw) => {
+    expect(validatePassword(pw)).toEqual({ ok: true });
+  });
+
+  it('rejects passwords above 128 characters', () => {
+    expect(validatePassword('aB3$' + 'xyz!Q'.repeat(30)).ok).toBe(false);
+  });
+});

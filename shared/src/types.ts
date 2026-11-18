@@ -36,7 +36,7 @@ export type DeviceType = 'desktop' | 'tablet' | 'mobile';
 export type NotificationStatus = 'pending' | 'sent' | 'failed';
 
 // Auth tokens (replaces password_resets per Req 4 / 20)
-export type AuthTokenKind = 'verify_email' | 'reset_password' | 'team_invite';
+export type AuthTokenKind = 'verify_email' | 'reset_password' | 'team_invite' | 'change_email';
 
 // Capture_Buffer (Req 36) — rolling console + network entries attached to
 // bug-report annotations. Both buffers are bounded to 50 entries by the
@@ -58,6 +58,47 @@ export interface CapturedNetworkEntry {
   duration: number;
   transferSize?: number;
   responseStatus?: number;  // when supported
+}
+
+// Diagnostics capture (Mission C2) — a bounded, PII-scrubbed snapshot of the
+// host page's console output and uncaught JS errors, attached to a
+// create-annotation payload. Distinct from the `capturedConsole`/
+// `capturedNetwork` buffers (Req 36): those are the extension's rolling
+// bug-report buffers; `consoleLogs`/`jsErrors` are produced by the shared
+// `consoleCapture` module installed by BOTH the `<script>` widget and the
+// extension content script. Both arrays are bounded (≤50 entries) and every
+// message/stack is length-capped and secret-scrubbed on the client BEFORE
+// it is attached, with a hard ≤32 KB serialized-payload cap enforced on the
+// client and re-enforced by the server-side Zod schema.
+export type ConsoleLogLevel = 'log' | 'warn' | 'error';
+
+export interface ConsoleLogEntry {
+  level: ConsoleLogLevel;
+  /** Formatted + scrubbed message, truncated to 500 chars. */
+  message: string;
+  /** ISO 8601 timestamp. */
+  timestamp: string;
+  /** Scrubbed stack (warn/error), truncated to 2000 chars. */
+  stack?: string;
+}
+
+/** Source of an uncaught error entry. */
+export type JsErrorKind = 'error' | 'unhandledrejection';
+
+export interface JsErrorEntry {
+  kind: JsErrorKind;
+  /** Scrubbed error message, truncated to 500 chars. */
+  message: string;
+  /** ISO 8601 timestamp. */
+  timestamp: string;
+  /** Scrubbed stack, truncated to 2000 chars. */
+  stack?: string;
+  /** Source URL for window 'error' events, when present. */
+  source?: string;
+  /** Line number for window 'error' events, when present. */
+  lineno?: number;
+  /** Column number for window 'error' events, when present. */
+  colno?: number;
 }
 
 // --- Domain interfaces ---
@@ -110,7 +151,8 @@ export interface Annotation {
   severity: Severity;
   status: AnnotationStatus;
   body: string;
-  authorId: string;
+  /** NULL for guest/widget submissions (see `isGuest`). */
+  authorId: string | null;
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
   target: DOMTarget;
@@ -138,6 +180,21 @@ export interface Annotation {
    * {critical, major}; otherwise null/undefined. Bounded to 50 entries.
    */
   capturedNetwork?: CapturedNetworkEntry[] | null;
+  /**
+   * Bounded, PII-scrubbed console snapshot captured at annotation creation
+   * by the shared `consoleCapture` module (Mission C2). Optional + nullable:
+   * older payloads omit it and a JSON `null` round-trips from the JSONB
+   * column. Bounded to 50 entries on the client; the server re-enforces the
+   * bound + a ≤32 KB serialized cap via Zod.
+   */
+  consoleLogs?: ConsoleLogEntry[] | null;
+  /**
+   * Bounded, PII-scrubbed uncaught-error snapshot (window `error` +
+   * `unhandledrejection`) captured at annotation creation (Mission C2).
+   * Optional + nullable; bounded to 50 entries on the client and re-capped
+   * server-side.
+   */
+  jsErrors?: JsErrorEntry[] | null;
   /**
    * Client-supplied UUID for offline-replay idempotency (Req 44.3). When the
    * Extension's Syncer replays a queued create-Annotation, it attaches the
@@ -365,7 +422,8 @@ export interface ApiErrorEnvelope {
 export interface ReplayEvent {
   type: 'mousemove' | 'click' | 'scroll' | 'input' | 'mutation' | 'resize';
   timestamp: number;
-  data: unknown;
+  /** Optional in the wire schema (ReplayEventSchema); some events carry no payload. */
+  data?: unknown;
 }
 
 // --- Activity Feed ---

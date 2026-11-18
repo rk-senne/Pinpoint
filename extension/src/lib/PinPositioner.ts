@@ -174,6 +174,53 @@ const THROTTLE_MS = 250;
 /** 1-second sub-window used when measuring the instantaneous rate. */
 const ONE_SECOND_MS = 1_000;
 
+/** Rendered pin diameter in CSS px (mirrors `<fl-annotation-pin>`). */
+export const PIN_SIZE = 28;
+/**
+ * How far the pin overlaps the element's top-left corner. The pin sits
+ * OUTSIDE the corner (up and to the left) so it never covers the
+ * element's label; a small overlap keeps the visual association.
+ */
+export const PIN_CORNER_OVERLAP = 6;
+/** Minimum gap kept between a clamped pin and the viewport edge. */
+export const PIN_VIEWPORT_MARGIN = 4;
+
+export interface PinRectLike {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(Math.max(n, min), Math.max(min, max));
+}
+
+/**
+ * Pure placement math. Returns the pin's top-left in VIEWPORT coordinates:
+ * just outside the element's top-left corner (offset up/left), then
+ * clamped into the viewport on any axis where the element is at least
+ * partly on screen — so a full-width header/footer at x=0 / y=0 keeps a
+ * visible pin. Elements entirely off-screen are not clamped (the pin
+ * scrolls into view together with the element).
+ */
+export function computePinPosition(
+  rect: PinRectLike,
+  viewport: { readonly width: number; readonly height: number },
+): { x: number; y: number } {
+  const offset = PIN_SIZE - PIN_CORNER_OVERLAP;
+  let x = rect.left - offset;
+  let y = rect.top - offset;
+  const m = PIN_VIEWPORT_MARGIN;
+  if (rect.right > 0 && rect.left < viewport.width) {
+    x = clamp(x, m, viewport.width - PIN_SIZE - m);
+  }
+  if (rect.bottom > 0 && rect.top < viewport.height) {
+    y = clamp(y, m, viewport.height - PIN_SIZE - m);
+  }
+  return { x, y };
+}
+
 const defaultLogger: PinPositionerLogger = (level, payload) => {
   if (level === 'warn') {
     // eslint-disable-next-line no-console
@@ -709,12 +756,17 @@ export class PinPositioner {
     if (this.disposed) return;
     const scrollX = this.win.scrollX ?? 0;
     const scrollY = this.win.scrollY ?? 0;
+    const viewport = {
+      width: this.doc.documentElement?.clientWidth || this.win.innerWidth || 0,
+      height: this.doc.documentElement?.clientHeight || this.win.innerHeight || 0,
+    };
 
     for (const { el, target, fallback } of this.pins.values()) {
       if (target && target.isConnected) {
         const rect = target.getBoundingClientRect();
-        const x = rect.left + scrollX;
-        const y = rect.top + scrollY;
+        const pos = computePinPosition(rect, viewport);
+        const x = pos.x + scrollX;
+        const y = pos.y + scrollY;
         el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         if (el.dataset.fallback) {
           delete el.dataset.fallback;

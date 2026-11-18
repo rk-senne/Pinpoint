@@ -89,12 +89,21 @@ const TEMPLATE = (() => {
       ><span class="fl-toolbar-avatar-fallback" aria-hidden="true">👤</span></button>
       <button
         type="button"
+        part="sidebar"
+        data-action="sidebar"
+        title="Show annotations (Alt+Shift+S)"
+        aria-label="Toggle annotations sidebar"
+        aria-pressed="false"
+        tabindex="-1"
+      ><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      <button
+        type="button"
         part="share"
         data-action="share"
-        title="Share"
-        aria-label="Share project"
+        title="Open project in dashboard"
+        aria-label="Open project in dashboard"
         tabindex="-1"
-      >🔗</button>
+      ><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/></svg></button>
       <button
         type="button"
         part="link"
@@ -102,7 +111,8 @@ const TEMPLATE = (() => {
         title="Copy link"
         aria-label="Copy page link"
         tabindex="-1"
-      >📋</button>
+      ><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
+      <div class="fl-toolbar-toast" part="toast" role="status" aria-live="polite" hidden></div>
     </div>
   `;
   return t;
@@ -113,7 +123,7 @@ const TEMPLATE = (() => {
  * as the runtime type of `#dispatch`'s argument and as a type-level union
  * documenting which event names this element produces.
  */
-type FloatingToolbarAction = 'close' | 'avatar' | 'share' | 'link';
+type FloatingToolbarAction = 'close' | 'avatar' | 'sidebar' | 'share' | 'link';
 
 export class FlFloatingToolbar extends HTMLElement {
   static readonly tagName = 'pp-floating-toolbar';
@@ -122,6 +132,9 @@ export class FlFloatingToolbar extends HTMLElement {
   #isOffline: boolean = false;
   #closeBtn!: HTMLButtonElement;
   #avatarBtn!: HTMLButtonElement;
+  #sidebarBtn!: HTMLButtonElement;
+  #toast!: HTMLElement;
+  #toastTimer: ReturnType<typeof setTimeout> | null = null;
   #shareBtn!: HTMLButtonElement;
   #linkBtn!: HTMLButtonElement;
   #avatarBtnContent!: HTMLSpanElement;
@@ -135,6 +148,8 @@ export class FlFloatingToolbar extends HTMLElement {
 
     this.#closeBtn = root.querySelector('button[data-action="close"]') as HTMLButtonElement;
     this.#avatarBtn = root.querySelector('button[data-action="avatar"]') as HTMLButtonElement;
+    this.#sidebarBtn = root.querySelector('button[data-action="sidebar"]') as HTMLButtonElement;
+    this.#toast = root.querySelector('.fl-toolbar-toast') as HTMLElement;
     this.#shareBtn = root.querySelector('button[data-action="share"]') as HTMLButtonElement;
     this.#linkBtn = root.querySelector('button[data-action="link"]') as HTMLButtonElement;
     this.#avatarBtnContent = this.#avatarBtn.querySelector(
@@ -149,6 +164,7 @@ export class FlFloatingToolbar extends HTMLElement {
     }
     this.#closeBtn.addEventListener('click', this.#onCloseClick);
     this.#avatarBtn.addEventListener('click', this.#onAvatarClick);
+    this.#sidebarBtn.addEventListener('click', this.#onSidebarClick);
     this.#shareBtn.addEventListener('click', this.#onShareClick);
     this.#linkBtn.addEventListener('click', this.#onLinkClick);
     // Arrow-key navigation among the toolbar buttons (design §28 ARIA
@@ -162,7 +178,9 @@ export class FlFloatingToolbar extends HTMLElement {
   disconnectedCallback(): void {
     this.#closeBtn.removeEventListener('click', this.#onCloseClick);
     this.#avatarBtn.removeEventListener('click', this.#onAvatarClick);
+    this.#sidebarBtn.removeEventListener('click', this.#onSidebarClick);
     this.#shareBtn.removeEventListener('click', this.#onShareClick);
+    if (this.#toastTimer) clearTimeout(this.#toastTimer);
     this.#linkBtn.removeEventListener('click', this.#onLinkClick);
     const toolbar = this.shadowRoot!.querySelector('.fl-toolbar') as HTMLElement;
     toolbar.removeEventListener('keydown', this.#onToolbarKeydown);
@@ -256,6 +274,44 @@ export class FlFloatingToolbar extends HTMLElement {
     this.#dispatch('avatar');
   };
 
+  #onSidebarClick = (e: MouseEvent): void => {
+    e.stopPropagation();
+    this.#dispatch('sidebar');
+  };
+
+  /**
+   * Viewport rect other overlay surfaces must stay clear of: the toolbar
+   * pill plus the strip above it reserved for the toast. Toasts therefore
+   * always stack directly above the toolbar and can never end up under
+   * the popover (which clamps itself against this rect).
+   */
+  keepOutRect(): DOMRect | null {
+    const bar = this.shadowRoot?.querySelector('.fl-toolbar') as HTMLElement | null;
+    if (!bar) return null;
+    const r = bar.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return null;
+    const toastStrip = 44;
+    return new DOMRect(r.left, r.top - toastStrip, r.width, r.height + toastStrip);
+  }
+
+  /** Reflect the sidebar's open state on its toolbar toggle. */
+  set sidebarOpen(open: boolean) {
+    this.#sidebarBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
+    this.#sidebarBtn.title = open ? 'Hide annotations (Alt+Shift+S)' : 'Show annotations (Alt+Shift+S)';
+  }
+
+  /** Show a short, polite status message above the toolbar (e.g. "Link copied"). */
+  notify(message: string, opts: { error?: boolean } = {}): void {
+    this.#toast.textContent = message;
+    this.#toast.hidden = false;
+    this.#toast.classList.toggle('fl-toolbar-toast-error', opts.error === true);
+    if (this.#toastTimer) clearTimeout(this.#toastTimer);
+    // Errors stay longer: they usually need reading, not just noticing.
+    this.#toastTimer = setTimeout(() => {
+      this.#toast.hidden = true;
+    }, opts.error ? 6000 : 2500);
+  }
+
   #onShareClick = (e: MouseEvent): void => {
     e.stopPropagation();
     this.#dispatch('share');
@@ -281,6 +337,7 @@ export class FlFloatingToolbar extends HTMLElement {
     const buttons: HTMLButtonElement[] = [
       this.#closeBtn,
       this.#avatarBtn,
+      this.#sidebarBtn,
       this.#shareBtn,
       this.#linkBtn,
     ];

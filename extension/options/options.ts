@@ -16,6 +16,7 @@
  * stored Bearer_Token.
  */
 
+import { themeCss } from '@pinpoint/shared/dist/theme.js';
 import { apiFetch } from '../src/lib/api';
 import {
   STORAGE_KEY_TOKEN,
@@ -24,6 +25,12 @@ import {
 } from '../src/lib/authTokenStore';
 import { resetAllDisclosureSeen } from '../src/lib/disclosureSeenStore';
 import { PIN_POSITIONER_OPT_OUT_STORAGE_KEY } from '../src/lib/PinPositioner';
+import {
+  STORAGE_KEY_API_ORIGIN,
+  resolveServerOrigin,
+  setServerOrigin,
+  validateServerUrl,
+} from '../src/lib/serverOrigin';
 
 export const STORAGE_KEY_ALLOW_LIST = 'fl_allow_list';
 export const STORAGE_KEY_BLOCK_LIST = 'fl_block_list';
@@ -52,6 +59,10 @@ export const STORAGE_KEY_CAPTURE_NETWORK = 'fl_capture_network_enabled';
 // Re-export so external callers (tests, future modules) can grab the
 // canonical bearer-token key from this module too.
 export { STORAGE_KEY_TOKEN };
+
+// Re-export the server-origin storage key so tests can assert against the
+// canonical key name without importing the resolver module directly.
+export { STORAGE_KEY_API_ORIGIN };
 
 /**
  * Parse a textarea value into a list of host patterns. Splits on newlines,
@@ -214,7 +225,20 @@ function flashStatus(els: OptionsElements, message: string): void {
     if (els.status.textContent === message) {
       els.status.textContent = '';
     }
-  }, 1500);
+  }, 2500);
+}
+
+/**
+ * Inject the shared theme tokens (`--fl-*`) so the page follows the same
+ * palette (and dark mode) as the rest of Pinpoint. The page CSS carries
+ * identical fallbacks, so this only ever refines the first paint.
+ */
+function applySharedTheme(doc: Document): void {
+  if (doc.getElementById('pp-shared-theme')) return;
+  const style = doc.createElement('style');
+  style.id = 'pp-shared-theme';
+  style.textContent = themeCss();
+  doc.head.appendChild(style);
 }
 
 /** Read the stored bearer token via the canonical helper. */
@@ -282,10 +306,115 @@ async function initAuthSection(doc: Document): Promise<void> {
   }
 }
 
+/**
+ * Request a durable host permission for the configured server origin.
+ * Called from the Save user gesture (required for `chrome.permissions.request`
+ * to succeed). Returns `true` when granted (or already held / no API).
+ *
+ * The permission requested is the origin pattern `<origin>/*`. For a
+ * localhost dev origin this is already covered by the static
+ * `host_permissions`, so the request resolves `true` immediately.
+ */
+export async function requestServerOriginPermission(
+  origin: string,
+): Promise<boolean> {
+  if (typeof chrome === 'undefined' || !chrome.permissions?.request) {
+    return true;
+  }
+  const originPattern = `${origin}/*`;
+  try {
+    const already = await chrome.permissions.contains?.({
+      origins: [originPattern],
+    });
+    if (already) return true;
+  } catch {
+    // `contains` unavailable — fall through to request.
+  }
+  try {
+    return await chrome.permissions.request({ origins: [originPattern] });
+  } catch {
+    return false;
+  }
+}
+
+interface ServerUrlElements {
+  input: HTMLInputElement;
+  status: HTMLElement | null;
+}
+
+function getServerUrlElements(doc: Document): ServerUrlElements | null {
+  const input = doc.getElementById('server-url');
+  if (!(input instanceof HTMLInputElement)) return null;
+  const status = doc.getElementById('server-url-status');
+  return { input, status };
+}
+
+function flashServerUrlStatus(
+  els: ServerUrlElements,
+  message: string,
+  isError = false,
+): void {
+  if (!els.status) return;
+  els.status.textContent = message;
+  els.status.classList.toggle('error', isError);
+  if (typeof window !== 'undefined') {
+    window.setTimeout(() => {
+      if (els.status && els.status.textContent === message) {
+        els.status.textContent = '';
+      }
+    }, 2500);
+  }
+}
+
+/**
+ * Wire the "Server URL" field (Blocker 2). Loads the current origin,
+ * validates on change, requests the host permission for the new origin
+ * (from the user gesture), and persists it via `setServerOrigin`. Invalid
+ * input or a denied permission leaves the stored value untouched.
+ */
+export async function initServerUrlSection(doc: Document): Promise<void> {
+  const els = getServerUrlElements(doc);
+  if (!els) return; // Section optional (older fixtures).
+
+  const current = await resolveServerOrigin();
+  els.input.value = current;
+
+  els.input.addEventListener('change', async () => {
+    const raw = els.input.value;
+    const normalised = validateServerUrl(raw);
+    if (normalised === null) {
+      flashServerUrlStatus(
+        els,
+        'Enter an https:// URL or http://localhost.',
+        true,
+      );
+      return;
+    }
+    const granted = await requestServerOriginPermission(normalised);
+    if (!granted) {
+      flashServerUrlStatus(
+        els,
+        'Permission to reach that server was denied.',
+        true,
+      );
+      return;
+    }
+    const saved = await setServerOrigin(normalised);
+    if (saved === null) {
+      flashServerUrlStatus(els, 'Could not save that URL.', true);
+      return;
+    }
+    els.input.value = saved;
+    flashServerUrlStatus(els, 'Server URL saved.');
+  });
+}
+
 export async function initOptionsPage(doc: Document = document): Promise<void> {
+  applySharedTheme(doc);
   const els = getElements(doc);
   await loadFromStorage(els);
   await loadCapturePrefs(els);
+  await initServerUrlSection(doc);
 
   els.allowList.addEventListener('change', async () => {
     await persistAllowList(els.allowList.value);

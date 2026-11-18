@@ -5,10 +5,45 @@
  * Auth-token storage lives in `lib/authTokenStore.ts` so the popup,
  * options page, content script, `lib/api.ts`, and the service worker all
  * read/write the same `pinpoint_auth_token` key from a single
- * source. The service worker no longer mediates token reads/writes via
- * runtime messages — every surface goes through `chrome.storage.local`
- * directly via the helpers in `authTokenStore`.
+ * source. Extension pages (popup/options) and the service worker use those
+ * helpers directly. Content scripts do NOT read the token from storage (F8):
+ * the relay below attaches the bearer (with sliding-window refresh and 401
+ * cleanup) in the worker, and `lib/authBridge.ts` answers boolean auth-status
+ * queries plus the collab-socket token handoff.
+ *
+ * NOTE: `chrome.storage.local` is intentionally left at its default access
+ * level (TRUSTED_AND_UNTRUSTED_CONTEXTS). Restricting it to TRUSTED_CONTEXTS
+ * would also lock content scripts out of the outbox, drafts, project mapping
+ * and server-origin keys they legitimately use — see extension/README.md.
  */
+
+import {
+  RELAY_MESSAGE_TYPE,
+  handleRelayRequest,
+  type RelayRequest,
+} from './lib/apiRelay';
+import { API_BASE, resolveAuthTokenForRequest } from './lib/api';
+import { clearStoredAuthToken } from './lib/authTokenStore';
+import {
+  AUTH_STATUS_MESSAGE_TYPE,
+  COLLAB_TOKEN_MESSAGE_TYPE,
+  handleAuthBridgeMessage,
+} from './lib/authBridge';
+import { resolveServerOrigin as resolveServerOriginAsync } from './lib/serverOrigin';
+import {
+  INSTALL_PAGE_CONSOLE_MESSAGE_TYPE,
+  PAGE_CONSOLE_FLAG,
+  installPageConsoleBridge,
+} from './lib/pageConsoleBridge';
+
+/**
+ * Message the popup sends after a successful login (or a user "Open on
+ * this page" gesture) so the service worker runs the same on-demand
+ * injection + toggle path as an action click. The popup opening is the
+ * `activeTab`-granting gesture, so injection into the active tab is
+ * permitted even on a host the static `content_scripts` don't match.
+ */
+export const REQUEST_TOGGLE_MESSAGE_TYPE = 'PP_REQUEST_TOGGLE' as const;
 
 // Listen for keyboard shortcuts declared in manifest.json's `commands` block
 // (Req 40.1, task 31.2). Each named command (`toggle-sidebar`, `next-pin`,
@@ -69,32 +104,175 @@ if (chrome.webNavigation?.onHistoryStateUpdated) {
   });
 }
 
-// Listen for extension icon click — toggle overlay via content script message.
-// The fallback that re-injected `dist/content.js` via `chrome.scripting`
-// was deleted: the manifest already declares `content_scripts.matches`,
-// so the script auto-injects on every allow-listed page. Pages outside
-// the allow-list (chrome://, about://, etc.) never had a content script
-// to message in the first place — we just log and move on.
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
+// Listen for extension icon click — toggle overlay via content script
+// message, injecting the content script on demand when it isn't already
+// present.
+//
+// The static `content_scripts` entry only matches localhost dev origins
+// (least privilege — see manifest `optional_host_permissions`). On any
+// other site the content script is NOT auto-injected; instead, clicking
+// the action grants `activeTab` (temporary host access to the current tab),
+// which permits `chrome.scripting.executeScript` into it. So the handler:
+//   1. Tries to message the existing content script (`TOGGLE_OVERLAY`).
+//   2. If there is no receiver, injects the built content-loader file for
+//      the tab via `chrome.scripting.executeScript`, then re-sends
+//      `TOGGLE_OVERLAY`.
+//
+// The built loader filename is discovered at runtime from
+// `chrome.runtime.getManifest().content_scripts[0].js[0]` because CRXJS
+// content-hashes it.
+export async function handleActionClick(tabId: number): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_OVERLAY' });
+    await chrome.tabs.sendMessage(tabId, { type: 'TOGGLE_OVERLAY' });
+    return;
+  } catch {
+    // No receiver — the content script isn't in this tab yet. Fall through
+    // to on-demand injection below.
+  }
+
+  const loaderFile = resolveContentLoaderFile();
+  if (!loaderFile) {
+    console.warn(
+      '[pinpoint] cannot resolve content-script loader file from manifest; ' +
+        'on-demand injection skipped',
+    );
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      files: [loaderFile],
+    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[pinpoint] toggle-overlay failed for tab ${tab.id}: ${reason}`,
+      `[pinpoint] on-demand content-script injection failed for tab ${tabId}: ${reason}`,
     );
+    return;
   }
+
+  // The freshly-injected content script registers its message listener
+  // during module evaluation, but `executeScript` resolves once the file
+  // starts executing — the listener may not be wired yet. Retry the toggle
+  // a few times with a short backoff so the first click still opens the
+  // overlay.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'TOGGLE_OVERLAY' });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  console.warn(
+    `[pinpoint] toggle-overlay never reached tab ${tabId} after injection`,
+  );
+}
+
+/**
+ * Resolve the built content-script entry file from the running manifest.
+ * CRXJS content-hashes the emitted filename (e.g.
+ * `assets/content-loader-ab12cd34.js`), so we read it at runtime rather
+ * than hard-coding it. Returns `null` when the manifest has no content
+ * script declared (shouldn't happen in a real build).
+ */
+export function resolveContentLoaderFile(): string | null {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const scripts = manifest.content_scripts;
+    const first = scripts?.[0]?.js?.[0];
+    return typeof first === 'string' && first.length > 0 ? first : null;
+  } catch {
+    return null;
+  }
+}
+
+chrome.action.onClicked.addListener((tab) => {
+  if (typeof tab.id !== 'number') return;
+  void handleActionClick(tab.id);
 });
 
-// Listen for messages from content scripts. The Capture_Visible_Tab
-// handler (Req 34.1) is the only message routed through the service
-// worker today — auth-token reads/writes happen directly against
-// `chrome.storage.local` via `lib/authTokenStore.ts` so the legacy
-// `GET_AUTH_TOKEN` / `SET_AUTH_TOKEN` / `CLEAR_AUTH_TOKEN` handlers were
-// removed. Returning `true` keeps the message channel open while the
-// async capture resolves.
+// Listen for messages from content scripts. Two handlers live here:
+//   1. `PP_API_FETCH` — the content-script → service-worker API relay
+//      (lib/apiRelay.ts). Content scripts run in the host page's origin, so
+//      a direct `fetch` to the API is blocked by the host page's CORS
+//      policy. The content script serialises the request and sends it here;
+//      the service worker performs the fetch under the extension's host
+//      permissions (not subject to the page's CORS), attaches the stored
+//      bearer when the caller didn't, and returns a serialised response.
+//   2. `CAPTURE_VISIBLE_TAB` (Req 34.1) — screenshot capture.
+// Auth-token reads/writes otherwise happen directly against
+// `chrome.storage.local` via `lib/authTokenStore.ts`.
+// Returning `true` keeps the message channel open while the async work
+// resolves.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === RELAY_MESSAGE_TYPE) {
+    const relayReq = message as RelayRequest;
+    handleRelayRequest(relayReq, {
+      resolveOrigin: resolveServerOriginAsync,
+      apiBase: API_BASE,
+      // Refresh-aware: content scripts no longer do this themselves.
+      authTokenProvider: resolveAuthTokenForRequest,
+    })
+      .then(async (response) => {
+        // Req 33.5 (moved from the content script): a 401 on a real endpoint
+        // drops the stored bearer. The refresh call handles its own failure.
+        if (response.status === 401 && relayReq.path !== '/auth/refresh') {
+          await clearStoredAuthToken().catch(() => undefined);
+        }
+        sendResponse(response);
+      })
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        sendResponse({
+          ok: false,
+          status: 0,
+          statusText: '',
+          headers: {},
+          bodyText: '',
+          networkError: reason,
+        });
+      });
+    return true;
+  }
+
+  if (message?.type === AUTH_STATUS_MESSAGE_TYPE || message?.type === COLLAB_TOKEN_MESSAGE_TYPE) {
+    handleAuthBridgeMessage(message, _sender, {
+      extensionId: chrome.runtime.id,
+      getToken: resolveAuthTokenForRequest,
+    })
+      .then((response) => sendResponse(response))
+      .catch(() =>
+        sendResponse(message.type === AUTH_STATUS_MESSAGE_TYPE ? { authenticated: false } : { token: null }),
+      );
+    return true;
+  }
+
+  // Host-page diagnostics bridge: inject the self-contained console/error
+  // forwarder into the SENDER frame's MAIN world (lib/pageConsoleBridge.ts).
+  // Uses the same host grant that let the content script run there.
+  if (message?.type === INSTALL_PAGE_CONSOLE_MESSAGE_TYPE) {
+    const tabId = _sender.tab?.id;
+    if (typeof tabId !== 'number' || !chrome.scripting?.executeScript) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    chrome.scripting
+      .executeScript({
+        target: { tabId, frameIds: [_sender.frameId ?? 0] },
+        world: 'MAIN',
+        func: installPageConsoleBridge,
+        args: [PAGE_CONSOLE_FLAG],
+      })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        sendResponse({ ok: false, error: reason });
+      });
+    return true;
+  }
+
   if (message?.type === 'CAPTURE_VISIBLE_TAB') {
     chrome.tabs
       .captureVisibleTab({ format: 'png' })
@@ -104,5 +282,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ dataUrl: null, error: reason });
       });
     return true;
+  }
+
+  // Popup-driven toggle (post-login or "Open on this page"). The popup
+  // resolves the active tab and forwards its id so the SW injects on
+  // demand and toggles the overlay. Carries the `activeTab` grant from the
+  // popup's action gesture.
+  if (message?.type === REQUEST_TOGGLE_MESSAGE_TYPE) {
+    const tabId = (message as { tabId?: unknown }).tabId;
+    if (typeof tabId === 'number') {
+      handleActionClick(tabId)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error: unknown) => {
+          const reason =
+            error instanceof Error ? error.message : String(error);
+          sendResponse({ ok: false, error: reason });
+        });
+      return true;
+    }
+    sendResponse({ ok: false, error: 'missing tabId' });
+    return false;
   }
 });

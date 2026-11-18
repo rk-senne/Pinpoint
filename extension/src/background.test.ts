@@ -48,6 +48,7 @@ let messageListener: MessageListener | null = null;
 let webNavigationListener: WebNavigationListener | null = null;
 let actionClickListener: ActionClickListener | null = null;
 let chromeStub: ChromeStub;
+let backgroundModule: typeof import('./background.js');
 
 function buildChromeStub(
   captureVisibleTab: ReturnType<typeof vi.fn>,
@@ -99,7 +100,7 @@ async function loadBackgroundWith(
   chromeStub = buildChromeStub(captureVisibleTab, tabsSendMessage);
   vi.stubGlobal('chrome', chromeStub);
   vi.resetModules();
-  await import('./background.js');
+  backgroundModule = await import('./background.js');
 }
 
 describe('background service worker — CAPTURE_VISIBLE_TAB handler', () => {
@@ -264,23 +265,102 @@ describe('background service worker — action.onClicked handler', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('logs and swallows sendMessage failures (no scripting fallback)', async () => {
-    // Regression test for task 8: the previous fallback called
-    // `chrome.scripting.executeScript({ files: ['dist/content.js'] })`
-    // which failed because vite hashes the bundled name. The fallback
-    // is gone — the manifest's `content_scripts.matches` already
-    // auto-injects the content script. On send failure we just log and
-    // return.
+  it('falls back to on-demand injection when the content script is absent', async () => {
+    // When the first TOGGLE_OVERLAY has no receiver, the handler injects
+    // the built content-loader file via chrome.scripting.executeScript and
+    // retries the toggle. The loader filename is read from the manifest's
+    // first content_scripts entry (CRXJS content-hashes it).
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Could not establish connection'))
+      .mockResolvedValue(undefined);
+    await loadBackgroundWith(vi.fn(), sendMessage);
+
+    // Augment the stub with scripting + getManifest for this test.
+    const executeScript = vi.fn().mockResolvedValue([]);
+    (chromeStub as unknown as { scripting: unknown }).scripting = {
+      executeScript,
+    };
+    (chromeStub.runtime as unknown as { getManifest: () => unknown }).getManifest =
+      () => ({
+        content_scripts: [{ js: ['assets/content-loader-abc123.js'] }],
+      });
+
+    await backgroundModule.handleActionClick(23);
+
+    expect(executeScript).toHaveBeenCalledTimes(1);
+    expect(executeScript).toHaveBeenCalledWith({
+      target: { tabId: 23, allFrames: false },
+      files: ['assets/content-loader-abc123.js'],
+    });
+    // Two sendMessage calls: the initial failed attempt + the post-inject
+    // retry that succeeds.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns and gives up when the manifest has no content-script file', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const sendMessage = vi
       .fn()
       .mockRejectedValue(new Error('Could not establish connection'));
     await loadBackgroundWith(vi.fn(), sendMessage);
 
-    await expect(actionClickListener!({ id: 23 })).resolves.toBeUndefined();
+    (chromeStub.runtime as unknown as { getManifest: () => unknown }).getManifest =
+      () => ({ content_scripts: [] });
+
+    await expect(backgroundModule.handleActionClick(23)).resolves.toBeUndefined();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('background service worker — PP_API_FETCH relay handler', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    messageListener = null;
+    webNavigationListener = null;
+    actionClickListener = null;
+  });
+
+  it('keeps the channel open and responds with the relayed result', async () => {
+    await loadBackgroundWith(vi.fn());
+
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ projectId: 'p1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const sendResponse = vi.fn();
+    const result = messageListener!(
+      {
+        type: 'PP_API_FETCH',
+        path: '/projects/by-url?url=x',
+        method: 'GET',
+        headers: {},
+        body: null,
+      },
+      {},
+      sendResponse,
+    );
+    expect(result).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(sendResponse).toHaveBeenCalledTimes(1);
+    const response = sendResponse.mock.calls[0]![0] as {
+      ok: boolean;
+      status: number;
+      bodyText: string;
+    };
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.bodyText)).toEqual({ projectId: 'p1' });
   });
 });
 

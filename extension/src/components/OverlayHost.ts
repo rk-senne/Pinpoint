@@ -25,8 +25,9 @@
  *      still constructable in jsdom test environments where
  *      `socket.io-client` runtime is not exercised). Subscribes to the events
  *      called out in design.md WebSocket Events table:
- *        - `annotation:created`, `annotation:updated`, `annotation:status`,
- *          `comment:created`, `annotation:viewers`, `presence:update`
+ *        - `annotation.created`, `annotation.updated`,
+ *          `annotation.status_changed`, `comment.created`,
+ *          `annotation:viewers`, `presence:update`
  *      and updates the corresponding store signal. The socket also drives the
  *      `reconnecting` signal via `disconnect` / `reconnect_attempt` /
  *      `connect`.
@@ -61,11 +62,11 @@ import type {
   Severity,
   Signal,
 } from '@pinpoint/shared';
-import { signal } from '@pinpoint/shared';
+import { signal } from '@pinpoint/shared/dist/signal.js';
 
-import { io } from 'socket.io-client';
 
 import { adoptStyles } from '../styles/sharedStyleSheet';
+import { upgradeShadowTree } from '../lib/upgradeShadowTree';
 import { DOMTargetResolver } from '../lib/DOMTargetResolver';
 import { DEFAULT_API_ORIGIN, requestTriage } from '../lib/api';
 import { withBoundary } from '../lib/withBoundary';
@@ -175,7 +176,7 @@ export type OverlaySocketFactory = (config: {
   projectId: string;
   token: string;
   serverUrl: string;
-}) => OverlaySocket | null;
+}) => OverlaySocket | null | Promise<OverlaySocket | null>;
 
 /* -------------------------------------------------------------------------- */
 /* Custom event detail types                                                  */
@@ -193,6 +194,8 @@ export type OverlayHostAction =
   | { kind: 'change-status'; annotationId: string; status: AnnotationStatus }
   | { kind: 'create-comment'; annotationId: string; body: string; mentions: string[] }
   | { kind: 'overlay-close' }
+  | { kind: 'open-project'; projectId: string }
+  | { kind: 'load-comments'; annotationId: string }
   | { kind: 'picker-select'; projectId: string };
 
 /* -------------------------------------------------------------------------- */
@@ -227,6 +230,35 @@ function pickHighestSeverity(annotations: readonly Annotation[]): Severity | nul
     }
   }
   return best;
+}
+
+
+/** True when `source` is a direct child frame of the current window. */
+function isDirectChildFrame(source: MessageEventSource | null): boolean {
+  if (!source || typeof window === 'undefined') return false;
+  if ((source as unknown) === window) return false;
+  try {
+    if ((source as Window).parent === window) return true;
+  } catch {
+    /* fall through to the element scan */
+  }
+  // Fallback for environments where the WindowProxy identity differs
+  // (jsdom) and for frames nested in shadow roots we can still enumerate:
+  // the source must be the contentWindow of an <iframe>/<frame> in this
+  // document.
+  try {
+    for (const el of Array.from(document.querySelectorAll('iframe,frame'))) {
+      if ((el as HTMLIFrameElement).contentWindow === source) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Finite and within a generous but bounded CSS-pixel range. */
+function isSaneCoordinate(n: number): boolean {
+  return Number.isFinite(n) && Math.abs(n) <= 1_000_000;
 }
 
 /**
@@ -271,6 +303,29 @@ const TEMPLATE = (() => {
   return t;
 })();
 
+/** Copy text to the clipboard (async API, then legacy fallback). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export class FlOverlayHost extends HTMLElement {
   static readonly tagName = 'pp-overlay-host';
 
@@ -280,6 +335,10 @@ export class FlOverlayHost extends HTMLElement {
   #hoverOutline: HoverOutline | null = null;
   #socket: OverlaySocket | null = null;
   #socketFactory: OverlaySocketFactory | null = null;
+  /** True while an async factory (lazy `socket.io-client` import) is in flight. */
+  #socketPending = false;
+  /** Bumped by teardown so a stale in-flight mount can detect it was superseded. */
+  #socketSeq = 0;
   #unsubs: Array<() => void> = [];
 
   // --- per-annotation pin elements ---
@@ -305,6 +364,10 @@ export class FlOverlayHost extends HTMLElement {
   #pickerWrapper!: HTMLElement;
   #picker!: FlProjectPicker;
   #pickerVisible = false;
+  /** Sidebar starts closed so it never covers host-page UI uninvited. */
+  #sidebarOpen = false;
+  /** Optimistic annotation ids not yet confirmed by the server. */
+  #pendingIds = new Set<string>();
 
   // --- configuration ---
   #projectId: string | null = null;
@@ -544,7 +607,8 @@ export class FlOverlayHost extends HTMLElement {
   #applyPickerVisibility(): void {
     const hidden = this.#pickerVisible;
     this.#pinLayer.style.display = hidden ? 'none' : '';
-    (this.#sidebar as HTMLElement).style.display = hidden ? 'none' : '';
+    (this.#sidebar as HTMLElement).style.display =
+      hidden || !this.#sidebarOpen ? 'none' : '';
     (this.#popover as HTMLElement).style.display = hidden ? 'none' : '';
     (this.#toolbar as HTMLElement).style.display = hidden ? 'none' : '';
     (this.#clusterList as HTMLElement).style.display = hidden ? 'none' : '';
@@ -555,6 +619,9 @@ export class FlOverlayHost extends HTMLElement {
   /* -------------------------------------------------------------------- */
 
   connectedCallback(): void {
+    // Upgrade child Custom Elements BEFORE assigning their properties
+    // (isolated-world polyfill upgrades late — see upgradeShadowTree.ts).
+    upgradeShadowTree(this.shadowRoot);
     if (!this.hasAttribute('data-pinpoint')) {
       this.setAttribute('data-pinpoint', 'overlay-host-host');
     }
@@ -596,12 +663,17 @@ export class FlOverlayHost extends HTMLElement {
 
     this.#wireChildEventHandlers();
     this.#wireSubscriptions();
+    this.#applyPickerVisibility();
+    document.addEventListener('click', this.#onDocumentClick, true);
+    window.addEventListener('pinpoint:command', this.#onShellCommand as EventListener);
     this.#installSubFrameRelayListener();
     this.#wireClusterReclusterListeners();
     this.#maybeMountSocket();
   }
 
   disconnectedCallback(): void {
+    document.removeEventListener('click', this.#onDocumentClick, true);
+    window.removeEventListener('pinpoint:command', this.#onShellCommand as EventListener);
     this.#unwireChildEventHandlers();
     this.#teardownSubscriptions();
     this.#uninstallSubFrameRelayListener();
@@ -627,8 +699,14 @@ export class FlOverlayHost extends HTMLElement {
 
     this.#unsubs.push(
       s.annotations.subscribe((annotations) => {
+        // A pending id disappears once the Syncer remaps it to the
+        // server id (or a socket replay reconciles it).
+        for (const id of Array.from(this.#pendingIds)) {
+          if (!annotations.some((a) => a.id === id)) this.#pendingIds.delete(id);
+        }
         this.#sidebar.annotations = annotations;
         this.#syncPinElements(annotations);
+        this.#popover.pendingSync = this.#pendingIds.has(s.selectedAnnotationId.get() ?? '');
         // Keep popover's nextPinNumber and (in view mode) annotation in sync.
         this.#popover.nextPinNumber = annotations.length + 1;
         const selected = s.selectedAnnotationId.get();
@@ -647,12 +725,18 @@ export class FlOverlayHost extends HTMLElement {
 
     this.#unsubs.push(
       s.selectedAnnotationId.subscribe((id) => {
+        this.#popover.pendingSync = id !== null && this.#pendingIds.has(id);
         if (id === null) {
           this.#popover.annotation = null;
           return;
         }
         const found = s.annotations.get().find((a) => a.id === id) ?? null;
         this.#popover.annotation = found;
+        // Existing comments live on the server (e.g. a thread started in
+        // the dashboard); the store only knew this tab's own comments.
+        if (found && !this.#pendingIds.has(id)) {
+          this.#dispatchHostAction({ kind: 'load-comments', annotationId: id });
+        }
         // Tell the server we are viewing this annotation (Req 6.6).
         if (this.#socket) {
           try {
@@ -751,6 +835,7 @@ export class FlOverlayHost extends HTMLElement {
       if (existing) {
         existing.annotation = a;
         this.#applyTargetStaleFlag(existing, a);
+        this.#applyPendingFlag(existing, a.id);
       } else {
         const pin = document.createElement('fl-annotation-pin') as FlAnnotationPinElement;
         pin.annotation = a;
@@ -762,6 +847,7 @@ export class FlOverlayHost extends HTMLElement {
           pageY: a.target.pageY,
         });
         this.#applyTargetStaleFlag(pin, a);
+        this.#applyPendingFlag(pin, a.id);
       }
     }
     // Drop pins that are no longer in the list.
@@ -1070,16 +1156,20 @@ export class FlOverlayHost extends HTMLElement {
 
   #wireChildEventHandlers(): void {
     this.#sidebar.addEventListener('annotation-select', this.#onAnnotationSelect);
-    this.#sidebar.addEventListener('close', this.#onOverlayClose);
+    this.#sidebar.addEventListener('close', this.#onSidebarClose);
     this.#popover.addEventListener('submit', this.#onPopoverSubmit);
     this.#popover.addEventListener('cancel', this.#onPopoverCancel);
     this.#popover.addEventListener('close', this.#onPopoverClose);
     this.#popover.addEventListener('status-change', this.#onPopoverStatusChange);
     this.#popover.addEventListener('comment-submit', this.#onPopoverCommentSubmit);
     this.#popover.addEventListener('triage-request', this.#onPopoverTriageRequest);
+    this.#popover.addEventListener('screenshot-error', this.#onScreenshotError);
     this.#clusterList.addEventListener('annotation-select', this.#onClusterListSelect);
     this.#clusterList.addEventListener('close', this.#onClusterListClose);
     this.#toolbar.addEventListener('close', this.#onOverlayClose);
+    this.#toolbar.addEventListener('sidebar', this.#onToolbarSidebar);
+    this.#toolbar.addEventListener('link', this.#onToolbarLink);
+    this.#toolbar.addEventListener('share', this.#onToolbarShare);
     this.#pinLayer.addEventListener('pin-click', this.#onPinClick);
     this.#pinLayer.addEventListener('cluster-click', this.#onClusterClick);
     this.#picker.addEventListener('select', this.#onPickerSelect);
@@ -1087,9 +1177,10 @@ export class FlOverlayHost extends HTMLElement {
 
   #unwireChildEventHandlers(): void {
     this.#sidebar.removeEventListener('annotation-select', this.#onAnnotationSelect);
-    this.#sidebar.removeEventListener('close', this.#onOverlayClose);
+    this.#sidebar.removeEventListener('close', this.#onSidebarClose);
     this.#popover.removeEventListener('submit', this.#onPopoverSubmit);
     this.#popover.removeEventListener('triage-request', this.#onPopoverTriageRequest);
+    this.#popover.removeEventListener('screenshot-error', this.#onScreenshotError);
     this.#popover.removeEventListener('cancel', this.#onPopoverCancel);
     this.#popover.removeEventListener('close', this.#onPopoverClose);
     this.#popover.removeEventListener('status-change', this.#onPopoverStatusChange);
@@ -1097,6 +1188,9 @@ export class FlOverlayHost extends HTMLElement {
     this.#clusterList.removeEventListener('annotation-select', this.#onClusterListSelect);
     this.#clusterList.removeEventListener('close', this.#onClusterListClose);
     this.#toolbar.removeEventListener('close', this.#onOverlayClose);
+    this.#toolbar.removeEventListener('sidebar', this.#onToolbarSidebar);
+    this.#toolbar.removeEventListener('link', this.#onToolbarLink);
+    this.#toolbar.removeEventListener('share', this.#onToolbarShare);
     this.#pinLayer.removeEventListener('pin-click', this.#onPinClick);
     this.#pinLayer.removeEventListener('cluster-click', this.#onClusterClick);
     this.#picker.removeEventListener('select', this.#onPickerSelect);
@@ -1202,6 +1296,26 @@ export class FlOverlayHost extends HTMLElement {
     });
   }
 
+  /** Mark a pin as "not synced yet" (dashed ring + accessible label). */
+  #applyPendingFlag(pin: FlAnnotationPinElement, id: string): void {
+    if (this.#pendingIds.has(id)) {
+      pin.setAttribute('data-pending', 'true');
+      const n = pin.annotation?.pinNumber ?? '';
+      pin.setAttribute('aria-label', `Annotation pin ${n} (not synced yet)`);
+      pin.title = 'Not synced yet — will sync when online';
+    } else if (pin.hasAttribute('data-pending')) {
+      pin.removeAttribute('data-pending');
+      const n = pin.annotation?.pinNumber ?? '';
+      pin.setAttribute('aria-label', `Annotation pin ${n}`);
+      pin.title = `Pin #${n}`;
+    }
+  }
+
+  /** Whether `id` is an optimistic annotation still waiting to sync. */
+  isPendingSync(id: string): boolean {
+    return this.#pendingIds.has(id);
+  }
+
   #onPopoverSubmit = (event: Event): void => {
     const detail = (event as CustomEvent<PopoverSubmitDetail>).detail;
     if (!detail) return;
@@ -1211,10 +1325,11 @@ export class FlOverlayHost extends HTMLElement {
       ...detail.annotation,
       projectId: this.#projectId ?? detail.annotation.projectId,
     };
+    this.#pendingIds.add(annotation.id);
     this.#dispatchHostAction({ kind: 'create-annotation', annotation });
     // Optimistically push into the local store so the pin and sidebar
     // reflect the new annotation immediately. The server's
-    // `annotation:created` broadcast will reconcile.
+    // `annotation.created` broadcast will reconcile.
     this.#store.annotations.set([...this.#store.annotations.get(), annotation]);
     this.#store.popoverTarget.set(null);
   };
@@ -1285,6 +1400,107 @@ export class FlOverlayHost extends HTMLElement {
     this.#dispatchHostAction({ kind: 'overlay-close' });
   };
 
+  /** The annotation is saved either way; tell the user the image wasn't. */
+  #onScreenshotError = (event: Event): void => {
+    const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+    this.#toolbar.notify(message || 'Screenshot could not be attached', { error: true });
+  };
+
+  /** Sidebar × closes only the sidebar, not the whole overlay. */
+  #onSidebarClose = (): void => {
+    this.#setSidebarOpen(false);
+  };
+
+  #onToolbarSidebar = (): void => {
+    this.#setSidebarOpen(!this.#sidebarOpen);
+  };
+
+  #setSidebarOpen(open: boolean): void {
+    this.#sidebarOpen = open;
+    this.#applyPickerVisibility();
+    this.#toolbar.sidebarOpen = open;
+  }
+
+  /** Whether the sidebar panel is currently shown. */
+  get sidebarOpen(): boolean {
+    return this.#sidebarOpen;
+  }
+
+  #onToolbarLink = (): void => {
+    void copyText(window.location.href).then((ok) => {
+      this.#toolbar.notify(ok ? 'Page link copied' : 'Could not copy link', { error: !ok });
+    });
+  };
+
+  #onToolbarShare = (): void => {
+    if (!this.#projectId) {
+      this.#toolbar.notify('No project for this page');
+      return;
+    }
+    this.#dispatchHostAction({ kind: 'open-project', projectId: this.#projectId });
+  };
+
+  /**
+   * Capture-phase page click: while the overlay is visible, a click on a
+   * page element anchors the annotation popover to it (and is swallowed so
+   * links / buttons on the host page do not fire). Clicks inside the
+   * overlay's own surfaces, while the overlay is hidden, or while no
+   * project is bound (picker showing) are left alone.
+   */
+  #onDocumentClick = (e: MouseEvent): void => {
+    if (e.button !== 0 || e.defaultPrevented) return;
+    const shadowHost = this.#findOverlayShadowHost();
+    if (!shadowHost || !shadowHost.isConnected) return;
+    if (getComputedStyle(shadowHost).display === 'none') return;
+    if (this.#pickerVisible || !this.#projectId) return;
+    const path = e.composedPath();
+    if (path.includes(shadowHost) || path.includes(this)) return;
+    const el = path[0] instanceof Element ? path[0] : null;
+    if (!el) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const resolved = DOMTargetResolver.resolve(el);
+    this.#store.selectedAnnotationId.set(null);
+    this.#store.popoverTarget.set({
+      pageX: resolved.pageX,
+      pageY: resolved.pageY,
+      domTarget: resolved.domTarget,
+      anchorHeight: el.getBoundingClientRect().height,
+    });
+  };
+
+  /**
+   * Keyboard-shortcut bridge: `toggle-sidebar`, `next-pin`, `prev-pin`
+   * arrive as window-level `pinpoint:command` events (content.ts re-emits
+   * the service worker's `FL_COMMAND` message).
+   */
+  #onShellCommand = (e: Event): void => {
+    const command = (e as CustomEvent<{ command?: string }>).detail?.command;
+    if (command === 'toggle-sidebar') {
+      this.#setSidebarOpen(!this.#sidebarOpen);
+    } else if (command === 'next-pin') {
+      this.#stepPin(1);
+    } else if (command === 'prev-pin') {
+      this.#stepPin(-1);
+    }
+  };
+
+  #stepPin(delta: 1 | -1): void {
+    const list = [...this.#store.annotations.get()].sort((a, b) => a.pinNumber - b.pinNumber);
+    if (list.length === 0) return;
+    const selected = this.#store.selectedAnnotationId.get();
+    const idx = selected ? list.findIndex((a) => a.id === selected) : -1;
+    const nextIdx =
+      idx === -1 ? (delta === 1 ? 0 : list.length - 1) : (idx + delta + list.length) % list.length;
+    const next = list[nextIdx];
+    this.#selectAnnotation(next.id);
+    const pin = this.#pinEls.get(next.id);
+    pin?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    // The popover is modal, so the pin itself is inert — focus the panel
+    // showing the annotation instead (also when it was already open).
+    this.#popover.focusPanel();
+  }
+
   /**
    * Forward `<fl-project-picker>`'s `select` event as a `host-action`
    * so the content script can swap the active Project (Req 38.2 / 39.2,
@@ -1349,18 +1565,22 @@ export class FlOverlayHost extends HTMLElement {
     })();
 
     const listener = (event: MessageEvent): void => {
+      // F11: the legitimate sender is always a CHILD frame posting to its
+      // `window.parent` (subFrameRelay.ts). A page script in the top frame
+      // can forge `window.postMessage(...)` from the top window itself
+      // (source === window) or from an unrelated window (opener/popup), so
+      // require `event.source` to be a direct child frame of this window.
+      // (A same-origin child frame is page-controlled by definition and
+      // cannot be distinguished from our relay; the blast radius is limited
+      // to opening the annotation popover at a clamped coordinate.)
+      if (!isDirectChildFrame(event.source)) return;
+
       // 40.4 / 48.3: drop messages from origins other than our own.
-      // Some test environments (jsdom) populate `event.origin` as ''
-      // for synthetic `MessageEvent`s; treat that as same-origin only
-      // when the sender is the top window itself (i.e. `event.source`
-      // matches `window`) so we never accidentally accept a forged
-      // event from a different origin.
+      // jsdom populates `event.origin` as '' for synthetic events; that is
+      // acceptable only because the child-frame source check above passed.
       if (expectedOrigin !== null) {
         const origin = event.origin;
         if (origin && origin !== expectedOrigin) return;
-        if (!origin && event.source !== null && event.source !== window) {
-          return;
-        }
       }
 
       const data = event.data as SubFrameClickMessage | null | undefined;
@@ -1373,7 +1593,11 @@ export class FlOverlayHost extends HTMLElement {
         typeof rect.x !== 'number' ||
         typeof rect.y !== 'number' ||
         typeof rect.w !== 'number' ||
-        typeof rect.h !== 'number'
+        typeof rect.h !== 'number' ||
+        !isSaneCoordinate(rect.x) ||
+        !isSaneCoordinate(rect.y) ||
+        !isSaneCoordinate(rect.w) ||
+        !isSaneCoordinate(rect.h)
       ) {
         return;
       }
@@ -1426,22 +1650,62 @@ export class FlOverlayHost extends HTMLElement {
       serverUrl: this.#serverUrl,
     });
     if (!socket) return;
-    this.#socket = socket;
-    this.#wireSocketEvents(socket);
+    if (typeof (socket as Promise<OverlaySocket | null>).then === 'function') {
+      // Async factory (the default one lazy-loads socket.io-client). Guard
+      // against teardown / project rebind while the chunk is loading.
+      if (this.#socketPending) return;
+      this.#socketPending = true;
+      const seq = this.#socketSeq;
+      (socket as Promise<OverlaySocket | null>).then(
+        (resolved) => {
+          if (seq === this.#socketSeq) this.#socketPending = false;
+          if (!resolved) return;
+          if (seq !== this.#socketSeq || !this.isConnected || this.#socket) {
+            try {
+              resolved.disconnect();
+            } catch {
+              /* best-effort */
+            }
+            return;
+          }
+          this.#socket = resolved;
+          this.#wireSocketEvents(resolved);
+        },
+        () => {
+          if (seq === this.#socketSeq) this.#socketPending = false;
+        },
+      );
+      return;
+    }
+    this.#socket = socket as OverlaySocket;
+    this.#wireSocketEvents(socket as OverlaySocket);
   }
 
   /**
    * Default socket factory — uses `socket.io-client`. Wrapped in a function
    * so it can be replaced in tests via `setSocketFactory`.
    */
-  #defaultSocketFactory: OverlaySocketFactory = ({ projectId, token, serverUrl }) => {
+  #defaultSocketFactory: OverlaySocketFactory = async ({ projectId, token, serverUrl }) => {
     try {
+      // Lazy chunk: socket.io-client is only needed once a collab socket mounts.
+      const { io } = await import('socket.io-client');
       const socket = io(`${serverUrl}/collab`, {
         auth: { token, projectId },
         reconnection: true,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
-        transports: ['websocket', 'polling'],
+        // WebSocket-only, by design. The content script runs in the host
+        // page's origin, and the server's Socket.IO `cors.origin` is pinned
+        // to the dashboard origin — the HTTP long-polling transport sends a
+        // cross-origin XHR whose `Origin` the server rejects (and which the
+        // browser blocks on CORS) on every non-dashboard site. The raw
+        // WebSocket upgrade handshake is NOT a CORS-preflighted request, so
+        // forcing `['websocket']` lets the content-script overlay connect
+        // from any host page without weakening the server's Origin check.
+        // Verified empirically against the live stack (see
+        // e2e/browser/extension.spec.ts).
+        transports: ['websocket'],
+        upgrade: false,
       });
       return socket as unknown as OverlaySocket;
     } catch {
@@ -1483,10 +1747,30 @@ export class FlOverlayHost extends HTMLElement {
       this.#store.reconnecting.set(true);
     });
 
-    socket.on('annotation:created', (...args: unknown[]) => {
+    // Canonical dotted domain events (SocketIoEventBus forwards `event.type`
+    // verbatim): `annotation.created|updated|status_changed`, `comment.created`.
+    // Handlers dedupe by id / clientRequestId, so replays are harmless.
+    const onAnnotationCreated = (...args: unknown[]): void => {
       const data = args[0] as Annotation | undefined;
       if (!data) return;
       const current = this.#store.annotations.get();
+      // Our own create can be broadcast BEFORE the Syncer remaps the
+      // optimistic row; it carries `clientRequestId` = the local UUID.
+      const clientRequestId = (data as Annotation & { clientRequestId?: string }).clientRequestId;
+      if (
+        clientRequestId &&
+        clientRequestId !== data.id &&
+        current.some((a) => a.id === clientRequestId)
+      ) {
+        const withoutServerDup = current.filter((a) => a.id !== data.id);
+        this.#store.annotations.set(
+          withoutServerDup.map((a) => (a.id === clientRequestId ? { ...a, ...data } : a)),
+        );
+        if (this.#store.selectedAnnotationId.get() === clientRequestId) {
+          this.#store.selectedAnnotationId.set(data.id);
+        }
+        return;
+      }
       if (current.some((a) => a.id === data.id)) {
         // Server replay of an annotation we already optimistically inserted.
         this.#store.annotations.set(
@@ -1495,9 +1779,10 @@ export class FlOverlayHost extends HTMLElement {
       } else {
         this.#store.annotations.set([...current, data]);
       }
-    });
+    };
+    socket.on('annotation.created', onAnnotationCreated);
 
-    socket.on('annotation:updated', (...args: unknown[]) => {
+    socket.on('annotation.updated', (...args: unknown[]) => {
       const data = args[0] as Annotation | undefined;
       if (!data) return;
       this.#store.annotations.set(
@@ -1505,7 +1790,9 @@ export class FlOverlayHost extends HTMLElement {
       );
     });
 
-    socket.on('annotation:status', (...args: unknown[]) => {
+    // Payload is the full annotation plus `previousStatus` / `changedBy`; only
+    // the status is applied so local-only fields are never clobbered.
+    socket.on('annotation.status_changed', (...args: unknown[]) => {
       const data = args[0] as { id?: string; status?: AnnotationStatus } | undefined;
       if (!data || !data.id || !data.status) return;
       this.#store.annotations.set(
@@ -1515,13 +1802,22 @@ export class FlOverlayHost extends HTMLElement {
       );
     });
 
-    socket.on('comment:created', (...args: unknown[]) => {
-      const data = args[0] as FLComment | undefined;
-      if (!data) return;
+    const onCommentCreated = (...args: unknown[]): void => {
+      // `comment.created` wraps the row: `{ comment, annotationId, projectId }`.
+      const raw = args[0] as (FLComment & { comment?: FLComment }) | undefined;
+      const data = raw?.comment ?? raw;
+      if (!data || !data.id) return;
       const current = this.#store.comments.get();
       if (current.some((c) => c.id === data.id)) return;
+      // Our own comment echoed back before the Syncer remapped its local id.
+      const clientRequestId = (data as FLComment & { clientRequestId?: string }).clientRequestId;
+      if (clientRequestId && current.some((c) => c.id === clientRequestId)) {
+        this.#store.comments.set(current.map((c) => (c.id === clientRequestId ? data : c)));
+        return;
+      }
       this.#store.comments.set([...current, data]);
-    });
+    };
+    socket.on('comment.created', onCommentCreated);
 
     socket.on('annotation:viewers', (...args: unknown[]) => {
       const data = args[0] as { id?: string; userIds?: string[] } | undefined;
@@ -1540,6 +1836,8 @@ export class FlOverlayHost extends HTMLElement {
   }
 
   #teardownSocket(): void {
+    this.#socketSeq++;
+    this.#socketPending = false;
     if (!this.#socket) return;
     try {
       this.#socket.disconnect();

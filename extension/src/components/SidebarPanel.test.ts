@@ -447,3 +447,41 @@ describe('<fl-sidebar-panel>', () => {
     });
   });
 });
+
+describe('<fl-sidebar-panel> collapsible rail', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    window.sessionStorage.clear();
+  });
+
+  function mount(): FlSidebarPanel {
+    const el = document.createElement('fl-sidebar-panel') as FlSidebarPanel;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('collapses to a rail, reflects aria-expanded, and shows the active count', () => {
+    const el = mount();
+    el.annotations = [makeAnnotation(), makeAnnotation(), makeAnnotation({ status: 'resolved' })];
+    const root = el.shadowRoot!;
+    root.querySelector<HTMLButtonElement>('button.fl-collapse-btn')!.click();
+    expect(el.collapsed).toBe(true);
+    expect(root.querySelector('.fl-sidebar')!.hasAttribute('data-collapsed')).toBe(true);
+    const expand = root.querySelector<HTMLButtonElement>('button.fl-rail-btn')!;
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+    expect(root.querySelector('.fl-rail-badge')!.textContent).toBe('2');
+    expand.click();
+    expect(el.collapsed).toBe(false);
+    expect(root.querySelector('.fl-sidebar')!.hasAttribute('data-collapsed')).toBe(false);
+  });
+
+  it('remembers the collapsed state per tab (sessionStorage) across new instances', () => {
+    mount().collapsed = true;
+    document.body.innerHTML = '';
+    const again = mount();
+    expect(again.collapsed).toBe(true);
+    expect(again.shadowRoot!.querySelector('.fl-sidebar')!.hasAttribute('data-collapsed')).toBe(true);
+    again.collapsed = false;
+    expect(window.sessionStorage.getItem('pinpoint:sidebar-collapsed')).toBeNull();
+  });
+});

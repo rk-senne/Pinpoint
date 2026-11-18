@@ -16,7 +16,7 @@
  * viewer itself never mutates state).
  */
 import type { MarkupDocument } from '@pinpoint/shared';
-import { renderMarkupSvg } from '@pinpoint/shared';
+import { renderMarkupSvg } from '@pinpoint/shared/dist/markupRender.js';
 import { adoptStyles } from '../styles/sharedStyleSheet';
 import { withBoundary } from '../lib/withBoundary';
 import { apiFetch } from '../lib/api';
@@ -53,7 +53,7 @@ const TEMPLATE = (() => {
   const t = document.createElement('template');
   t.innerHTML = `
     <style>${VIEWER_CSS}</style>
-    <div class="fl-screenshot-stage" part="stage" role="img" tabindex="0">
+    <div class="fl-screenshot-stage" part="stage" role="img" tabindex="0" hidden>
       <img class="fl-screenshot-img" part="image" alt="Annotation screenshot" />
       <div class="fl-screenshot-overlay" part="overlay"></div>
     </div>
@@ -95,11 +95,13 @@ export class FlScreenshotViewer extends HTMLElement {
   connectedCallback(): void {
     this.#stage.addEventListener('click', this.#onStageClick);
     this.#img.addEventListener('load', this.#onImageLoad);
+    this.#img.addEventListener('error', this.#onImageError);
   }
 
   disconnectedCallback(): void {
     this.#stage.removeEventListener('click', this.#onStageClick);
     this.#img.removeEventListener('load', this.#onImageLoad);
+    this.#img.removeEventListener('error', this.#onImageError);
   }
 
   /** URL of the screenshot bitmap. Setting reloads the image. */
@@ -168,6 +170,11 @@ export class FlScreenshotViewer extends HTMLElement {
     }
     this.#renderOverlay();
   }
+
+  /** Never show a broken-image icon: hide the stage if the URL fails. */
+  #onImageError = (): void => {
+    this.#stage.hidden = true;
+  };
 
   #onImageLoad = (): void => {
     this.#naturalWidth = this.#img.naturalWidth;

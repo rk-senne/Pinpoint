@@ -48,6 +48,13 @@ import {
   setStoredAuthToken,
   clearStoredAuthToken,
 } from './authTokenStore';
+import {
+  DEFAULT_API_ORIGIN as SERVER_DEFAULT_API_ORIGIN,
+  resolveServerOrigin as resolveServerOriginAsync,
+  resolveServerOriginSync,
+} from './serverOrigin';
+import { isContentScriptContext, relayFetch } from './apiRelay';
+import { sanitizePageUrl } from './pageUrl';
 
 /**
  * Re-export the auth-token helpers from `authTokenStore` for back-compat.
@@ -70,10 +77,10 @@ export const API_BASE = '/api/v1';
 
 /**
  * Default API origin used when no build-time override is configured.
- * Centralised here so `connectionMonitor` and `OverlayHost` import the
- * same constant rather than each redeclaring the literal.
+ * Re-exported from `serverOrigin.ts` (the single source of truth) so
+ * existing imports of `DEFAULT_API_ORIGIN` from `./api` keep working.
  */
-export const DEFAULT_API_ORIGIN = 'http://localhost:3001';
+export const DEFAULT_API_ORIGIN = SERVER_DEFAULT_API_ORIGIN;
 
 /**
  * Refresh the bearer this many seconds before its `exp` claim. Matches
@@ -84,17 +91,20 @@ export const REFRESH_THRESHOLD_SECONDS = 300;
 /**
  * Server origin used by extension fetches. Content scripts run on arbitrary
  * host pages, so relative URLs are unusable; we resolve the origin from a
- * build-time global when available and fall back to the local dev server.
+ * user setting (`chrome.storage.local`), a build-time global, or the local
+ * dev default. This synchronous accessor returns the cached/primed value;
+ * `resolveServerOriginAsync` consults storage first and primes the cache.
  *
- * Exported so `connectionMonitor` and `OverlayHost` can share the same
- * resolution logic instead of redeclaring the localhost fallback.
+ * Exported (sync) so `connectionMonitor` and `OverlayHost` can share the
+ * same resolution logic. The canonical implementation lives in
+ * `serverOrigin.ts`.
  */
 export function resolveServerOrigin(): string {
-  const override = (globalThis as { __PINPOINT_API_ORIGIN__?: string })
-    .__PINPOINT_API_ORIGIN__;
-  if (typeof override === 'string' && override.length > 0) return override;
-  return DEFAULT_API_ORIGIN;
+  return resolveServerOriginSync();
 }
+
+/** Re-export the async resolver so callers can prime storage before use. */
+export { resolveServerOriginAsync };
 
 /**
  * Surface the "please sign in" prompt after the server has rejected our
@@ -255,10 +265,36 @@ export function __resetInflightRefreshForTests(): void {
  * fall back to the original token and let the resulting request 401
  * trigger task 24.5's clear-and-prompt path.
  */
+/**
+ * Low-level transport for a single API call. In a content script the fetch
+ * is relayed to the service worker (which performs it under the extension's
+ * host permissions, bypassing the host page's CORS policy — see
+ * `lib/apiRelay.ts`); everywhere else (service worker, popup, options page)
+ * it is a direct `fetch` against the resolved origin.
+ *
+ * The caller passes the API-relative `path` plus a `RequestInit`. Any
+ * `Authorization` header already present in `init.headers` is honoured by
+ * the relay (the SW only *adds* one when absent), so the client-side
+ * refresh/token logic stays authoritative.
+ */
+async function lowLevelFetch(
+  path: string,
+  init: RequestInit & { raw?: boolean },
+): Promise<Response> {
+  if (isContentScriptContext()) {
+    return relayFetch(path, init);
+  }
+  const origin = await resolveServerOriginAsync();
+  const { raw: _raw, ...fetchInit } = init;
+  // Bearer-only client (popup / options / service worker): omit cookies so
+  // a login here never plants an `fl_session` cookie that would later
+  // subject extension mutations to the dashboard's CSRF double-submit check.
+  return fetch(`${origin}${API_BASE}${path}`, { credentials: 'omit', ...fetchInit });
+}
+
 async function performRefresh(currentToken: string): Promise<string | null> {
   try {
-    const url = `${resolveServerOrigin()}${API_BASE}/auth/refresh`;
-    const res = await fetch(url, {
+    const res = await lowLevelFetch('/auth/refresh', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -302,7 +338,7 @@ async function refreshTokenIfNeeded(token: string): Promise<string | null> {
  * unchanged. Returns `null` when the user is signed out so callers omit
  * the `Authorization` header entirely (matches the legacy behaviour).
  */
-async function resolveAuthTokenForRequest(): Promise<string | null> {
+export async function resolveAuthTokenForRequest(): Promise<string | null> {
   const stored = await getStoredAuthToken();
   if (stored === null) return null;
   if (!shouldRefreshToken(stored)) return stored;
@@ -346,20 +382,25 @@ export async function apiFetchRaw(
       : { 'Content-Type': 'application/json', Accept: 'application/json' }),
     ...((extraHeaders as Record<string, string>) || {}),
   };
-  const token = await resolveAuthTokenForRequest();
+  // F8: a content script never reads the bearer. Its requests go through the
+  // service-worker relay, which attaches (and refreshes) the token itself.
+  const inContentScript = isContentScriptContext();
+  const token = inContentScript ? null : await resolveAuthTokenForRequest();
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const url = `${resolveServerOrigin()}${API_BASE}${path}`;
-  const res = await fetch(url, { ...init, headers });
+  const res = await lowLevelFetch(path, { ...init, headers, raw });
 
   // Req 33.5: on any 401 from the API, drop the stored bearer and surface
   // the popup login. Skip this when the request *was* the refresh call —
   // refresh failure is handled by `performRefresh` on its own (it leaves
   // storage intact so the next 401 from a real endpoint surfaces here).
   if (res.status === 401 && path !== '/auth/refresh') {
-    try {
-      await clearStoredAuthToken();
-    } catch {
-      /* swallow — surfacing the prompt is more important than logging */
+    if (!inContentScript) {
+      // (In a content script the service worker already cleared it.)
+      try {
+        await clearStoredAuthToken();
+      } catch {
+        /* swallow — surfacing the prompt is more important than logging */
+      }
     }
     surfaceAuthRequiredPrompt();
   }
@@ -558,6 +599,12 @@ export interface QueueCreateAnnotationInput {
   capturedConsole?: Annotation['capturedConsole'];
   capturedNetwork?: Annotation['capturedNetwork'];
   screenshotObjectKey?: string;
+  /** Diagnostics capture (Mission C2) — bounded, scrubbed console snapshot. */
+  consoleLogs?: Annotation['consoleLogs'];
+  /** Diagnostics capture (Mission C2) — bounded, scrubbed uncaught errors. */
+  jsErrors?: Annotation['jsErrors'];
+  /** Session replay (Mission C3) — redaction-applied event list. */
+  sessionReplay?: Annotation['sessionReplay'];
 }
 
 /**
@@ -612,7 +659,7 @@ export async function queueCreateAnnotation(
     severity: input.severity,
     body: input.body,
     target: input.target,
-    pageUrl: input.pageUrl,
+    pageUrl: (input.pageUrl === undefined ? undefined : sanitizePageUrl(input.pageUrl)),
     pageId: input.pageId,
     environment: input.environment,
     guidelineId: input.guidelineId,
@@ -621,6 +668,10 @@ export async function queueCreateAnnotation(
     capturedConsole: input.capturedConsole,
     capturedNetwork: input.capturedNetwork,
     screenshotObjectKey: input.screenshotObjectKey,
+    // Diagnostics capture (Mission C2) + session replay (Mission C3).
+    consoleLogs: input.consoleLogs,
+    jsErrors: input.jsErrors,
+    sessionReplay: input.sessionReplay,
     // The server route lives under `/projects/:id/...` so the Syncer
     // needs the project id; carry it on the payload rather than as a
     // separate field so the entry shape stays uniform.
@@ -641,7 +692,7 @@ export async function queueCreateAnnotation(
       id: localUuid,
       projectId: input.projectId,
       pageId: input.pageId ?? '',
-      pageUrl: input.pageUrl,
+      pageUrl: (input.pageUrl === undefined ? undefined : sanitizePageUrl(input.pageUrl)),
       type: input.type,
       severity: input.severity,
       status: 'active',
@@ -658,6 +709,9 @@ export async function queueCreateAnnotation(
       screenshotObjectKey: input.screenshotObjectKey,
       capturedConsole: input.capturedConsole,
       capturedNetwork: input.capturedNetwork,
+      consoleLogs: input.consoleLogs,
+      jsErrors: input.jsErrors,
+      sessionReplay: input.sessionReplay,
       clientRequestId: localUuid,
     };
     optimistic(optimisticRow);

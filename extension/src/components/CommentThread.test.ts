@@ -138,7 +138,13 @@ describe('<fl-comment-thread>', () => {
       received = e as CustomEvent<{ body: string; mentions: string[] }>;
     });
 
-    ta.value = 'looks good @alice and @bob_42';
+    // Mentions are resolved to USER IDS (the server's contract): handles
+    // matching a member resolve; unknown handles are dropped.
+    el.members = [
+      { userId: 'u-alice', name: 'Alice Smith', email: 'alice@example.test' },
+      { userId: 'u-bob', name: 'Bob', email: 'bob_42@example.test' },
+    ];
+    ta.value = 'looks good @alice and @bob_42 and @nobody';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     btn.click();
 
@@ -146,8 +152,8 @@ describe('<fl-comment-thread>', () => {
     expect(received!.bubbles).toBe(true);
     expect(received!.composed).toBe(true);
     expect(received!.detail).toEqual({
-      body: 'looks good @alice and @bob_42',
-      mentions: ['alice', 'bob_42'],
+      body: 'looks good @alice and @bob_42 and @nobody',
+      mentions: ['u-alice', 'u-bob'],
     });
 
     // Textarea is cleared and the button is back to disabled after submit.
@@ -202,5 +208,47 @@ describe('<fl-comment-thread>', () => {
     el.comments = [c];
     expect(el.comments.length).toBe(1);
     expect(el.comments[0].id).toBe('cX');
+  });
+
+  it('offers project members via @-autocomplete and sends the picked member id', () => {
+    const el = mount();
+    el.members = [
+      { userId: 'u-1', name: 'Grace Hopper', email: 'grace@example.test' },
+      { userId: 'u-2', name: 'Alan Turing', email: 'alan@example.test' },
+    ];
+    const root = el.shadowRoot!;
+    const ta = root.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
+    const mention = root.querySelector('fl-mention-autocomplete') as HTMLElement;
+    expect(mention.hidden).toBe(true);
+
+    ta.value = 'cc @gr';
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(mention.hidden).toBe(false);
+    expect(ta.getAttribute('aria-expanded')).toBe('true');
+    const rowsEls = mention.shadowRoot!.querySelectorAll('li.fl-mention-item');
+    expect(rowsEls).toHaveLength(1);
+
+    (rowsEls[0] as HTMLLIElement).click();
+    expect(ta.value).toBe('cc @Grace Hopper ');
+    expect(mention.hidden).toBe(true);
+
+    let detail: { body: string; mentions: string[] } | undefined;
+    el.addEventListener('submit', (e: Event) => {
+      detail = (e as CustomEvent<{ body: string; mentions: string[] }>).detail;
+    });
+    (root.querySelector('button.fl-btn-primary') as HTMLButtonElement).click();
+    expect(detail).toEqual({ body: 'cc @Grace Hopper', mentions: ['u-1'] });
+  });
+
+  it('shows the author name from members instead of the raw author id', () => {
+    const el = mount();
+    el.members = [{ userId: '11111111-2222-3333-4444-555555555555', name: 'Ada', email: 'ada@x.test' }];
+    el.comments = [
+      makeComment({ id: 'c1', authorId: '11111111-2222-3333-4444-555555555555' }),
+      makeComment({ id: 'c2', authorId: '99999999-2222-3333-4444-555555555555' }),
+    ];
+    const authors = Array.from(el.shadowRoot!.querySelectorAll('.fl-comment-author')).map((n) => n.textContent);
+    expect(authors).toEqual(['Ada', 'Former member']);
   });
 });

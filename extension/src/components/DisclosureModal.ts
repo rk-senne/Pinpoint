@@ -160,10 +160,21 @@ dialog.fl-disclosure-modal {
   line-height: 1.4;
   /* Defeat any host-page rule that would push the dialog off-center. */
   margin: auto;
+  /* The page-level shadow host is pointer-events:none (so the host page
+     stays clickable) and top-layer dialogs still INHERIT from their DOM
+     parent — without this the Acknowledge / Open Settings buttons could
+     not be clicked and first-time users were stuck behind the modal. */
+  pointer-events: auto;
 }
 dialog.fl-disclosure-modal[open] { display: block; }
+/* The modal backdrop lives in the top layer, so it already sits above the
+   floating toolbar — but the toolbar is near-black, so a light scrim barely
+   changes it and it looked "un-dimmed". A slate scrim + a touch of blur
+   makes the whole overlay (toolbar included) unmistakably inert. */
 dialog.fl-disclosure-modal::backdrop {
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 .fl-disclosure-title {
   margin: 0 0 6px;

@@ -170,7 +170,7 @@ describe('withContentScriptBoundary', () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     // The listener also re-logs, so the tag should appear in console.error.
     const tagged = consoleErrorSpy.mock.calls.some(
-      (args) => args[0] === LOG_TAG,
+      (args: unknown[]) => args[0] === LOG_TAG,
     );
     expect(tagged).toBe(true);
   });

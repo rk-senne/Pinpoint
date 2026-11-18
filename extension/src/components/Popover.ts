@@ -109,12 +109,14 @@ import type {
   EnvironmentMetadata,
   Severity,
 } from '@pinpoint/shared';
-import { parseUserAgent, detectBraveAndArcOverrides } from '@pinpoint/shared';
+import { parseUserAgent, detectBraveAndArcOverrides } from '@pinpoint/shared/dist/userAgent.js';
 import './MentionAutocomplete';
 import './CommentThread';
 import './ScreenshotViewer';
 import './DisclosureModal';
 import { adoptStyles } from '../styles/sharedStyleSheet';
+import { upgradeShadowTree } from '../lib/upgradeShadowTree';
+import { awaitCanonicalAnnotationId } from '../lib/canonicalAnnotationId';
 import { withBoundary } from '../lib/withBoundary';
 import type { FlMentionAutocomplete, MentionSelectEventDetail } from './MentionAutocomplete';
 import type { FlCommentThread, CommentThreadSubmitDetail } from './CommentThread';
@@ -123,6 +125,15 @@ import type { FlDisclosureModal } from './DisclosureModal';
 import type { MentionCandidate } from '../lib/mentionFilter';
 import { formatTriageHint } from '../lib/triageSuggestions';
 import type { TriageSuggestions } from '../lib/api';
+import { TEMPLATE } from './popover/template';
+import {
+  deepActiveElement,
+  formatFamilyAndVersion,
+  initialsFromId,
+  isFocusable,
+  renderConsoleEntry,
+  renderNetworkEntry,
+} from './popover/helpers';
 
 /** Detail for the `triage-request` event emitted as the reporter types. */
 export interface PopoverTriageRequestDetail {
@@ -148,6 +159,9 @@ import type { FlMarkupEditor } from './MarkupEditor';
  * fires so a peer popover (or a fresh page load) sees the same choice.
  */
 const STORAGE_KEY_CAPTURE_PREF = 'fl_capture_screenshot_pref';
+
+/** How long a captured screenshot waits for its annotation to sync (offline-friendly). */
+const SCREENSHOT_SYNC_WAIT_MS = 10 * 60 * 1000;
 
 /**
  * Debounce window (ms) for the per-URL draft persistence pipeline
@@ -202,6 +216,18 @@ export interface PopoverTarget {
    * `target`.
    */
   domTarget?: DOMTarget;
+  /**
+   * Height (CSS px) of the anchor element. When present the popover opens
+   * just BELOW the element instead of at the legacy fixed `pageY + 30`,
+   * which covered any element taller than 30px (buttons, cards, images).
+   */
+  anchorHeight?: number;
+}
+
+/** Vertical offset from the anchor's top to the popover's top edge. */
+export function anchorOffset(target: Pick<PopoverTarget, 'anchorHeight'>): number {
+  const h = target.anchorHeight;
+  return typeof h === 'number' && Number.isFinite(h) && h > 0 ? h + 8 : 30;
 }
 
 /** Detail payload of the `submit` `CustomEvent`. */
@@ -240,522 +266,9 @@ export interface PopoverScreenshotErrorDetail {
   message: string;
 }
 
-const TAB_OPTIONS: ReadonlyArray<{ value: AnnotationType; label: string }> = [
-  { value: 'note', label: 'Note' },
-  { value: 'suggestion', label: 'Suggestion' },
-  { value: 'guideline', label: 'Guideline' },
-];
 
-const SEVERITY_OPTIONS: ReadonlyArray<{
-  value: Severity;
-  label: string;
-  className: string;
-}> = [
-  { value: 'critical', label: 'Critical', className: 'fl-severity-critical' },
-  { value: 'major', label: 'Major', className: 'fl-severity-major' },
-  { value: 'minor', label: 'Minor', className: 'fl-severity-minor' },
-  { value: 'informational', label: 'Info', className: 'fl-severity-informational' },
-];
 
-/**
- * Element-scoped CSS layered on top of the shared overlay stylesheet. We
- * only declare rules that touch the `<dialog>` defaults (border, padding,
- * UA-modal centering) and the autocomplete positioning; the rest of the
- * popover (`.fl-popover`, `.fl-popover-tabs`, `.fl-severity-*`, `.fl-btn`,
- * `.fl-textarea`) is already styled by the shared stylesheet so the palette
- * has a single source of truth (Req 26.1, design key decision #11).
- */
-const POPOVER_CSS = `
-:host { display: contents; }
-dialog.fl-popover {
-  border: none;
-  background: #fff;
-  padding: 16px;
-  /* Defeat the user-agent's modal-centering for top-layer dialogs.
-     showModal() (task 33.1) places the dialog in the top layer where the
-     UA stylesheet applies margin: auto to center it; we want our inline
-     style.left/top (set by #applyPosition) to win so the popover
-     anchors at (pageX, pageY+30) like the legacy React placement. The
-     #openDialog method also sets style.margin = '0' programmatically as
-     a belt-and-braces guard against host pages that override these
-     selectors. */
-  margin: 0;
-  /* The .fl-popover rule in the shared stylesheet already sets
-     position:absolute, box-shadow, border-radius, min-width,
-     pointer-events, and z-index. The rules above just neutralize the
-     user-agent dialog defaults so the shared rule wins. */
-}
-dialog.fl-popover[open] { display: block; }
-/* Transparent backdrop so the page underneath stays visible while the
-   modal dialog has focus-trap + Escape semantics (Req 42.1, 42.2, 42.3). */
-dialog.fl-popover::backdrop { background: transparent; }
-.fl-popover-textarea-wrap { position: relative; }
-.fl-popover-textarea-wrap fl-mention-autocomplete {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 1;
-}
-.fl-annotation-summary { margin-bottom: 8px; }
-.fl-annotation-summary .fl-annotation-type { text-transform: capitalize; }
-.fl-annotation-body { margin-bottom: 12px; white-space: pre-wrap; }
-.fl-environment-details { margin-bottom: 8px; font-size: 12px; }
-.fl-environment-details pre { font-size: 11px; white-space: pre-wrap; }
-/* Captured Console / Network sections (Req 36.3, task 27.4).
-   Both render below the environment <details> in view mode whenever the
-   annotation carries a non-empty buffer. The list is monospace so log
-   lines line up; max-height + scroll keeps a noisy buffer from making
-   the popover taller than the viewport. */
-.fl-capture-details { margin-bottom: 8px; font-size: 12px; }
-.fl-capture-details[hidden] { display: none; }
-.fl-capture-list {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  max-height: 180px;
-  overflow-y: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.4;
-}
-.fl-capture-list li {
-  padding: 2px 4px;
-  border-bottom: 1px solid #f0f0f0;
-  word-break: break-word;
-}
-.fl-capture-list li:last-child { border-bottom: none; }
-.fl-capture-console-level {
-  display: inline-block;
-  min-width: 36px;
-  padding: 0 4px;
-  margin-right: 6px;
-  border-radius: 3px;
-  text-transform: uppercase;
-  font-weight: 600;
-  font-size: 10px;
-  color: #fff;
-  background: #555;
-}
-.fl-capture-console-level[data-level="warn"] { background: #d97706; }
-.fl-capture-console-level[data-level="error"] { background: #c53030; }
-.fl-capture-console-time { color: #888; margin-right: 6px; }
-.fl-capture-console-stack { margin: 4px 0 0; font-size: 10px; color: #666; }
-.fl-capture-console-stack pre {
-  white-space: pre-wrap;
-  font-size: 10px;
-  margin: 0;
-  padding: 4px 6px;
-  background: #f7f7f7;
-  border-radius: 3px;
-}
-.fl-capture-network-method {
-  display: inline-block;
-  min-width: 36px;
-  margin-right: 6px;
-  font-weight: 600;
-  color: #2c5282;
-}
-.fl-capture-network-status { color: #555; }
-.fl-capture-network-status[data-bad="true"] { color: #c53030; font-weight: 600; }
-/* Create-mode environment summary (task 19.2, Req 17.1, 17.5).
-   A compact one-line badge rendered below the textarea/mentions block
-   and above the button row so the user sees the browser/OS/device that
-   will be attached on submit. The label text is filled in by
-   #renderEnvironmentSummary() from the same parseUserAgent +
-   Brave/Arc override pipeline used at submit time. */
-.fl-environment-summary {
-  display: block;
-  margin: 6px 0 4px;
-  padding: 4px 8px;
-  background: #f5f5f5;
-  color: #555;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.fl-environment-summary[hidden] { display: none; }
-.fl-environment-summary-label {
-  font-weight: 600;
-  color: #333;
-  margin-right: 6px;
-}
-.fl-triage-hint {
-  display: block;
-  margin: 4px 0;
-  padding: 4px 8px;
-  background: #fffbea;
-  color: #744210;
-  border: 1px solid #f6e05e;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.fl-triage-hint[hidden] { display: none; }
-/* Co-viewer presence row (Req 6.6, 6.7). Rendered in the popover view-mode
-   header beside the type/severity summary. Hidden when no other members
-   are viewing the same annotation. */
-.fl-popover-viewers {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #555;
-}
-.fl-popover-viewers[hidden] { display: none; }
-.fl-popover-viewers-list {
-  display: inline-flex;
-  align-items: center;
-}
-.fl-popover-viewer-bubble {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #1a1a1a;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-right: -6px;
-  border: 2px solid #fff;
-}
-.fl-popover-viewer-bubble:last-child { margin-right: 0; }
-.fl-popover-viewers-label { margin-left: 6px; }
-/* Target-stale warning (Req 44.6, task 36.7). Rendered above the
-   annotation summary in view mode whenever the optimistic pin's
-   stored selector failed to re-resolve on Outbox replay — mirrors the
-   warning ring on fl-annotation-pin[data-fallback="true"] so the
-   pin and the popover surface the same signal. The element is kept
-   in the template (rather than created on demand) so the focus
-   trap inside <dialog> does not have to recompute its tabbable
-   set on every render. */
-.fl-target-stale-warning {
-  display: block;
-  margin-bottom: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #fff8e1;
-  border: 1px solid #f5c542;
-  color: #5c4400;
-  font-size: 12px;
-  font-weight: 600;
-}
-.fl-target-stale-warning[hidden] { display: none; }
-/* "Attach screenshot" toggle in the create-section button row (Req 34.2 /
-   Task 25.4). Sits between the Cancel and Submit buttons so the
-   per-annotation choice is one glance away from the action it modifies. */
-.fl-popover-capture-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-right: auto;
-  font-size: 12px;
-  color: #444;
-  cursor: pointer;
-  user-select: none;
-}
-.fl-popover-capture-toggle input[type="checkbox"] {
-  margin: 0;
-  cursor: pointer;
-}
-`;
 
-const TEMPLATE = (() => {
-  const t = document.createElement('template');
-  // The dialog is built once and cloned per instance. We render BOTH
-  // modes' DOM up-front and toggle visibility via the `hidden` attribute
-  // on `.fl-popover-create` / `.fl-popover-view` — avoids re-stamping
-  // templates on every state change and keeps the focus-trap target
-  // (the `<dialog>`) stable.
-  t.innerHTML = `
-    <style>${POPOVER_CSS}</style>
-    <dialog class="fl-popover" part="dialog" data-pinpoint="popover">
-      <div class="fl-popover-tabs" role="tablist">
-        ${TAB_OPTIONS.map(
-          (tab) => `<button
-              type="button"
-              role="tab"
-              data-tab="${tab.value}"
-              aria-selected="false"
-            >${tab.label}</button>`,
-        ).join('')}
-      </div>
-
-      <section class="fl-popover-create" part="create" hidden>
-        <div class="fl-severity-selector" role="radiogroup" aria-label="Severity">
-          ${SEVERITY_OPTIONS.map(
-            (s) => `<button
-                type="button"
-                class="fl-severity-btn ${s.className}"
-                role="radio"
-                data-severity="${s.value}"
-                aria-checked="false"
-                title="${s.label}"
-                aria-label="Severity: ${s.label}"
-              ></button>`,
-          ).join('')}
-        </div>
-        <div class="fl-popover-textarea-wrap">
-          <textarea
-            class="fl-textarea"
-            part="textarea"
-            placeholder="Add your feedback…"
-            aria-label="Annotation body"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded="false"
-            aria-haspopup="listbox"
-          ></textarea>
-          <fl-mention-autocomplete part="mention-autocomplete" hidden></fl-mention-autocomplete>
-        </div>
-        <div
-          class="fl-environment-summary"
-          part="environment-summary"
-          role="note"
-          aria-label="Environment that will be attached on submit"
-        >
-          <span class="fl-environment-summary-label">Will attach:</span>
-          <span class="fl-environment-summary-text"></span>
-        </div>
-        <div
-          class="fl-triage-hint"
-          part="triage-hint"
-          role="status"
-          aria-live="polite"
-          hidden
-        ></div>
-        <div class="fl-btn-row">
-          <button
-            type="button"
-            class="fl-btn fl-btn-secondary"
-            data-action="cancel"
-          >Cancel</button>
-          <label class="fl-popover-capture-toggle" part="capture-toggle">
-            <input
-              type="checkbox"
-              class="fl-popover-capture-checkbox"
-              data-action="capture-toggle"
-              checked
-            />
-            <span>Attach screenshot</span>
-          </label>
-          <button
-            type="button"
-            class="fl-btn fl-btn-primary"
-            data-action="submit"
-            disabled
-          >Submit</button>
-        </div>
-      </section>
-
-      <section class="fl-popover-view" part="view" hidden>
-        <div class="fl-popover-viewers" part="viewers" hidden>
-          <span class="fl-popover-viewers-list" aria-label="Co-viewers"></span>
-          <span class="fl-popover-viewers-label"></span>
-        </div>
-        <div class="fl-target-stale-warning" part="target-stale-warning" role="status" hidden>
-          Target may have moved
-        </div>
-        <div class="fl-annotation-summary">
-          <strong class="fl-annotation-type"></strong>
-          <span class="fl-annotation-severity"></span>
-        </div>
-        <div class="fl-annotation-body"></div>
-        <fl-screenshot-viewer
-          class="fl-popover-screenshot"
-          part="screenshot"
-          hidden
-        ></fl-screenshot-viewer>
-        <details class="fl-environment-details" hidden>
-          <summary>Browser metadata</summary>
-          <pre class="fl-environment-pre"></pre>
-        </details>
-        <details class="fl-capture-details fl-capture-console-details" data-role="console-panel" hidden>
-          <summary class="fl-capture-summary">Console (<span class="fl-capture-console-count">0</span>)</summary>
-          <ul class="fl-capture-list fl-capture-console-list" data-role="console-list"></ul>
-        </details>
-        <details class="fl-capture-details fl-capture-network-details" data-role="network-panel" hidden>
-          <summary class="fl-capture-summary">Network (<span class="fl-capture-network-count">0</span>)</summary>
-          <ul class="fl-capture-list fl-capture-network-list" data-role="network-list"></ul>
-        </details>
-        <fl-comment-thread part="comment-thread"></fl-comment-thread>
-        <div class="fl-btn-row">
-          <button
-            type="button"
-            class="fl-btn fl-btn-primary fl-popover-resolve"
-            data-action="resolve"
-          >Resolve</button>
-          <button
-            type="button"
-            class="fl-btn fl-btn-primary fl-popover-reopen"
-            data-action="reopen"
-            hidden
-          >Reopen</button>
-          <button
-            type="button"
-            class="fl-btn fl-btn-secondary"
-            data-action="close"
-          >Close</button>
-        </div>
-      </section>
-    </dialog>
-    <fl-disclosure-modal part="disclosure"></fl-disclosure-modal>
-  `;
-  return t;
-})();
-
-/**
- * Derive an initial-bubble label (1–2 chars) from a user id when the
- * popover does not have a member-name lookup. Falls back to "?" for empty
- * input. The host wires the proper initials via the same `viewers`
- * setter once it has the member directory loaded; this helper exists so
- * the popover stays useful with raw user ids during early load.
- */
-function initialsFromId(id: string): string {
-  if (!id) return '?';
-  const trimmed = id.trim();
-  if (!trimmed) return '?';
-  // Favor the leading two alphanumerics so a UUID like
-  // `a1b2c3d4-5678-…` renders as `A1`.
-  const match = trimmed.match(/[a-zA-Z0-9]{1,2}/);
-  return (match ? match[0] : trimmed.slice(0, 2)).toUpperCase();
-}
-
-/**
- * Format a `(family, version)` pair from `EnvironmentMetadata` for the
- * create-mode "Will attach" badge (task 19.2). Drops the family entirely
- * when it is the literal string `unknown` so the badge stays useful in
- * environments where Bowser couldn't classify the UA. Appends the
- * version with a leading space when present (e.g. `Chrome 124.0.6367.91`,
- * `macOS`).
- */
-function formatFamilyAndVersion(family: string, version: string | null): string {
-  if (!family || family === 'unknown') return '';
-  if (version && version.length > 0) return `${family} ${version}`;
-  return family;
-}
-
-/**
- * Build a `<li>` row for a captured console entry (Req 36.3, task 27.4).
- * Format: `[level] timestamp — message` with the stack folded into a
- * nested `<details>` when present so a noisy stack does not dominate the
- * popover. The level pill is colored via `data-level` so error / warn
- * pop visually without bloating the row.
- */
-function renderConsoleEntry(entry: CapturedConsoleEntry): HTMLLIElement {
-  const li = document.createElement('li');
-  const level = document.createElement('span');
-  level.className = 'fl-capture-console-level';
-  level.dataset.level = entry.level;
-  level.textContent = entry.level;
-  const time = document.createElement('span');
-  time.className = 'fl-capture-console-time';
-  time.textContent = entry.timestamp;
-  const message = document.createElement('span');
-  message.className = 'fl-capture-console-message';
-  message.textContent = ` — ${entry.message}`;
-  li.appendChild(level);
-  li.appendChild(time);
-  li.appendChild(message);
-  if (entry.stack && entry.stack.length > 0) {
-    const stackDetails = document.createElement('details');
-    stackDetails.className = 'fl-capture-console-stack';
-    const stackSummary = document.createElement('summary');
-    stackSummary.textContent = 'stack';
-    const pre = document.createElement('pre');
-    pre.textContent = entry.stack;
-    stackDetails.appendChild(stackSummary);
-    stackDetails.appendChild(pre);
-    li.appendChild(stackDetails);
-  }
-  return li;
-}
-
-/**
- * Build a `<li>` row for a captured network entry (Req 36.3, task 27.4).
- * Format: `method? name (status, duration ms)` — the request method is
- * omitted when not present on the entry because `PerformanceObserver`
- * does not surface it on every Resource Timing record. Duration is
- * rounded to the nearest millisecond so the numbers stay readable.
- */
-function renderNetworkEntry(entry: CapturedNetworkEntry): HTMLLIElement {
-  const li = document.createElement('li');
-  const method = (entry as { method?: string }).method;
-  if (method) {
-    const methodEl = document.createElement('span');
-    methodEl.className = 'fl-capture-network-method';
-    methodEl.textContent = method;
-    li.appendChild(methodEl);
-  }
-  const name = document.createElement('span');
-  name.className = 'fl-capture-network-name';
-  name.textContent = entry.name;
-  li.appendChild(name);
-  const meta = document.createElement('span');
-  meta.className = 'fl-capture-network-status';
-  const statusText =
-    typeof entry.responseStatus === 'number' ? String(entry.responseStatus) : '—';
-  if (typeof entry.responseStatus === 'number' && entry.responseStatus >= 400) {
-    meta.dataset.bad = 'true';
-  }
-  const durationMs = Math.round(entry.duration);
-  meta.textContent = ` (${statusText}, ${durationMs} ms)`;
-  li.appendChild(meta);
-  return li;
-}
-
-/**
- * Walk down through every open shadow root to find the truly-focused
- * leaf element. `document.activeElement` only surfaces the shallowest
- * host when focus is inside a shadow tree, so a popover anchored to a
- * Custom Element on the page would otherwise capture the host element
- * instead of the inner `<input>` or `<button>` the user was actually on.
- *
- * Returns `null` when no element has focus (e.g. focus is on
- * `document.body`) — callers fall back to a sensible default in that
- * case (Req 42.3 / task 33.3).
- */
-function deepActiveElement(): HTMLElement | null {
-  if (typeof document === 'undefined') return null;
-  let current: Element | null = document.activeElement;
-  // The browser parks focus on <body> when nothing else has it; treat
-  // that the same as "no previous focus" so we restore to the toolbar /
-  // body fallback rather than re-focusing <body> only to lose it again.
-  if (!current || current === document.body || current === document.documentElement) {
-    return null;
-  }
-  while (current && (current as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) {
-    const inner: Element | null = (current as Element & { shadowRoot: ShadowRoot }).shadowRoot.activeElement;
-    if (!inner) break;
-    current = inner;
-  }
-  return current instanceof HTMLElement ? current : null;
-}
-
-/**
- * Decide whether `el` is a viable focus target on popover close
- * (Req 42.3 / task 33.3). The element must (a) still be connected to a
- * document, (b) expose a callable `focus()` method, and (c) not be a
- * disabled form control. Hidden / `display:none` ancestors are not
- * checked here because the browser silently no-ops `focus()` on them
- * and we want to fall through to the body/toolbar fallback rather than
- * silently land focus where no caret is visible.
- */
-function isFocusable(el: HTMLElement | null): el is HTMLElement {
-  if (!el) return false;
-  if (typeof el.focus !== 'function') return false;
-  if (!el.isConnected) return false;
-  // Disabled form controls reject focus; querying `disabled` works for
-  // <button>, <input>, <select>, <textarea>, <fieldset> in lib.dom.
-  const maybeDisabled = el as HTMLElement & { disabled?: boolean };
-  if (maybeDisabled.disabled === true) return false;
-  return true;
-}
 
 export class FlPopover extends HTMLElement {
   static readonly tagName = 'pp-popover';
@@ -798,6 +311,7 @@ export class FlPopover extends HTMLElement {
    * tests can drive it directly).
    */
   #captureScreenshot = true;
+  #pendingSync = false;
   /**
    * Optional source of capture-buffer snapshots attached to bug-report
    * submissions (Req 36.2 / Task 27.3). When present, `#dispatchSubmit`
@@ -1056,6 +570,9 @@ export class FlPopover extends HTMLElement {
   }
 
   connectedCallback(): void {
+    // Upgrade child Custom Elements BEFORE assigning their properties
+    // (isolated-world polyfill upgrades late — see upgradeShadowTree.ts).
+    upgradeShadowTree(this.shadowRoot);
     if (!this.hasAttribute('data-pinpoint')) {
       this.setAttribute('data-pinpoint', 'popover-host');
     }
@@ -1220,12 +737,18 @@ export class FlPopover extends HTMLElement {
   }
 
   set annotation(next: Annotation | null | undefined) {
+    const wasViewing = this.#annotation !== null;
     this.#annotation = next ?? null;
     if (this.#annotation) {
       this.#activeTab = this.#annotation.type;
       this.#severity = this.#annotation.severity;
       this.#renderTabs();
       this.#renderSeverity();
+    } else if (wasViewing) {
+      // Leaving view mode: the next create form must start fresh. Before,
+      // the tabs stayed DISABLED and the viewed annotation's type/severity
+      // leaked into the new annotation.
+      this.#resetCreateForm();
     }
     this.#renderMode();
     this.#renderCommentThread();
@@ -1251,6 +774,15 @@ export class FlPopover extends HTMLElement {
   set members(next: readonly MentionCandidate[] | null | undefined) {
     this.#members = next ? [...next] : [];
     this.#mentionAutocomplete.members = this.#members;
+    this.#commentThread.members = this.#members;
+    // `<fl-mention-autocomplete>` un-hides itself whenever it has
+    // candidates; only keep it visible while an `@mention` is actually
+    // being typed. Without this the roster loading in (seedProjectData)
+    // painted a stray member dropdown over the create form.
+    if (this.#mentionStart < 0) {
+      this.#mentionAutocomplete.hidden = true;
+      this.#syncMentionAria();
+    }
   }
 
   /** Pin number assigned to the new annotation when created. */
@@ -1312,7 +844,24 @@ export class FlPopover extends HTMLElement {
    */
   get isUnsynced(): boolean {
     const a = this.#annotation;
-    return a !== null && a.pinNumber === 0;
+    return a !== null && (a.pinNumber === 0 || this.#pendingSync);
+  }
+
+  /**
+   * Set by `<fl-overlay-host>` when the displayed annotation is an
+   * optimistic row still waiting in the outbox. Extension-created rows
+   * carry a provisional pin number (not the `0` sentinel), so the host's
+   * explicit pending set is the reliable signal.
+   */
+  get pendingSync(): boolean {
+    return this.#pendingSync;
+  }
+
+  set pendingSync(next: boolean | null | undefined) {
+    const value = next === true;
+    if (value === this.#pendingSync) return;
+    this.#pendingSync = value;
+    this.#renderResolveReopen();
   }
 
   /**
@@ -1510,7 +1059,87 @@ export class FlPopover extends HTMLElement {
     // vertical offset matches the legacy React `popoverStyle = { left,
     // top: pageY + 30 }`. Width / max-height come from the shared stylesheet.
     this.#dialog.style.left = `${target.pageX}px`;
-    this.#dialog.style.top = `${target.pageY + 30}px`;
+    this.#dialog.style.top = `${target.pageY + anchorOffset(target)}px`;
+  }
+
+  /**
+   * Keep the (absolutely positioned) dialog fully inside the visible
+   * viewport. Anchors near the right/bottom edge of the page used to push
+   * the popover off-screen (clipped Submit button, unreachable form). The
+   * anchor stays page-relative; only the offset is nudged.
+   */
+  #clampIntoViewport(): void {
+    if (typeof window === 'undefined') return;
+    const target = this.#target;
+    if (!target) return;
+    const rect = this.#dialog.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    const margin = 8;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = window.innerHeight;
+    const sx = window.scrollX;
+    const sy = window.scrollY;
+    const keepOuts = this.#keepOutRects();
+    // The sidebar column (right edge) shrinks the usable width; a bottom
+    // sheet / the toolbar strip shrink the usable height via keep-outs.
+    let rightLimit = vw;
+    for (const k of keepOuts) {
+      if (k.width < vw * 0.9 && k.left > vw / 2 && k.height > vh * 0.5) rightLimit = Math.min(rightLimit, k.left);
+    }
+    const maxLeft = sx + rightLimit - rect.width - margin;
+    const left = Math.max(sx + margin, Math.min(target.pageX, maxLeft));
+
+    const below = target.pageY + anchorOffset(target);
+    const above = target.pageY - rect.height - 8;
+    const clear = (top: number): boolean => {
+      if (top < sy + margin || top + rect.height > sy + vh - margin) return false;
+      const r = { l: left - sx, t: top - sy, r: left - sx + rect.width, b: top - sy + rect.height };
+      return keepOuts.every((k) => r.r <= k.left || r.l >= k.right || r.b <= k.top || r.t >= k.bottom);
+    };
+    let top: number;
+    if (clear(below)) top = below;
+    else if (clear(above)) top = above;
+    else {
+      // Neither side is free: pin inside the viewport, above the lowest
+      // keep-out strip that intersects horizontally (toolbar / bottom sheet).
+      let bottomLimit = vh - margin;
+      for (const k of keepOuts) {
+        const overlapsX = !(left - sx + rect.width <= k.left || left - sx >= k.right);
+        if (overlapsX && k.top > vh / 2) bottomLimit = Math.min(bottomLimit, k.top - margin);
+      }
+      top = Math.max(sy + margin, sy + bottomLimit - rect.height);
+    }
+    this.#dialog.style.left = `${left}px`;
+    this.#dialog.style.top = `${top}px`;
+  }
+
+  /** Viewport rects of the toolbar (+ toast strip) and the sidebar. */
+  #keepOutRects(): DOMRect[] {
+    const root = this.getRootNode() as Document | ShadowRoot;
+    if (typeof root.querySelector !== 'function') return [];
+    const rects: DOMRect[] = [];
+    const toolbar = root.querySelector('fl-floating-toolbar') as
+      | (HTMLElement & { keepOutRect?: () => DOMRect | null })
+      | null;
+    const sidebar = root.querySelector('fl-sidebar-panel') as
+      | (HTMLElement & { keepOutRect?: () => DOMRect | null })
+      | null;
+    for (const el of [toolbar, sidebar]) {
+      const r = typeof el?.keepOutRect === 'function' ? el.keepOutRect() : null;
+      if (r) rects.push(r);
+    }
+    return rects;
+  }
+
+  /**
+   * Move keyboard focus to the open panel (used by next/prev-pin so the
+   * newly shown annotation is announced even when the dialog was already
+   * open and `showModal()`'s own focus step did not run).
+   */
+  focusPanel(): void {
+    if (!this.#dialog.open) return;
+    if (!this.#dialog.hasAttribute('tabindex')) this.#dialog.setAttribute('tabindex', '-1');
+    this.#dialog.focus({ preventScroll: true });
   }
 
   #openDialog(): void {
@@ -1534,6 +1163,7 @@ export class FlPopover extends HTMLElement {
       try {
         this.#dialog.style.margin = '0';
         this.#dialog.showModal();
+        this.#clampIntoViewport();
         return;
       } catch {
         // jsdom and some older engines throw or no-op on `showModal()` —
@@ -1648,6 +1278,10 @@ export class FlPopover extends HTMLElement {
 
   #renderTabs(): void {
     const isViewing = this.#annotation !== null;
+    // View mode states the type in the summary line; greyed-out tabs there
+    // read as broken controls, so the tablist is only shown when creating.
+    const tablist = this.#tabButtons[0]?.parentElement;
+    if (tablist) tablist.hidden = isViewing;
     for (const btn of this.#tabButtons) {
       const value = btn.dataset.tab as AnnotationType;
       const active = value === this.#activeTab;
@@ -2558,6 +2192,20 @@ export class FlPopover extends HTMLElement {
     // them via its `redactionRects` getter using the same `BoundingBox`
     // shape, so we just concatenate the two lists before serialising.
     // No editor → empty extra list → behaviour identical to 37.1.
+    // The annotation was created optimistically under a client UUID; the
+    // server row has its own id, assigned when the Syncer replays the
+    // queued create (immediately online, after reconnect offline). Upload
+    // against the canonical id, not the local one (which always 404'd).
+    const canonicalId = await awaitCanonicalAnnotationId(annotationId, SCREENSHOT_SYNC_WAIT_MS);
+    if (!canonicalId) {
+      this.#emitScreenshotError(annotationId, {
+        code: 'upload-failed',
+        message: 'Screenshot not uploaded: the annotation has not synced yet.',
+      });
+      return;
+    }
+    annotationId = canonicalId;
+
     const form = new FormData();
     form.append('image', blob, `${annotationId}.png`);
     const autoRects = computeRedactionRects();
@@ -2787,8 +2435,11 @@ export class FlPopover extends HTMLElement {
     this.#severity = 'informational';
     this.#activeTab = 'note';
     this.#mentionStart = -1;
-    this.#mentionAutocomplete.hidden = true;
+    // Order matters: setting `query` re-renders the autocomplete, which
+    // un-hides itself whenever it has candidates.
     this.#mentionAutocomplete.query = '';
+    this.#mentionAutocomplete.hidden = true;
+    this.#syncMentionAria();
     this.#renderTabs();
     this.#renderSeverity();
     this.#syncSubmitEnabled();

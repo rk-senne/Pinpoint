@@ -77,7 +77,7 @@ export interface SyncRemapAdapter {
    * Server accepted a queued create-annotation. Replace the row whose
    * `id === localUuid` with `{ id: serverId, pinNumber, ...serverAnnotation }`.
    * Implementations should be defensive: if the row has already been
-   * reconciled by a `annotation:created` socket broadcast, this is a
+   * reconciled by a `annotation.created` socket broadcast, this is a
    * no-op rather than a duplicate insert.
    */
   remapAnnotation?: (
@@ -172,6 +172,16 @@ let registeredTarget: Window | null = null;
  * the second loser would observe an already-removed entry.
  */
 let inflight: Promise<void> | null = null;
+
+/**
+ * Fast retry after a halted drain (transient failure while online). The
+ * 30 s interval alone meant a user who just reconnected waited up to 30 s
+ * for queued feedback to sync — and the FIRST attempt right after the
+ * `online` event routinely fails while the network stack settles.
+ */
+const RETRY_BASE_MS = 1_000;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelayMs = RETRY_BASE_MS;
 
 /* -------------------------------------------------------------------------- */
 /* Request building                                                           */
@@ -635,7 +645,7 @@ async function cascadeAnnotationId(
  * the run (e.g., a fresh mutation while the previous one's POST is in
  * flight) is picked up without waiting for the next interval tick.
  */
-async function drain(): Promise<void> {
+async function drain(): Promise<'empty' | 'halted'> {
   // Bounded loop guard — the queue can only grow by external enqueues,
   // each of which is paired with a `triggerSync` call that joins the
   // existing in-flight promise. The bound is high enough to drain any
@@ -643,10 +653,30 @@ async function drain(): Promise<void> {
   // regression starts re-enqueuing the same head.
   for (let i = 0; i < 1024; i++) {
     const entries = await listOutbox();
-    if (entries.length === 0) return;
+    if (entries.length === 0) return 'empty';
     const advanced = await replayHead(entries[0]);
-    if (!advanced) return;
+    if (!advanced) return 'halted';
   }
+  return 'halted';
+}
+
+function scheduleRetry(outcome: 'empty' | 'halted'): void {
+  if (outcome === 'empty') {
+    retryDelayMs = RETRY_BASE_MS;
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    return;
+  }
+  if (retryTimer !== null) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const delay = retryDelayMs;
+  retryDelayMs = Math.min(retryDelayMs * 2, SYNC_INTERVAL_MS);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void triggerSync();
+  }, delay);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -665,9 +695,19 @@ async function drain(): Promise<void> {
  */
 export function triggerSync(): Promise<void> {
   if (inflight) return inflight;
-  const promise = drain().finally(() => {
-    if (inflight === promise) inflight = null;
-  });
+  // Don't start requests while the browser reports offline: a request
+  // issued offline can hang, and every later trigger (the `online` event,
+  // the interval) would join that stuck drain — queued annotations then
+  // stayed unsynced long after the connection came back. The `online`
+  // listener starts a fresh drain as soon as connectivity returns.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return Promise.resolve();
+  }
+  const promise = drain()
+    .then(scheduleRetry, () => scheduleRetry('halted'))
+    .finally(() => {
+      if (inflight === promise) inflight = null;
+    });
   inflight = promise;
   return promise;
 }
@@ -719,6 +759,9 @@ export function __stopSyncerForTests(): void {
   installed = false;
   inflight = null;
   remapAdapter = null;
+  if (retryTimer !== null) clearTimeout(retryTimer);
+  retryTimer = null;
+  retryDelayMs = RETRY_BASE_MS;
 }
 
 /**

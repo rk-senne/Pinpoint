@@ -256,3 +256,29 @@ deliberate, manual step. Third-party actions are pinned to full commit SHAs
 (tag in a trailing comment). Resolve a new one with
 `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag> 'refs/tags/<tag>^{}'`
 (use the `^{}` commit for annotated tags).
+
+### Verified in CI: `compose-smoke`
+
+`.github/workflows/compose-smoke.yml` (PRs/pushes touching Docker, `deploy/`,
+`server/`, `dashboard/`, `widget/`, `shared/`; also `workflow_dispatch`) boots
+both Compose stacks on a GitHub-hosted runner via
+`infrastructure/scripts/compose-smoke.sh dev|prod`, then always runs `down -v`
+(logs are dumped and uploaded as an artifact on failure):
+
+- **`dev`** (`docker-compose.yml`): `migrate` exited 0; `/health` is 200 with
+  `checks.database: ok`; the dashboard on `:4173` serves the app shell and
+  proxies `/widget/pinpoint-widget.js` as JavaScript; register → verification
+  mail fetched from Mailpit → `verify-email` → login returns an `fl_session`
+  cookie.
+- **`prod`** (`deploy/docker-compose.prod.yml`, images built from source, a
+  throwaway `.env.production` with random full-length secrets,
+  `DOMAIN=localhost` so Caddy uses its internal CA): the strict preflight lets
+  the API boot and its boot report is in the logs (no `COOKIE_INSECURE`);
+  `https://localhost/api/v1/health`, the dashboard, the widget and the HSTS
+  header work through Caddy; `/metrics` is **not** reachable through Caddy but
+  is 401 without / 200 with the bearer token inside the `api` container;
+  register → verified → login over HTTPS sets a `Secure` `__Host-fl_session`
+  cookie.
+
+Reproduce locally (needs a working Docker, `jq`, `openssl`; the prod mode binds
+ports 80/443): `bash infrastructure/scripts/compose-smoke.sh prod`.

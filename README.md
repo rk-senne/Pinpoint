@@ -675,7 +675,9 @@ that is unset or empty falls back to the default.
 | `INTEGRATION_ENCRYPTION_KEY` | stable dev-only derived key | server preflight | 32-byte key (base64 or 64-char hex) encrypting integration OAuth tokens and client secrets at rest. Required (real key) on exposed deployments. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset | server | Enables Google OAuth when both are set. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | unset | server | Enables GitHub OAuth when both are set. |
-| `OAUTH_CALLBACK_BASE_URL` | `http://localhost:<PORT>` | server | Base URL for OAuth callbacks. |
+| `OAUTH_CALLBACK_BASE_URL` | `http://localhost:<PORT>` | server | Public origin used to build the Google/GitHub **sign-in** redirect URI (`<base>/api/v1/auth/oauth/<provider>/callback`). Set to your public https origin behind a proxy. |
+| `INTEGRATION_{SLACK,JIRA,LINEAR,GITHUB,CLICKUP,ASANA}_CLIENT_ID` / `_CLIENT_SECRET` | unset | server | OAuth app credentials for the integration providers; a provider is enabled only when both are set (else `INTEGRATION_NOT_CONFIGURED` 501). Redirect URI is `${APP_URL}/api/v1/integrations/<provider>/callback`. See [`docs/INTEGRATIONS_SETUP.md`](./docs/INTEGRATIONS_SETUP.md). |
+| `INTEGRATION_{SLACK,JIRA,LINEAR,GITHUB,CLICKUP,ASANA}_SCOPES` | provider default | server | Optional space/comma-separated scope override for that provider. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRO_PRICE_ID` | unset | server | Billing is configured only when `STRIPE_SECRET_KEY` is set. |
 
 ### Database and cache
@@ -702,7 +704,8 @@ that is unset or empty falls back to the default.
 | `SMTP_FROM` | `no-reply@pinpoint.local` | server | From address. |
 | `S3_BUCKET` | `pinpoint` | server | Bucket for screenshots. |
 | `S3_REGION` | `us-east-1` (the SDK's `AWS_REGION` is also honoured) | server | Bucket region (`auto` for Cloudflare R2). |
-| `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | unset / `false` / unset | server | S3-compatible storage (MinIO, etc.) options. |
+| `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | unset / `false` / unset | server | S3-compatible storage (MinIO, etc.) options. Use `S3_FORCE_PATH_STYLE=true` with MinIO. The bucket is expected to be **private**: `GET /api/v1/annotations/:id/screenshot` returns a short-lived (15 min) presigned URL that the browser can load directly, so `S3_ENDPOINT` must be reachable from the user's browser. Set `S3_PUBLIC_BASE_URL` (CDN / public bucket) to get plain `<base>/<key>` URLs instead. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | server | Credentials for the bucket (the standard AWS SDK provider chain; for MinIO use its root/service-account key). Without resolvable credentials screenshot uploads fail with 503 `UNAVAILABLE`. |
 | `S3_KEY_PREFIX` | `annotations/screenshots` | server | Object key prefix. |
 
 ### Client builds and dev servers

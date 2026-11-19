@@ -140,6 +140,22 @@ export function bytesToBase64(bytes: Uint8Array): string {
   throw new Error('No base64 encoder available in this environment');
 }
 
+/**
+ * Copy a byte view into a fresh `Uint8Array` owned by the current realm.
+ *
+ * In a Firefox content script `Blob#arrayBuffer()` resolves with a buffer
+ * from the PAGE compartment; any view over it is a cross-compartment wrapper
+ * whose `subarray` / `slice` / spread throw "Permission denied to access
+ * property \"constructor\"" (species lookup). That broke every screenshot
+ * upload in Firefox. `set()` reads only `length` and indices, so it copies
+ * safely; in Chrome it is a plain memcpy.
+ */
+export function toOwnBytes(view: ArrayLike<number>): Uint8Array {
+  const own = new Uint8Array(view.length);
+  own.set(view);
+  return own;
+}
+
 /** Decode a base64 string to a byte array. Prefers `atob`; falls back to `Buffer`. */
 export function base64ToBytes(base64: string): Uint8Array {
   if (typeof atob === 'function') {
@@ -185,7 +201,16 @@ export function isSerializedForm(body: unknown): body is SerializedForm {
  */
 export async function serializeFormData(form: FormData): Promise<SerializedForm> {
   const fields: SerializedFormField[] = [];
-  for (const [name, value] of form.entries()) {
+  // Collect with `forEach`, not `for…of form.entries()`: in a Firefox content
+  // script the page-compartment FormData is seen through an Xray wrapper whose
+  // `entries()` iterator is NOT iterable from the sandbox ("entries() is not
+  // iterable"), which broke every screenshot upload there. `forEach` is a
+  // plain WebIDL method and behaves identically in Chrome.
+  const pairs: Array<[string, FormDataEntryValue]> = [];
+  form.forEach((value, name) => {
+    pairs.push([name, value]);
+  });
+  for (const [name, value] of pairs) {
     if (typeof value === 'string') {
       fields.push({ name, kind: 'text', value });
       continue;
@@ -196,7 +221,7 @@ export async function serializeFormData(form: FormData): Promise<SerializedForm>
     fields.push({
       name,
       kind: 'blob',
-      base64: bytesToBase64(new Uint8Array(buf)),
+      base64: bytesToBase64(toOwnBytes(new Uint8Array(buf))),
       type: blob.type || 'application/octet-stream',
       filename: typeof blob.name === 'string' ? blob.name : undefined,
     });

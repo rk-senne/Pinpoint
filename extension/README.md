@@ -242,10 +242,25 @@ npx --yes web-ext@10.8.0 lint --source-dir extension/dist-firefox
 | `chrome.*` namespace with promises | Supported in MV3 (no `browser.*` shim needed). |
 | `scripting.executeScript({ world: 'MAIN' })` | Firefox 128+ (the reason for the min version). |
 | `storage.session` | Supported (115+). Like Chrome, not exposed to content scripts unless `setAccessLevel` is called, so draft persistence from the content script degrades to a no-op in both browsers. |
-| `tabs.captureVisibleTab` | Supported; needs `activeTab` or a granted host permission. |
-| Custom Elements in content scripts | Firefox content scripts have a registry on current versions; `@webcomponents/custom-elements` is a no-op when a native registry exists, so the guarded polyfill import is kept for both browsers. |
+| `tabs.captureVisibleTab` | Supported, but MV3 Firefox accepts only **`activeTab`** (granted by the toolbar click, the popup, or a keyboard shortcut in that tab); unlike Chrome, even a user-granted "all sites" host permission does not substitute. In practice the gesture that opens the overlay grants it; without it the upload toast reads "Could not capture screenshot: Missing activeTab permission" and the annotation itself is still saved. |
+| Custom Elements in content scripts | Firefox exposes a `customElements` in content scripts, but elements defined from the sandbox are **never upgraded**. The content script therefore forces `@webcomponents/custom-elements` on Firefox (`lib/forceCustomElementsPolyfill.ts`), mirrors its `window.HTMLElement` onto the sandbox global (`window !== globalThis` there) and relaxes its cross-compartment `prototype instanceof Object` check (`lib/syncPolyfilledGlobals.ts`). Chrome (registry is `null` in the isolated world) is unchanged. |
 | `commands` / `_execute_action` | Supported. Remap at `about:addons` → gear → **Manage Extension Shortcuts**. |
 | `webNavigation.onHistoryStateUpdated` | Supported. |
+| `permissions.request` | Must be called synchronously inside the user-input handler (Firefox rejects it after any `await`); the options page requests first and falls back to `permissions.contains`. |
+| Page-compartment objects (`FormData`, `Blob#arrayBuffer()`) | Seen through Xray wrappers from the content script: `FormData#entries()` is not iterable and views over the returned buffer throw on `subarray`/spread, so the relay serialises with `forEach` and copies bytes (`toOwnBytes`). |
+| WebDriver / Marionette | `e2e/firefox/run.mjs` drives this bundle in a real Firefox — see [`e2e/firefox/README.md`](../e2e/firefox/README.md). |
+
+### Automated run (real Firefox)
+
+```bash
+npm run build:firefox --workspace extension
+node e2e/firefox/run.mjs        # one-time tool setup: e2e/firefox/README.md
+```
+
+Covers popup sign-in, options Server URL, overlay, the real `Alt+Shift+S`
+shortcut, click-to-annotate with Firefox environment + console diagnostics,
+screenshot upload, comments with `@mention`, resolve/reopen, sidebar,
+next/prev pin, realtime, reload and a clean browser console.
 
 ### Manual test checklist
 

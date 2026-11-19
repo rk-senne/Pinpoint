@@ -26,6 +26,7 @@ import {
   responseFromRelay,
   serializeBody,
   serializeFormData,
+  toOwnBytes,
   type RelayRequest,
   type RelayResponse,
 } from './apiRelay';
@@ -41,6 +42,29 @@ describe('base64 codecs', () => {
     const round = base64ToBytes(bytesToBase64(bytes));
     expect(round.length).toBe(bytes.length);
     expect(round[123_456]).toBe(123_456 % 256);
+  });
+});
+
+describe('toOwnBytes', () => {
+  it('copies a view whose species lookup is denied (Firefox cross-compartment buffer)', () => {
+    const src = new Uint8Array([104, 105, 33]);
+    // Mimic a Firefox cross-compartment view: indexed reads + length work,
+    // `constructor` / `subarray` / `slice` throw "Permission denied".
+    const hostile = new Proxy(src, {
+      get(target, key) {
+        if (key === 'constructor' || key === 'subarray' || key === 'slice') {
+          throw new Error('Permission denied to access property "constructor"');
+        }
+        const v = Reflect.get(target, key) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    expect(() => bytesToBase64(hostile)).toThrow(/Permission denied/);
+    const own = toOwnBytes(hostile);
+    expect(own).toBeInstanceOf(Uint8Array);
+    expect(own).not.toBe(src);
+    expect(Array.from(own)).toEqual([104, 105, 33]);
+    expect(bytesToBase64(own)).toBe(btoa('hi!'));
   });
 });
 
@@ -84,6 +108,19 @@ describe('FormData serialisation', () => {
     expect(rebuiltBlob.type).toBe('image/png');
     const buf = new Uint8Array(await rebuiltBlob.arrayBuffer());
     expect(buf).toEqual(bytes);
+  });
+  it('does not depend on an iterable entries() (Firefox content-script Xray FormData)', async () => {
+    const form = new FormData();
+    form.append('label', 'hello');
+    form.append('image', new Blob([new Uint8Array([1, 2])], { type: 'image/png' }), 'x.png');
+    // Firefox: the Xray-wrapped iterator returned by entries() is not iterable.
+    Object.defineProperty(form, 'entries', { value: () => ({}) });
+    Object.defineProperty(form, Symbol.iterator, { value: undefined });
+    const serialized = await serializeFormData(form);
+    expect(serialized.fields.map((f) => [f.name, f.kind])).toEqual([
+      ['label', 'text'],
+      ['image', 'blob'],
+    ]);
   });
 });
 

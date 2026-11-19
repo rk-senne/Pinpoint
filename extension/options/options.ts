@@ -322,18 +322,22 @@ export async function requestServerOriginPermission(
     return true;
   }
   const originPattern = `${origin}/*`;
-  try {
-    const already = await chrome.permissions.contains?.({
-      origins: [originPattern],
-    });
-    if (already) return true;
-  } catch {
-    // `contains` unavailable — fall through to request.
-  }
+  // `request` MUST be the first call in the user-gesture handler: Firefox
+  // rejects it ("may only be called from a user input handler") once the
+  // handler has awaited anything, so a preceding `await contains()` made
+  // every non-localhost Server URL fail there. Chrome and Firefox both
+  // resolve `true` immediately, without a prompt, for an already-held origin.
   try {
     return await chrome.permissions.request({ origins: [originPattern] });
   } catch {
-    return false;
+    // Not in a user gesture (or API refused): a held permission still counts.
+    try {
+      return Boolean(
+        await chrome.permissions.contains?.({ origins: [originPattern] }),
+      );
+    } catch {
+      return false;
+    }
   }
 }
 

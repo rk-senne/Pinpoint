@@ -48,6 +48,16 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # S3-compatible object storage for screenshots (see the "Create S3 bucket"
+      # step). Upstream minio/minio images are no longer published, so this
+      # uses the frozen Bitnami legacy image; its default entrypoint starts
+      # `minio server` (services cannot pass a command). CI-only, throwaway.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+        env:
+          MINIO_ROOT_USER: ci-minio-access
+          MINIO_ROOT_PASSWORD: ci-minio-secret-not-for-production
+        ports: ['9000:9000']
     env:
       DB_HOST: localhost
       DB_PORT: 5432
@@ -65,7 +75,35 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace shared
       - run: npm run migrate --workspace server
+      - name: Create S3 bucket (MinIO)
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_BUCKET: pinpoint
+          AWS_ACCESS_KEY_ID: ci-minio-access
+          AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
+        run: |
+          node --input-type=module -e "
+            import { S3Client, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+            const c = new S3Client({ region: 'us-east-1', endpoint: process.env.S3_ENDPOINT, forcePathStyle: true });
+            let last;
+            for (let i = 0; i < 60; i++) {
+              try {
+                try { await c.send(new HeadBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                catch (e) { if (e.\$metadata?.httpStatusCode !== 404) throw e; await c.send(new CreateBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                console.log('bucket ready:', process.env.S3_BUCKET); process.exit(0);
+              } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1000)); }
+            }
+            console.error('MinIO bucket setup failed:', last); process.exit(1);
+          "
+      # S3_* set only here so screenshotS3.test.ts runs against MinIO.
       - run: npm test -- --coverage
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_FORCE_PATH_STYLE: 'true'
+          S3_BUCKET: pinpoint
+          S3_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: ci-minio-access
+          AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -100,6 +138,16 @@ jobs:
       mailpit:
         image: axllent/mailpit:v1.29.7
         ports: ['1025:1025']
+      # S3-compatible object storage for screenshots (see the "Create S3 bucket"
+      # step). Upstream minio/minio images are no longer published, so this
+      # uses the frozen Bitnami legacy image; its default entrypoint starts
+      # `minio server` (services cannot pass a command). CI-only, throwaway.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+        env:
+          MINIO_ROOT_USER: ci-minio-access
+          MINIO_ROOT_PASSWORD: ci-minio-secret-not-for-production
+        ports: ['9000:9000']
     env:
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
@@ -136,6 +184,16 @@ jobs:
       FL_E2E_EMAIL: e2e-seed@example.test
       FL_E2E_PASSWORD: P@ssw0rd-E2E-1!
       PLAYWRIGHT_HTML_OPEN: never
+      # S3-compatible storage (MinIO service above) so screenshot upload and
+      # retrieval are exercised for real; FL_S3_ENABLED makes the extension
+      # spec require a stored screenshotObjectKey instead of tolerating 5xx.
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_FORCE_PATH_STYLE: 'true'
+      S3_BUCKET: pinpoint
+      S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ci-minio-access
+      AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
+      FL_S3_ENABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -148,6 +206,21 @@ jobs:
       - run: npm run build
       - name: Apply migrations
         run: npm run migrate --workspace server
+      - name: Create S3 bucket (MinIO)
+        run: |
+          node --input-type=module -e "
+            import { S3Client, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+            const c = new S3Client({ region: 'us-east-1', endpoint: process.env.S3_ENDPOINT, forcePathStyle: true });
+            let last;
+            for (let i = 0; i < 60; i++) {
+              try {
+                try { await c.send(new HeadBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                catch (e) { if (e.\$metadata?.httpStatusCode !== 404) throw e; await c.send(new CreateBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                console.log('bucket ready:', process.env.S3_BUCKET); process.exit(0);
+              } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1000)); }
+            }
+            console.error('MinIO bucket setup failed:', last); process.exit(1);
+          "
       - name: Start API
         run: |
           mkdir -p "$RUNNER_TEMP/logs"

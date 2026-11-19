@@ -477,6 +477,7 @@ test.describe('Chrome Extension UI — landing page', () => {
     // Screenshot pipeline: uploaded against the CANONICAL id. On a stack
     // without object storage the server rejects the upload with 5xx and
     // the toolbar says so; with storage the object key is persisted.
+    // FL_S3_ENABLED=1 (set when MinIO/S3 is provisioned) makes storage mandatory.
     const toast = page.locator('fl-floating-toolbar .fl-toolbar-toast');
     await expect
       .poll(
@@ -491,6 +492,20 @@ test.describe('Chrome Extension UI — landing page', () => {
       )
       .toMatch(/^stored$|^Could not upload screenshot: /);
     const toastText = (await toast.textContent()) ?? '';
+    if (process.env.FL_S3_ENABLED === '1') {
+      // Object storage is provisioned (MinIO locally / in CI): the lenient
+      // "server failure" branch is NOT acceptable — the key must be stored
+      // and the URL the clients put in <img src> must actually serve the PNG.
+      expect(toastText, 'screenshot upload must not fail when S3 is enabled').toBe('');
+      const stored = (await listAnnotations()).find((a) => a.id === row.id);
+      expect(stored?.screenshotObjectKey, 'screenshotObjectKey must be persisted').toBeTruthy();
+      const { screenshotUrl } = await api<{ screenshotUrl: string }>(`/annotations/${row.id}/screenshot`);
+      const img = await fetch(screenshotUrl); // no credentials, like a browser <img>
+      expect(img.status, 'screenshotUrl must be loadable without credentials').toBe(200);
+      const bytes = Buffer.from(await img.arrayBuffer());
+      expect(bytes.subarray(0, 8).toString('hex'), 'PNG signature').toBe('89504e470d0a1a0a');
+      return;
+    }
     if (toastText) {
       // Rejected by the SERVER (no object storage on this stack), never a
       // client-side 404 against the optimistic id or a sync timeout.

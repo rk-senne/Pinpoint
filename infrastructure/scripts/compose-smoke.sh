@@ -112,7 +112,9 @@ smoke_dev() {
   echo "ok   /health 200, checks.database=ok"
 
   step "dashboard HTML + widget through the dashboard origin"
-  curl -fsS --max-time 15 "$app/" | grep -q 'id="root"' || fail "dashboard HTML lacks the app root"
+  # Capture first: `curl | grep -q` under pipefail fails with curl (23) when grep exits early.
+  local html; html="$(curl -fsS --max-time 15 "$app/")" || fail "dashboard did not respond"
+  grep -q 'id="root"' <<<"$html" || fail "dashboard HTML lacks the app root"
   echo "ok   dashboard serves HTML with app root"
   local ct
   ct="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code} %{content_type}' "$app/widget/pinpoint-widget.js")"
@@ -195,11 +197,13 @@ smoke_prod() {
     "fetch('http://127.0.0.1:3001/health').then(async r=>{const j=await r.json();process.exit(r.status===200&&j.checks.database==='ok'?0:1)}).catch(()=>process.exit(1))" ||
     fail "in-container /health not healthy"
   echo "ok   in-container /health 200, database ok"
-  curl -sSk --max-time 15 "$base/" | grep -q 'id="root"' || fail "dashboard HTML via Caddy lacks app root"
+  local html; html="$(curl -sSk --max-time 15 "$base/")" || fail "dashboard via Caddy did not respond"
+  grep -q 'id="root"' <<<"$html" || fail "dashboard HTML via Caddy lacks app root"
   echo "ok   dashboard HTML at https://localhost/"
   ct="$(curl -sSk --max-time 15 -o /dev/null -w '%{http_code} %{content_type}' "$base/widget/pinpoint-widget.js")"
   case "$ct" in "200 "*javascript*) echo "ok   widget via Caddy -> $ct" ;; *) fail "widget: $ct" ;; esac
-  curl -sSkI --max-time 15 "$base/" | grep -qi '^strict-transport-security:' || fail "no HSTS header from Caddy"
+  local hdrs; hdrs="$(curl -sSkI --max-time 15 "$base/")" || fail "no response headers from Caddy"
+  grep -qi '^strict-transport-security:' <<<"$hdrs" || fail "no HSTS header from Caddy"
   echo "ok   HSTS header present"
 
   step "/metrics is not publicly exposed; token-protected inside"

@@ -27,6 +27,7 @@ import {
   GetObjectCommand,
 } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
+import { presignGetUrl } from './presign.js';
 import {
   StorageUnavailableError,
   type ScreenshotStore,
@@ -142,6 +143,35 @@ export class S3ScreenshotStore implements ScreenshotStore {
     }
 
     return `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com/${objectKey}`;
+  }
+
+  /**
+   * A URL a browser `<img>` can load without credentials. The bucket is
+   * private, so the plain object URL answers 403; this returns a short-lived
+   * SigV4-presigned GET URL instead. When `publicBaseUrl` is configured (a
+   * CDN / public bucket) the plain URL is already correct and is returned
+   * unchanged. Credentials are resolved from the injected client (so the
+   * whole AWS provider chain works); if none resolve, the plain URL is
+   * returned rather than failing the request.
+   */
+  async presignScreenshotUrl(objectKey: string, expiresInSeconds = 900): Promise<string> {
+    const plain = this.buildScreenshotUrl(objectKey);
+    if (this.config.publicBaseUrl) return plain;
+    try {
+      const creds = await this.client.config.credentials();
+      return presignGetUrl({
+        url: plain,
+        region: this.config.region,
+        credentials: {
+          accessKeyId: creds.accessKeyId,
+          secretAccessKey: creds.secretAccessKey,
+          sessionToken: creds.sessionToken,
+        },
+        expiresInSeconds,
+      });
+    } catch {
+      return plain;
+    }
   }
 
   async uploadMarkupDocument(

@@ -141,7 +141,8 @@ export function buildAdapters(
 
   const reportRenderer = new PdfKitReportRenderer(db, s3Client, {
     bucket: config.s3.bucket,
-    buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
+    buildScreenshotUrl: (annotationId) =>
+      `${config.appUrl.replace(/\/+$/, '')}/api/v1/annotations/${annotationId}/screenshot?redirect=1`,
   });
 
   // ---- OAuth providers ------------------------------------------------

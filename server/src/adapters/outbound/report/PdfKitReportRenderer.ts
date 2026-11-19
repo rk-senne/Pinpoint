@@ -26,8 +26,13 @@ import type {
 export interface PdfKitReportRendererConfig {
   /** Bucket the screenshot store writes to. Used for embed fetches. */
   bucket: string;
-  /** Build the publicly addressable URL for an object key (fallback). */
-  buildScreenshotUrl: (objectKey: string) => string;
+  /**
+   * Stable link to an annotation's screenshot for exports. Exports outlive
+   * presigned URLs and the bucket is private, so this points at the
+   * authenticated API route (`/api/v1/annotations/:id/screenshot`) rather than
+   * the raw object.
+   */
+  buildScreenshotUrl: (annotationId: string) => string;
 }
 
 interface AnnotationRow {
@@ -227,14 +232,14 @@ export class PdfKitReportRenderer implements ReportRenderer {
               doc
                 .fontSize(9)
                 .fillColor('#1d4ed8')
-                .text(`Screenshot: ${this.config.buildScreenshotUrl(a.screenshot_object_key)}`);
+                .text(`Screenshot: ${this.config.buildScreenshotUrl(a.id)}`);
             }
           } else {
             doc.moveDown(0.3);
             doc
               .fontSize(9)
               .fillColor('#1d4ed8')
-              .text(`Screenshot: ${this.config.buildScreenshotUrl(a.screenshot_object_key)}`);
+              .text(`Screenshot: ${this.config.buildScreenshotUrl(a.id)}`);
           }
         }
 
@@ -248,9 +253,10 @@ export class PdfKitReportRenderer implements ReportRenderer {
 
 // ---- Helpers ----------------------------------------------------------
 
-function generateCsv(
+/** @internal exported for tests */
+export function generateCsv(
   annotations: AnnotationRow[],
-  buildScreenshotUrl: (objectKey: string) => string,
+  buildScreenshotUrl: (annotationId: string) => string,
 ): string {
   const headers = [
     'Pin Number',
@@ -275,7 +281,7 @@ function generateCsv(
   const rows = annotations.map((a) => {
     const env = parseEnvironment(a.environment);
     const screenshotUrl = a.screenshot_object_key
-      ? buildScreenshotUrl(a.screenshot_object_key)
+      ? buildScreenshotUrl(a.id)
       : '';
     return [
       String(a.pin_number),

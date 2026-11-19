@@ -69,6 +69,12 @@ export interface AnnotationRouteDeps {
   ) => Promise<Map<string, string>>;
   /** Per-port screenshot URL builder (composition root supplies). */
   buildScreenshotUrl: (objectKey: string) => string;
+  /**
+   * Optional: resolves a URL a browser `<img>` can load without credentials
+   * (a short-lived presigned GET for private buckets). When omitted the plain
+   * `buildScreenshotUrl` URL is returned, which only works for public buckets.
+   */
+  presignScreenshotUrl?: (objectKey: string) => Promise<string>;
   /** Fetches a screenshot PNG from the store by its object key. */
   fetchScreenshotBuffer: (objectKey: string) => Promise<Buffer | null>;
   /** Fetches the Markup_Document stored next to a screenshot (null when absent). */
@@ -237,6 +243,21 @@ export function createAnnotationRoutes(
     storage: multer.memoryStorage(),
     limits: { fileSize: screenshotMaxBytes },
   });
+  // Multer reports limit violations by throwing; surface them as 4xx instead
+  // of letting them fall through to the 500 handler.
+  const screenshotUploadSingle = (req: Request, res: Response, next: NextFunction): void => {
+    screenshotUpload.single('image')(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Screenshot exceeds the ${screenshotMaxBytes}-byte limit.`);
+        } else {
+          sendError(res, 400, 'VALIDATION', `Invalid screenshot upload: ${err.message}`);
+        }
+        return;
+      }
+      next(err);
+    });
+  };
 
   // ----- Project-scoped routes (create, list) -----------------------------
   const projectAnnotationsRouter = Router({ mergeParams: true });
@@ -422,11 +443,17 @@ export function createAnnotationRoutes(
       sendError(res, 404, 'NOT_FOUND', 'No screenshot for this annotation.');
       return;
     }
+    const screenshotUrl = deps.presignScreenshotUrl
+      ? await deps.presignScreenshotUrl(annotation.screenshotObjectKey)
+      : buildScreenshotUrl(annotation.screenshotObjectKey);
     res.setHeader('Cache-Control', 'private, no-store');
-    res.status(200).json({
-      screenshotObjectKey: annotation.screenshotObjectKey,
-      screenshotUrl: buildScreenshotUrl(annotation.screenshotObjectKey),
-    });
+    // `?redirect=1`: exports (CSV/PDF) link here; a signed-in browser gets a
+    // fresh short-lived URL instead of a dead presigned one.
+    if (req.query.redirect === '1') {
+      res.redirect(302, screenshotUrl);
+      return;
+    }
+    res.status(200).json({ screenshotObjectKey: annotation.screenshotObjectKey, screenshotUrl });
   });
 
   // GET /:id/markup — the Markup_Document layered on the screenshot.
@@ -448,7 +475,7 @@ export function createAnnotationRoutes(
   annotationRouter.post(
     '/:id/screenshot',
     requireWriteAccess,
-    screenshotUpload.single('image'),
+    screenshotUploadSingle,
     async (req: Request, res: Response) => {
       const file = (req as Request & { file?: Express.Multer.File }).file;
       if (!file) {
@@ -537,7 +564,9 @@ export function createAnnotationRoutes(
       }
       res.status(200).json({
         screenshotObjectKey: result.value.screenshotObjectKey,
-        screenshotUrl: result.value.screenshotUrl,
+        screenshotUrl: deps.presignScreenshotUrl
+          ? await deps.presignScreenshotUrl(result.value.screenshotObjectKey)
+          : result.value.screenshotUrl,
         markupObjectKey: result.value.markupObjectKey,
         markupUrl: result.value.markupUrl,
       });

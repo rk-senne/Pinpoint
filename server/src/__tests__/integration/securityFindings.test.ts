@@ -157,6 +157,11 @@ describe('Integration: security review — Low findings', () => {
       expect(ok.status).toBe(200);
       expect(ok.body.screenshotUrl).toContain(annotationId);
       expect((await get(outsider, `/api/v1/annotations/${annotationId}/screenshot`)).status).toBe(404);
+      // ?redirect=1 (export links): 302 to the same URL for members, still 404 for outsiders.
+      const redir = await get(admin, `/api/v1/annotations/${annotationId}/screenshot?redirect=1`);
+      expect(redir.status).toBe(302);
+      expect(redir.headers.location).toBe(ok.body.screenshotUrl);
+      expect((await get(outsider, `/api/v1/annotations/${annotationId}/screenshot?redirect=1`)).status).toBe(404);
     });
   });
 

@@ -403,6 +403,7 @@ export function buildContainer(config: Config): Container {
       annotationRepo: adapters.annotationRepo,
       resolvePageUrls,
       buildScreenshotUrl: (key) => adapters.screenshotStore.buildScreenshotUrl(key),
+      presignScreenshotUrl: (key) => adapters.screenshotStore.presignScreenshotUrl(key),
       fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
       fetchMarkupDocument: (key) => adapters.screenshotStore.fetchMarkupDocument(key),
       applyRedactionBlur: (buffer, rects) => applyRedactionBlurImpl(buffer, rects),

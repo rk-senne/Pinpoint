@@ -57,7 +57,7 @@
  * preserves the single source of truth.
  * --------------------------------------------------------------------------
  */
-import { themeCss } from '@pinpoint/shared';
+import { themeCss } from '@pinpoint/shared/dist/theme.js';
 
 /**
  * Overlay structural CSS — class selectors only, no theme values inlined.
@@ -67,7 +67,14 @@ import { themeCss } from '@pinpoint/shared';
  */
 export const OVERLAY_CSS = `
 * { box-sizing: border-box; margin: 0; padding: 0; }
-#pinpoint-root {
+/* The HTML \`hidden\` attribute must always win. Component rules such as
+   ':host { display: block }' or '.x { display: inline-block }' are author
+   styles and otherwise override the UA '[hidden] { display: none }' — e.g.
+   the screenshot viewer rendered a broken image on every annotation. */
+:host([hidden]), [hidden] { display: none !important; }
+/* :host makes every Custom Element (each adopts this sheet) inherit the
+   UI font stack instead of the host page's / browser-default serif. */
+:host, #pinpoint-root, .fl-overlay-root {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
   color: #1a1a1a;
@@ -85,6 +92,21 @@ export const OVERLAY_CSS = `
   align-items: center; justify-content: center; font-size: 16px;
 }
 .fl-toolbar button:hover { background: rgba(255,255,255,0.15); }
+.fl-toolbar button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.fl-toolbar button[aria-pressed="true"] { background: rgba(255,255,255,0.22); }
+.fl-toolbar button svg { display: block; }
+.fl-toolbar-toast {
+  position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+  background: #1a1a1a; color: #fff; padding: 6px 12px; border-radius: 8px;
+  font-size: 12px; line-height: 1.4; text-align: center;
+  width: max-content; max-width: min(360px, calc(100vw - 32px));
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  /* Always above the toolbar and every other overlay surface in the shadow
+     root; the popover clamps itself clear of this strip. */
+  z-index: 1;
+}
+.fl-toolbar-toast-error { background: #b42318; }
+.fl-toolbar-toast[hidden] { display: none; }
 /* Offline banner (Req 44.1 / task 36.8). Sits inside the floating toolbar
    so the warning never blocks the host page. The background uses the
    shared --fl-severity-major palette token (warning orange) so the
@@ -159,6 +181,30 @@ export const OVERLAY_CSS = `
   pointer-events: auto; z-index: 2147483647; overflow-y: auto;
   display: flex; flex-direction: column;
 }
+/* Collapsed: a slim rail (expand button + active count) hugging the right
+   edge so the page underneath stays readable. */
+.fl-sidebar[data-collapsed] {
+  top: 16px; height: auto; width: 44px; overflow: visible;
+  border-radius: 12px 0 0 12px; align-items: center;
+  box-shadow: -2px 2px 12px rgba(0,0,0,0.18);
+}
+.fl-sidebar[data-collapsed] > :not(.fl-sidebar-rail) { display: none; }
+.fl-sidebar[data-collapsed] > .fl-sidebar-rail {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0;
+}
+/* Narrow viewports (<600px): a bottom sheet instead of a right column.
+   The bottom padding keeps the last rows clear of the floating toolbar. */
+@media (max-width: 599px) {
+  .fl-sidebar {
+    top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: 50vh;
+    border-radius: 16px 16px 0 0; box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+    padding-bottom: 80px;
+  }
+  .fl-sidebar[data-collapsed] {
+    top: 16px; bottom: auto; left: auto; width: 44px; height: auto; padding-bottom: 0;
+    border-radius: 12px 0 0 12px;
+  }
+}
 .fl-sidebar-tabs { display: flex; border-bottom: 1px solid #eee; }
 .fl-sidebar-tabs button {
   flex: 1; padding: 12px; border: none; background: none; cursor: pointer;
@@ -178,6 +224,10 @@ export const OVERLAY_CSS = `
   padding: 8px 12px; cursor: pointer; font-size: 13px;
 }
 .fl-mention-item:hover { background: #f0f0f0; }
+.fl-comment-composer { position: relative; }
+.fl-comment-composer fl-mention-autocomplete {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 1;
+}
 .fl-comment-thread { max-height: 300px; overflow-y: auto; margin: 8px 0; }
 .fl-comment {
   padding: 8px; border-bottom: 1px solid #f0f0f0; font-size: 13px;
@@ -299,8 +349,14 @@ export const sharedStyleSheet: CSSStyleSheet | undefined = (() => {
  */
 export function adoptStyles(root: ShadowRoot): void {
   if (sharedStyleSheet && 'adoptedStyleSheets' in Document.prototype) {
-    root.adoptedStyleSheets = [sharedStyleSheet];
-    return;
+    try {
+      root.adoptedStyleSheets = [sharedStyleSheet];
+      return;
+    } catch {
+      // Firefox content scripts see the page's ShadowRoot through an Xray
+      // wrapper, which rejects a sheet built in the extension's compartment
+      // ("Accessing from Xray wrapper is not supported"). Use <style> instead.
+    }
   }
   const style = document.createElement('style');
   style.textContent = SHARED_STYLE_FALLBACK_CSS;

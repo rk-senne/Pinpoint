@@ -92,19 +92,28 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
 
     eventBus = new SocketIoEventBus(ioServer);
 
-    // Mock db that approves any project join for org-test (the org all
-    // test tokens use). The gateway only calls db('projects').where({...}).first('id')
-    // and db('annotations').where({...}).first('id').
-    const mockDb = ((table: string) => ({
-      where: (filter: Record<string, string>) => ({
-        first: () => {
-          if (filter.org_id === 'org-test') {
-            return Promise.resolve({ id: filter.id });
-          }
-          return Promise.resolve(undefined);
-        },
-      }),
-    })) as unknown as import('knex').Knex;
+    // Mock db: approves any project / annotation of org-test for the token's
+    // user (owner of everything), and reports a live session (token_version 0,
+    // membership role) for the `users as u` session lookup.
+    const mockDb = ((table: string) => {
+      const b: Record<string, unknown> = {};
+      let filter: Record<string, string> = {};
+      b.leftJoin = () => b;
+      b.where = (f: Record<string, string>) => {
+        filter = f;
+        return b;
+      };
+      b.first = () => {
+        if (table === 'users as u') return Promise.resolve({ token_version: 0, name: 'Tester', role: 'owner' });
+        if (filter.org_id === 'org-test') {
+          // owner_id is irrelevant here: team_members lookup below approves too.
+          return Promise.resolve({ id: filter.id, org_id: 'org-test', project_id: 'proj-1', owner_id: null, team_id: 't1', user_id: filter.user_id });
+        }
+        if (table === 'team_members') return Promise.resolve({ user_id: filter.user_id });
+        return Promise.resolve(undefined);
+      };
+      return b;
+    }) as unknown as import('knex').Knex;
 
     installCollabGateway(ioServer, { tokenIssuer, db: mockDb });
 
@@ -176,17 +185,17 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     };
 
     const receivedByA = new Promise<any>((resolve) => {
-      memberA.on('annotation:created', (data) => resolve(data));
+      memberA.on('annotation.created', (data) => resolve(data));
     });
     const receivedByB = new Promise<any>((resolve) => {
-      memberB.on('annotation:created', (data) => resolve(data));
+      memberB.on('annotation.created', (data) => resolve(data));
     });
 
     // Broadcast (simulating what the REST handler does after DB insert).
     // The hex idiom: emit a `DomainEvent` with an explicit `room` field
     // so the bus targets `project:<id>` inside the `/collab` namespace.
     eventBus.emit({
-      type: 'annotation:created',
+      type: 'annotation.created',
       room: `project:${projectId}`,
       payload: newAnnotation,
     });
@@ -221,10 +230,10 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     memberC.removeAllListeners('presence:update');
 
     let memberCReceived = false;
-    memberC.on('annotation:created', () => { memberCReceived = true; });
+    memberC.on('annotation.created', () => { memberCReceived = true; });
 
     eventBus.emit({
-      type: 'annotation:created',
+      type: 'annotation.created',
       room: 'project:project-1',
       payload: { id: 'ann-x', body: 'test' },
     });
@@ -250,11 +259,11 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     memberB.removeAllListeners('presence:update');
 
     const statusPromise = new Promise<any>((resolve) => {
-      memberB.on('annotation:status', (data) => resolve(data));
+      memberB.on('annotation.status_changed', (data) => resolve(data));
     });
 
     eventBus.emit({
-      type: 'annotation:status',
+      type: 'annotation.status_changed',
       room: `project:${projectId}`,
       payload: { id: 'ann-1', status: 'resolved' },
     });
@@ -290,11 +299,11 @@ describe('Integration: Annotation creation → WebSocket broadcast → real-time
     };
 
     const receivedPromise = new Promise<any>((resolve) => {
-      memberB.on('comment:created', (data) => resolve(data));
+      memberB.on('comment.created', (data) => resolve(data));
     });
 
     eventBus.emit({
-      type: 'comment:created',
+      type: 'comment.created',
       room: `project:${projectId}`,
       payload: commentData,
     });

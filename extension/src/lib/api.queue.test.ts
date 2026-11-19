@@ -151,6 +151,27 @@ describe('queueCreateAnnotation (task 36.2 / Reqs 44.1, 44.2)', () => {
     expect(triggerSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('strips fragment and redacts sensitive query values from the queued pageUrl (F5)', async () => {
+    const { enqueueSpy, deps } = fixedDeps();
+    await queueCreateAnnotation(
+      {
+        projectId: 'proj-1',
+        pageUrl: 'https://example.test/inbox?token=SECRETVAL&tab=2#access_token=FRAG',
+        type: 'note',
+        severity: 'minor',
+        body: 'x',
+        target: makeTarget(),
+        environment: makeEnvironment(),
+        capturedConsole: null,
+        capturedNetwork: null,
+      },
+      null,
+      deps,
+    );
+    const payload = (enqueueSpy.mock.calls[0]![0] as OutboxEntry).payload as Record<string, unknown>;
+    expect(payload.pageUrl).toBe('https://example.test/inbox?token=REDACTED&tab=2');
+  });
+
   it('invokes the optimistic writer with a row whose id equals the localUuid and pinNumber=0', async () => {
     const { deps } = fixedDeps();
     const writer = vi.fn();

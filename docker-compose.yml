@@ -17,7 +17,7 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -53,12 +53,24 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - '6379:6379'
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 3
+
+  mailpit:
+    # Local SMTP sink so dev can observe outgoing mail (verification,
+    # password reset, notifications) without a real mail provider.
+    # SMTP on 1025 (what `api` points SMTP_HOST/SMTP_PORT at by default),
+    # web UI on 8025 → http://localhost:8025.
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # web UI
+    environment:
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
 
   api:
     build:
@@ -70,6 +82,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -81,9 +95,26 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4173}
       APP_URL: ${APP_URL:-http://localhost:4173}
       NODE_ENV: development
+      # Local Compose is plain HTTP, so the session cookie can't carry the
+      # Secure flag or non-Chrome browsers drop it. The boot preflight
+      # refuses COOKIE_INSECURE on any exposed/production deployment.
+      COOKIE_INSECURE: ${COOKIE_INSECURE:-true}
+      # Asserts this is a loopback-only local stack (ports below are bound
+      # to 127.0.0.1), so the strict exposed-deployment preflight doesn't
+      # reject the dev defaults just because the container binds 0.0.0.0.
+      # Remove this (and set real secrets) before exposing the stack.
+      PINPOINT_LOCAL_DEV: "1"
+      # Inside the container the API must listen on all interfaces for the
+      # published port to reach it.
+      HOST: 0.0.0.0
       REDIS_URL: redis://redis:6379
+      # Point outbound mail at the local mailpit sink (see the `mailpit`
+      # service below). `config.ts` reads exactly these names (SMTP_HOST /
+      # SMTP_PORT); the catcher accepts unauthenticated plaintext SMTP.
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
 
   dashboard:
     build:
@@ -92,8 +123,43 @@ services:
     depends_on:
       api:
         condition: service_started
+    environment:
+      # `vite preview` proxies /api, /socket.io, /widget and review-link
+      # frames to the API so dashboard + API share one origin (first-party
+      # cookies, no CORS). See dashboard/vite.config.ts.
+      API_PROXY_TARGET: http://api:3001
     ports:
-      - "4173:4173"
+      - "127.0.0.1:4173:4173"
+
+  # --- Optional local observability -------------------------------------
+  # Behind the `monitoring` profile so a plain `docker compose up` does NOT
+  # start them. Enable with:
+  #
+  #   docker compose --profile monitoring up
+  #
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: [monitoring]
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: [monitoring]
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
 
 volumes:
   db_data:
+  grafana_data:

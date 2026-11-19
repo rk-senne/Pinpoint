@@ -528,7 +528,7 @@ This revision of the requirements adds environment capture (browser and OS detec
 
 #### Acceptance Criteria
 
-1. THE Extension SHALL register the following commands via `chrome.commands`: toggle the overlay (default `Alt+Shift+F`); open or close the Sidebar_Panel (default `Alt+Shift+S`); jump to the next Annotation_Pin on the page (default `Alt+]`); jump to the previous Annotation_Pin on the page (default `Alt+[`).
+1. THE Extension SHALL register the following commands via `chrome.commands`: toggle the overlay (default `Alt+Shift+F`); open or close the Sidebar_Panel (default `Alt+Shift+S`); jump to the next Annotation_Pin on the page (default `Alt+Shift+.` (Chrome rejects `Alt+]`)); jump to the previous Annotation_Pin on the page (default `Alt+Shift+,`).
 2. THE user SHALL be able to remap each command via Chrome's `chrome://extensions/shortcuts` page.
 
 ### Requirement 41: Draft Persistence

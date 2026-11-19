@@ -87,7 +87,41 @@ export async function apiFetch<T>(
     throw new ApiError(message, code, res.status, details);
   }
 
+  // 204 No Content (DELETE on most routes) has no body to parse.
+  if (res.status === 204) return undefined as T;
+
   return res.json() as Promise<T>;
+}
+
+/**
+ * Issue a request whose successful response is a FILE (e.g. the CSV/PDF
+ * export), not JSON. Mirrors `apiFetch` (credentials, CSRF header, error
+ * envelope → `ApiError` + toast) but returns the body as a Blob together
+ * with the server-suggested filename from `Content-Disposition`.
+ */
+export async function apiFetchBlob(
+  path: string,
+  options: RequestInit = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const method = (options.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options.headers as Record<string, string>) || {}),
+  };
+  if (MUTATING_METHODS.has(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  }
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const message = body?.error?.message || `Request failed with status ${res.status}`;
+    showToast({ message, variant: 'error' });
+    throw new ApiError(message, body?.error?.code || 'UNKNOWN_ERROR', res.status, body?.error?.details);
+  }
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return { blob: await res.blob(), filename: match ? match[1]! : null };
 }
 
 /**

@@ -23,10 +23,25 @@ export function createApiKeyMiddleware(deps: ApiKeyMiddlewareDeps) {
     }
 
     const rawKey = header.slice(7).trim();
+
+    // Widget keys (`pk_widget_...`) are project-scoped submission keys for the
+    // public /api/v1/widget/* surface only. They are never valid as a Bearer
+    // credential for the authenticated API — reject before any DB lookup so a
+    // leaked widget key can't be escalated into a dashboard session (A1).
+    if (rawKey.startsWith('pk_widget_')) {
+      res.status(401).json({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Widget keys cannot be used as Bearer credentials.',
+        },
+      });
+      return;
+    }
+
     const keyHash = createHash('sha256').update(rawKey).digest('hex');
 
     const apiKey = await apiKeyRepo.findByHash(keyHash);
-    if (!apiKey) {
+    if (!apiKey || apiKey.keyType === 'widget') {
       res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Invalid API key.' } });
       return;
     }

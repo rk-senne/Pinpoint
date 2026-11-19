@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createEmptyState, type EmptyStateType } from './EmptyState';
+import { buildIllustration, createEmptyState, type EmptyStateType } from './EmptyState';
 
 describe('EmptyState', () => {
   beforeEach(() => {
@@ -37,6 +37,47 @@ describe('EmptyState', () => {
 
       expect(title.textContent).toBe('No projects yet');
       expect(desc.textContent).toContain('Create your first project');
+    });
+  });
+
+  describe('shared contract', () => {
+    const all: EmptyStateType[] = [
+      'no-projects', 'no-annotations', 'no-comments', 'no-teams', 'no-notifications',
+      'no-search-results', 'no-rules', 'no-sla', 'no-portals', 'no-reports', 'no-shared-annotations',
+    ];
+
+    it.each(all)('%s: aria-hidden svg, title, one-line description, no innerHTML-only markup', (type) => {
+      const el = createEmptyState(type);
+      const svg = el.querySelector('.pp-empty-state__illustration svg')!;
+      expect(svg.getAttribute('aria-hidden')).toBe('true');
+      expect(svg.getAttribute('viewBox')).toBe('0 0 120 120');
+      expect(svg.children.length).toBeGreaterThan(0);
+      expect(el.querySelector('h3')!.textContent!.length).toBeGreaterThan(0);
+      expect(el.querySelector('p')!.textContent).not.toContain('\n');
+    });
+
+    it('options.onCta runs on click and replaces data-action (no double fire)', () => {
+      let n = 0;
+      const el = createEmptyState('no-portals', { onCta: () => { n += 1; } });
+      const btn = el.querySelector('button')!;
+      expect(btn.hasAttribute('data-action')).toBe(false);
+      btn.click();
+      expect(n).toBe(1);
+    });
+
+    it('options override title/description/label and can drop the CTA; compact adds a modifier', () => {
+      const el = createEmptyState('no-rules', { title: 'T', description: 'D', ctaLabel: 'Go', compact: true });
+      expect(el.className).toBe('pp-empty-state pp-empty-state--compact');
+      expect(el.querySelector('h3')!.textContent).toBe('T');
+      expect(el.querySelector('p')!.textContent).toBe('D');
+      expect(el.querySelector('button')!.textContent).toBe('Go');
+      expect(createEmptyState('no-rules', { noCta: true }).querySelector('button')).toBeNull();
+    });
+
+    it('builds illustration shapes with the SVG namespace', () => {
+      const svg = buildIllustration([['circle', { cx: 1, cy: 2, r: 3 }]]);
+      expect(svg.namespaceURI).toBe('http://www.w3.org/2000/svg');
+      expect(svg.firstElementChild!.getAttribute('r')).toBe('3');
     });
   });
 

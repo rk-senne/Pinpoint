@@ -12,6 +12,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const PASSWORD_MIN_LENGTH = 10;
+export const PASSWORD_MAX_LENGTH = 128;
+
+const LEET: Record<string, string> = { '0': 'o', '1': 'l', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', $: 's' };
 
 export type PasswordValidation =
   | { ok: true }
@@ -56,8 +59,28 @@ export function validatePassword(password: string): PasswordValidation {
     };
   }
 
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return { ok: false, error: `Password must be at most ${PASSWORD_MAX_LENGTH} characters.` };
+  }
+
+  // PP-12: "aaaaaaaaaaaa" / "abababababab" satisfy the length floor but carry no entropy.
+  if (new Set(password).size < 5) {
+    return { ok: false, error: 'Password is too predictable. Use a mix of different characters.' };
+  }
+
   const blocklist = loadBlocklistSet();
-  if (blocklist.has(password.toLowerCase())) {
+  const lower = password.toLowerCase();
+  // "Password1234" / "Qwerty123456!" are blocklist words with a decorative suffix:
+  // compare the stem (trailing digits / symbols removed), also after undoing
+  // common letter substitutions (p@ssw0rd → password).
+  const stem = lower.replace(/[^a-z]+$/, '');
+  const rawStem = lower.replace(/[0-9!#%^&*._-]+$/, '');
+  const deLeet = (s: string): string => s.replace(/[01345@$7]/g, (c) => LEET[c] ?? c);
+  if (
+    blocklist.has(lower) ||
+    (stem.length >= 4 && blocklist.has(stem)) ||
+    (rawStem.length >= 4 && blocklist.has(deLeet(rawStem)))
+  ) {
     return {
       ok: false,
       error: 'Password is too common. Choose a less predictable password.',

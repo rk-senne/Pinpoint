@@ -47,21 +47,15 @@ export function cacheMiddleware(
     // Intercept res.json to capture the response
     const originalJson = res.json.bind(res);
     res.json = function (body: unknown): Response {
-      const raw = JSON.stringify(body);
-      evictIfNeeded();
-      store.set(key, { body: raw, status: res.statusCode || 200, createdAt: Date.now() });
-      res.setHeader('X-Cache', 'MISS');
+      const status = res.statusCode || 200;
+      // Never cache errors/redirects: a transient 401/403/5xx must not be replayed.
+      if (status >= 200 && status < 300) {
+        evictIfNeeded();
+        store.set(key, { body: JSON.stringify(body), status, createdAt: Date.now() });
+        res.setHeader('X-Cache', 'MISS');
+      }
       return originalJson(body);
     };
     next();
   };
-}
-
-/**
- * Invalidate all cache entries whose keys start with the given prefix.
- */
-export function invalidateCache(prefix: string): void {
-  for (const key of store.keys()) {
-    if (key.startsWith(prefix)) store.delete(key);
-  }
 }

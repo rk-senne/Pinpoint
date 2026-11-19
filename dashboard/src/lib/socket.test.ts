@@ -160,3 +160,57 @@ describe('annotation:viewers subscription', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('session-cookie handshake after a hard refresh', () => {
+  it('connects with credentials and no auth payload when no in-memory bearer exists', async () => {
+    // A reloaded tab has no bearer in memory; the HttpOnly fl_session cookie
+    // authenticates the same-origin handshake (the server only accepts it
+    // from the dashboard Origin). Previously getSocket() threw
+    // "Not authenticated" and realtime silently died after any reload.
+    const { joinProject } = await import('./socket');
+    expect(() => joinProject('proj-1')).not.toThrow();
+    expect(ioMock).toHaveBeenCalledTimes(1);
+    const opts = ioMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(opts).toMatchObject({ withCredentials: true });
+    expect(opts).not.toHaveProperty('auth');
+  });
+
+  it('still sends the bearer when one is in memory', async () => {
+    const auth = await import('./auth');
+    auth.setToken('jwt-abc');
+    const { joinProject } = await import('./socket');
+    joinProject('proj-1');
+    const opts = ioMock.mock.calls[0]![1] as { auth?: { token?: string } };
+    expect(opts.auth?.token).toBe('jwt-abc');
+  });
+});
+
+describe('canonical dotted realtime events', () => {
+  it('subscribes to the dotted wire name and delivers the payload untouched', async () => {
+    const mod = await importSocketModule();
+    const handler = vi.fn();
+    const unsubscribe = mod.onSocketEvent('annotation.created', handler);
+
+    expect(fakeSocket.__listeners.has('annotation.created')).toBe(true);
+    expect(fakeSocket.__listeners.has('annotation:created')).toBe(false); // no colon alias
+
+    const ann = { id: 'a1', status: 'active' };
+    fakeSocket.__trigger('annotation.created', ann);
+    expect(handler).toHaveBeenCalledWith(ann);
+
+    unsubscribe();
+    fakeSocket.__trigger('annotation.created', ann);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['annotation.updated', 'annotation.status_changed', 'comment.created'] as const)(
+    'listens on %s',
+    async (name) => {
+      const mod = await importSocketModule();
+      const handler = vi.fn();
+      mod.onSocketEvent(name, handler);
+      fakeSocket.__trigger(name, { id: 'x' });
+      expect(handler).toHaveBeenCalledWith({ id: 'x' });
+    },
+  );
+});

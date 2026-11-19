@@ -260,9 +260,16 @@ describe('mountAuthPage', () => {
       name: 'Alice',
     });
 
-    expect(getToken()).toBe('jwt-from-register');
-    expect(authStore.currentUser.get()).toEqual(sampleUser);
-    expect(location.pathname).toBe('/');
+    // Registration never signs the user in (verify-first, no enumeration):
+    // no token is stored, the form flips to login and shows a notice.
+    await vi.waitFor(() => {
+      const notice = root.querySelector('[data-slot="error"]') as HTMLElement;
+      expect(notice.hidden).toBe(false);
+      expect(notice.textContent).toMatch(/check your email/i);
+      expect(notice.dataset.tone).toBe('info');
+    });
+    expect(getToken()).toBeNull();
+    expect((root.querySelector('[data-slot="title"]') as HTMLElement).textContent).toBe('Log In');
   });
 
   it('register requires name, email, and password — submitting with name empty surfaces an error', () => {

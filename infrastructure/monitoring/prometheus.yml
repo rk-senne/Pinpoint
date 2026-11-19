@@ -1,0 +1,21 @@
+# Prometheus configuration for the optional `monitoring` compose profile:
+#
+#   docker compose --profile monitoring up
+#
+# Scrapes the API's Prometheus endpoint. Inside Compose the scrape comes
+# from the private Docker network, which /metrics allows without a token.
+# For any exposed deployment set METRICS_TOKEN on the API and uncomment the
+# `authorization` block below with the same value.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: pinpoint-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:3001"]
+    # authorization:
+    #   type: Bearer
+    #   credentials: <METRICS_TOKEN>

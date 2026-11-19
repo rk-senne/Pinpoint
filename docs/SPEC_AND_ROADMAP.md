@@ -1,5 +1,8 @@
 # Pinpoint — SaaS Pivot Spec & Roadmap
 
+> **Superseded (Nov 2026):** AWS is no longer used. Deployment is the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); AWS/Terraform/ECS mentions below are historical.
+
+
 **Date:** 22 May 2026 | **Status:** Approved for Development
 
 ---

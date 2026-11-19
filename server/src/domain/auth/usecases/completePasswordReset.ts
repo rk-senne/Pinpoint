@@ -74,6 +74,9 @@ export class CompletePasswordReset {
 
     await userRepo.update(record.userId, { passwordHash });
     await authTokenRepo.markUsed(record.id);
+    // A password reset must kill every session issued before it (the reset
+    // is typically run because the old password / a session was compromised).
+    await userRepo.incrementTokenVersion(record.userId);
 
     return ok({ passwordReset: true });
   }

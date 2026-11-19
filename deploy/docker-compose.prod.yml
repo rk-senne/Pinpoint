@@ -1,0 +1,195 @@
+# Pinpoint — provider-neutral production stack (single Linux host + Docker).
+#
+#   cp deploy/.env.production.example deploy/.env.production   # fill in secrets
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production up -d
+#
+# Only Caddy publishes ports (80/443). Postgres, Redis, the API and the
+# dashboard live on the private Compose network. NODE_ENV=production makes
+# the API run its strict config preflight (see README "Self-hosting").
+#
+# Images: pulled from GHCR (published by .github/workflows/ci.yml on main).
+# To build locally instead:  docker compose ... up -d --build
+# (the `build:` sections below are the fallback; the context is the repo root).
+
+name: pinpoint
+
+x-server-image: &server-image
+  image: ${PINPOINT_SERVER_IMAGE:-ghcr.io/rk-senne/pinpoint/server:latest}
+  build:
+    context: ..
+    dockerfile: server/Dockerfile
+
+x-api-env: &api-env
+  NODE_ENV: production
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-pinpoint}
+  DB_USER: ${DB_USER:-pinpoint}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-pinpoint}
+      POSTGRES_USER: ${DB_USER:-pinpoint}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pinpoint} -d ${DB_NAME:-pinpoint}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Rate-limit counters + Socket.IO adapter only; no persistence needed.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    # One-shot: applies pending migrations, then exits 0. `api` waits for it.
+    <<: *server-image
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *api-env
+    command: ["npm", "run", "migrate"]
+    restart: "no"
+
+  api:
+    <<: *server-image
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *api-env
+      PORT: "3001"
+      HOST: 0.0.0.0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:?OAUTH_STATE_SECRET is required}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY is required}
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      # Same origin as the dashboard (Caddy serves both on https://$DOMAIN).
+      CORS_ORIGIN: https://${DOMAIN:?DOMAIN is required}
+      APP_URL: https://${DOMAIN}
+      INTEGRATION_SLACK_CLIENT_ID: ${INTEGRATION_SLACK_CLIENT_ID:-}
+      INTEGRATION_SLACK_CLIENT_SECRET: ${INTEGRATION_SLACK_CLIENT_SECRET:-}
+      INTEGRATION_SLACK_SCOPES: ${INTEGRATION_SLACK_SCOPES:-}
+      INTEGRATION_JIRA_CLIENT_ID: ${INTEGRATION_JIRA_CLIENT_ID:-}
+      INTEGRATION_JIRA_CLIENT_SECRET: ${INTEGRATION_JIRA_CLIENT_SECRET:-}
+      INTEGRATION_JIRA_SCOPES: ${INTEGRATION_JIRA_SCOPES:-}
+      INTEGRATION_LINEAR_CLIENT_ID: ${INTEGRATION_LINEAR_CLIENT_ID:-}
+      INTEGRATION_LINEAR_CLIENT_SECRET: ${INTEGRATION_LINEAR_CLIENT_SECRET:-}
+      INTEGRATION_LINEAR_SCOPES: ${INTEGRATION_LINEAR_SCOPES:-}
+      INTEGRATION_GITHUB_CLIENT_ID: ${INTEGRATION_GITHUB_CLIENT_ID:-}
+      INTEGRATION_GITHUB_CLIENT_SECRET: ${INTEGRATION_GITHUB_CLIENT_SECRET:-}
+      INTEGRATION_GITHUB_SCOPES: ${INTEGRATION_GITHUB_SCOPES:-}
+      INTEGRATION_CLICKUP_CLIENT_ID: ${INTEGRATION_CLICKUP_CLIENT_ID:-}
+      INTEGRATION_CLICKUP_CLIENT_SECRET: ${INTEGRATION_CLICKUP_CLIENT_SECRET:-}
+      INTEGRATION_CLICKUP_SCOPES: ${INTEGRATION_CLICKUP_SCOPES:-}
+      INTEGRATION_ASANA_CLIENT_ID: ${INTEGRATION_ASANA_CLIENT_ID:-}
+      INTEGRATION_ASANA_CLIENT_SECRET: ${INTEGRATION_ASANA_CLIENT_SECRET:-}
+      INTEGRATION_ASANA_SCOPES: ${INTEGRATION_ASANA_SCOPES:-}
+      # One trusted hop: Caddy. Without it every client shares Caddy's IP.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@${DOMAIN}}
+      # Optional S3-compatible screenshot storage (MinIO, Cloudflare R2,
+      # Backblaze B2, ...). Leave S3_BUCKET unset-equivalent by not
+      # configuring credentials to run without screenshot storage.
+      S3_BUCKET: ${S3_BUCKET:-pinpoint}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX:-annotations/screenshots}
+      # Credentials are read from the SDK's standard environment variables.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      DIGEST_ENABLED: ${DIGEST_ENABLED:-true}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      OAUTH_CALLBACK_BASE_URL: https://${DOMAIN}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 30s
+
+  dashboard:
+    image: ${PINPOINT_DASHBOARD_IMAGE:-ghcr.io/rk-senne/pinpoint/dashboard:latest}
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      # `vite preview` also proxies /api etc. to the API; Caddy routes those
+      # paths straight to `api`, so this is only a safety net.
+      API_PROXY_TARGET: http://api:3001
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - dashboard
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates — keep this volume
+      - caddy_config:/config
+
+  # --- Optional observability: docker compose ... --profile monitoring up -d
+  # Not published on any host port; reach it with an SSH tunnel
+  # (ssh -L 9090:localhost:9090 ...) or `docker compose exec`.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - ./prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s' "$$METRICS_TOKEN" > /tmp/metrics_token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:

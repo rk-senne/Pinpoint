@@ -131,16 +131,18 @@
     <template id="tpl-project-list-menu">
       <div
         data-role="menu"
+        role="menu"
+        aria-label="Project actions"
         style="position: fixed; background: var(--pp-bg-primary); border: 1px solid var(--pp-border-heavy); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 4px 0; min-width: 180px; z-index: 10;"
       >
-        <button type="button" data-action="rename" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Rename</button>
-        <button type="button" data-action="archive" data-slot="archiveLabel" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Archive</button>
-        <button type="button" data-action="delete" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px; color: var(--pp-error);">Delete</button>
-        <button type="button" data-action="delete-page" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Delete page</button>
-        <button type="button" data-action="details" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Project details</button>
-        <button type="button" data-action="copy-link" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Copy link</button>
-        <button type="button" data-action="open" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Open in app</button>
-        <button type="button" data-action="export" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Export project</button>
+        <button type="button" role="menuitem" data-action="rename" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Rename</button>
+        <button type="button" role="menuitem" data-action="archive" data-slot="archiveLabel" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Archive</button>
+        <button type="button" role="menuitem" data-action="delete" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px; color: var(--pp-error);">Delete</button>
+        <button type="button" role="menuitem" data-action="delete-page" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Delete page</button>
+        <button type="button" role="menuitem" data-action="details" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Project details</button>
+        <button type="button" role="menuitem" data-action="copy-link" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Copy link</button>
+        <button type="button" role="menuitem" data-action="open" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Open in app</button>
+        <button type="button" role="menuitem" data-action="export" style="display: block; width: 100%; padding: 6px 12px; background: none; border: none; text-align: left; cursor: pointer; font-size: 13px;">Export project</button>
       </div>
     </template>
 
@@ -153,9 +155,12 @@
       >
         <div
           data-role="panel"
-          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px;"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pp-create-project-title"
+          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px; max-width: calc(100vw - 32px); box-sizing: border-box;"
         >
-          <h2 style="margin: 0 0 16px; font-size: 16px;">Create Project</h2>
+          <h2 id="pp-create-project-title" style="margin: 0 0 16px; font-size: 16px;">Create Project</h2>
           <form data-action="submit:submit" data-role="form">
             <label style="display: block; font-size: 13px; margin-bottom: 12px;">
               Name
@@ -200,9 +205,12 @@
       >
         <div
           data-role="panel"
-          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px;"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pp-export-project-title"
+          style="background: var(--pp-bg-primary); padding: 24px; border-radius: 8px; width: 360px; max-width: calc(100vw - 32px); box-sizing: border-box;"
         >
-          <h2 style="margin: 0 0 8px; font-size: 16px;">Export project</h2>
+          <h2 id="pp-export-project-title" style="margin: 0 0 8px; font-size: 16px;">Export project</h2>
           <p data-slot="projectName" data-role="project-name" style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 16px;"></p>
           <div style="display: flex; gap: 8px; margin-bottom: 12px;">
             <button
@@ -239,124 +247,8 @@
       </div>
     </template>
 
-    <!-- Shared project view (Requirements 15.1, 15.2, 15.3, 15.4, 15.5, 15.6). -->
-    <template id="tpl-shared-project-view">
-      <div data-fl-shared-root style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
-        <!-- Password prompt -->
-        <section
-          data-section="prompt"
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
-        >
-          <div
-            style="background: var(--pp-bg-primary); border-radius: 8px; padding: 32px; width: 340px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); text-align: center;"
-          >
-            <div style="font-size: 32px; margin-bottom: 8px;">🔗</div>
-            <h2 style="margin: 0 0 4px; font-size: 18px;">Shared Project</h2>
-            <p style="color: var(--pp-text-secondary); font-size: 13px; margin: 0 0 20px;">
-              Enter the password to view this project.
-            </p>
-            <form data-action="submit:verify" novalidate>
-              <input
-                data-slot="password-input"
-                type="password"
-                placeholder="Password"
-                autofocus
-                style="width: 100%; padding: 8px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 12px;"
-              />
-              <p
-                data-slot="prompt-error"
-                hidden
-                style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"
-              ></p>
-              <button
-                type="submit"
-                data-slot="submit-btn"
-                style="width: 100%; padding: 8px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;"
-              >
-                Unlock
-              </button>
-            </form>
-          </div>
-        </section>
 
-        <!-- Lockout screen with countdown -->
-        <section
-          data-section="locked"
-          hidden
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
-        >
-          <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 12px;">🔒</div>
-            <h2 style="margin: 0 0 8px; font-size: 18px;">Access Locked</h2>
-            <p data-slot="locked-message" style="color: var(--pp-text-secondary); font-size: 14px;"></p>
-          </div>
-        </section>
 
-        <!-- Not-found screen (404 from server) -->
-        <section
-          data-section="not_found"
-          hidden
-          style="display: flex; justify-content: center; align-items: center; height: 100vh; background: var(--pp-bg-hover);"
-        >
-          <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 12px;">🔗</div>
-            <h2 style="margin: 0 0 8px; font-size: 18px;">Link Not Found</h2>
-            <p style="color: var(--pp-text-secondary); font-size: 14px;">
-              This shared link does not exist or has been revoked.
-            </p>
-          </div>
-        </section>
-
-        <!-- Authenticated read-only project view -->
-        <section
-          data-section="authenticated"
-          hidden
-          style="max-width: 800px; margin: 0 auto; padding: 24px;"
-        >
-          <h1 style="font-size: 20px; margin: 0 0 4px;">Shared Project</h1>
-          <p style="color: var(--pp-text-tertiary); font-size: 13px; margin: 0 0 20px;">Read-only view</p>
-
-          <p
-            data-slot="empty-state"
-            hidden
-            style="color: var(--pp-text-tertiary);"
-          >No annotations in this project.</p>
-
-          <table
-            data-slot="annotations-table"
-            hidden
-            style="width: 100%; border-collapse: collapse; font-size: 13px;"
-          >
-            <thead>
-              <tr style="border-bottom: 2px solid var(--pp-border-heavy); text-align: left;">
-                <th style="padding: 8px 6px;">#</th>
-                <th style="padding: 8px 6px;">Type</th>
-                <th style="padding: 8px 6px;">Severity</th>
-                <th style="padding: 8px 6px;">Status</th>
-                <th style="padding: 8px 6px;">Body</th>
-              </tr>
-            </thead>
-            <tbody data-slot="annotations-tbody"></tbody>
-          </table>
-        </section>
-      </div>
-    </template>
-
-    <!-- One row of the shared-project annotation table. -->
-    <template id="tpl-shared-project-view-row">
-      <tr style="border-bottom: 1px solid var(--pp-border-light);">
-        <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
-        <td data-slot="type" style="padding: 8px 6px;"></td>
-        <td style="padding: 8px 6px;">
-          <span data-slot="severity" style="font-weight: 500;"></span>
-        </td>
-        <td data-slot="status" style="padding: 8px 6px;"></td>
-        <td
-          data-slot="body"
-          style="padding: 8px 6px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-        ></td>
-      </tr>
-    </template>
 
     <!--
       AuthPage shell (Requirement 31.1, task 18.4).
@@ -485,7 +377,7 @@
               padding: 10px;
               border-radius: 4px;
               border: none;
-              background: var(--pp-link-alt);
+              background: var(--pp-accent);
               color: #fff;
               font-size: 16px;
               cursor: pointer;
@@ -602,7 +494,7 @@
                 type="submit"
                 style="
                   padding: 8px 12px;
-                  background: var(--pp-link-alt);
+                  background: var(--pp-accent);
                   color: #fff;
                   border: none;
                   border-radius: 4px;
@@ -880,7 +772,7 @@
         <div data-section="loading" style="padding: 24px;">Loading…</div>
 
         <!-- Error state. -->
-        <div data-section="error" hidden style="padding: 24px; color: #e53e3e;">
+        <div data-section="error" hidden role="alert" style="padding: 24px; color: var(--pp-error-text);">
           Error: <span data-slot="error-message"></span>
         </div>
 
@@ -895,12 +787,14 @@
                 type="button"
                 data-action="select-list"
                 data-role="toggle-list"
+                aria-pressed="true"
                 style="padding: 6px 14px; border: 1px solid var(--pp-input-border); cursor: pointer; font-size: 13px; border-radius: 4px 0 0 4px;"
               >List</button>
               <button
                 type="button"
                 data-action="select-kanban"
                 data-role="toggle-kanban"
+                aria-pressed="false"
                 style="padding: 6px 14px; border: 1px solid var(--pp-input-border); cursor: pointer; font-size: 13px; border-radius: 0 4px 4px 0; border-left: none;"
               >Kanban</button>
             </div>
@@ -975,8 +869,15 @@
           <div
             data-role="analytics"
             hidden
+            data-expanded="false"
             style="display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;"
           >
+            <!-- Mobile-only compact summary (hidden by CSS above 768px); the
+                 four cards below become an accordion behind its toggle. -->
+            <div class="pp-analytics-summary" data-role="analytics-summary">
+              <ul class="pp-analytics-summary__chips" data-role="analytics-chips" aria-label="Annotation summary"></ul>
+              <button type="button" class="pp-analytics-summary__toggle" data-action="toggle-analytics" data-role="analytics-toggle" aria-expanded="false">Details ▾</button>
+            </div>
             <div data-role="analytics-card" data-dim="bySeverity" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 12px; min-width: 180px; flex: 1;">
               <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">By Severity</div>
               <div data-role="rows"></div>
@@ -1003,9 +904,7 @@
 
           <!-- List subview. -->
           <section data-section="list" hidden>
-            <p data-role="list-empty" hidden style="color: var(--pp-text-tertiary); padding: 16px;">
-              No annotations yet.
-            </p>
+            <div data-role="list-empty" hidden></div>
             <table
               data-role="list-table"
               hidden
@@ -1027,7 +926,7 @@
 
           <!-- Kanban subview. Three columns hard-coded for the three
                annotation statuses; each column owns its own card list. -->
-          <section data-section="kanban" hidden style="display: flex; gap: 12px;">
+          <section data-section="kanban" hidden tabindex="0" aria-label="Kanban board" style="display: flex; gap: 12px;">
             <div
               data-role="kanban-column"
               data-status="active"
@@ -1057,10 +956,10 @@
           <!-- Bulk actions bar (shown when items are selected). -->
           <div data-role="bulk-actions" hidden style="position: sticky; bottom: 0; background: var(--pp-bg-primary, #fff); border-top: 1px solid var(--pp-border, #e5e7eb); padding: 12px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 -2px 8px rgba(0,0,0,0.1);">
             <span data-role="bulk-count" style="font-size: 14px; font-weight: 500;"></span>
-            <button data-action="bulk-resolve" style="padding: 6px 12px; background: #10b981; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Resolve</button>
-            <button data-action="bulk-in-progress" style="padding: 6px 12px; background: #f59e0b; color: #fff; border: none; border-radius: 4px; cursor: pointer;">In Progress</button>
-            <button data-action="bulk-delete" style="padding: 6px 12px; background: #ef4444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">Delete</button>
-            <button data-action="bulk-clear" style="padding: 6px 12px; background: var(--pp-bg-tertiary, #f3f4f6); border: 1px solid var(--pp-border, #d1d5db); border-radius: 4px; cursor: pointer;">Clear</button>
+            <button type="button" data-action="bulk-resolve" class="pp-btn pp-btn--primary">Resolve</button>
+            <button type="button" data-action="bulk-in-progress" class="pp-btn pp-btn--secondary">In Progress</button>
+            <button type="button" data-action="bulk-delete" class="pp-btn pp-btn--danger">Delete</button>
+            <button type="button" data-action="bulk-clear" class="pp-btn pp-btn--ghost">Clear</button>
           </div>
 
           <!-- Detail subview. Inline rather than a separate template
@@ -1081,7 +980,7 @@
                   <span
                     data-role="bug-badge"
                     hidden
-                    style="margin-left: 8px; background: #e53e3e; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 11px;"
+                    style="margin-left: 8px; background: #c53030; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 11px;"
                   >Bug Report</span>
                 </h2>
                 <div style="display: flex; align-items: center; gap: 12px;">
@@ -1216,6 +1115,10 @@
                 ></ul>
               </details>
 
+              <!-- Host for the Console & errors panel and the "Send to…" menu,
+                   so they render inside the detail card. -->
+              <div data-role="detail-extras"></div>
+
               <!-- Assignment subpanel for bug-report annotations
                    (Reqs 8.4, 22.6). -->
               <div
@@ -1226,8 +1129,9 @@
                 <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px;">Assignment</div>
                 <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
                   <div>
-                    <label style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Assignee</label>
+                    <label for="pp-assignee-select" style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Assignee</label>
                     <select
+                      id="pp-assignee-select"
                       data-role="assignee-select"
                       style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; width: 240px; background: var(--pp-bg-primary);"
                     >
@@ -1235,8 +1139,9 @@
                     </select>
                   </div>
                   <div>
-                    <label style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Due Date</label>
+                    <label for="pp-due-date" style="font-size: 12px; color: var(--pp-text-secondary); display: block; margin-bottom: 4px;">Due Date</label>
                     <input
+                      id="pp-due-date"
                       type="date"
                       data-role="due-date"
                       style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;"
@@ -1245,9 +1150,38 @@
                   <button
                     type="button"
                     data-action="save-assignment"
-                    style="padding: 6px 16px; background: var(--pp-link); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                    style="padding: 6px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
                   >Save</button>
                 </div>
+              </div>
+
+              <!-- Comment thread: chronological list + composer with @mentions. -->
+              <div
+                data-role="comments-panel"
+                style="border-top: 1px solid var(--pp-border-light); padding-top: 12px; margin-top: 12px;"
+              >
+                <h3 style="margin: 0 0 8px; font-size: 13px; font-weight: 600;">Comments <span data-slot="comment-count" style="color: var(--pp-text-secondary); font-weight: 400;"></span></h3>
+                <ul
+                  data-role="comment-list"
+                  aria-live="polite"
+                  style="list-style: none; margin: 0 0 12px; padding: 0;"
+                ></ul>
+                <p data-role="comment-empty" hidden style="margin: 0 0 12px; font-size: 13px; color: var(--pp-text-secondary);">No comments yet.</p>
+                <form data-role="comment-form" style="display: flex; flex-direction: column; gap: 8px; max-width: 560px;">
+                  <label for="pp-comment-input" style="font-size: 12px; color: var(--pp-text-secondary);">Add a comment — type @ followed by a teammate's name to mention them</label>
+                  <textarea
+                    id="pp-comment-input"
+                    data-role="comment-input"
+                    rows="3"
+                    placeholder="Write a comment…"
+                    style="padding: 8px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; font-family: inherit; resize: vertical; background: var(--pp-bg-primary); color: var(--pp-text-primary);"
+                  ></textarea>
+                  <button
+                    type="submit"
+                    data-role="comment-submit"
+                    style="align-self: flex-start; padding: 6px 16px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;"
+                  >Comment</button>
+                </form>
               </div>
             </div>
           </section>
@@ -1258,14 +1192,15 @@
     <!-- One row of the project-view annotation list. -->
     <template id="tpl-project-view-list-row">
       <tr style="border-bottom: 1px solid var(--pp-border-light); cursor: pointer;">
-        <td style="padding: 8px 6px; width: 32px;"><input type="checkbox" data-role="row-checkbox" aria-label="Select annotation" /></td>
-        <td data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
-        <td data-slot="type" style="padding: 8px 6px;"></td>
-        <td style="padding: 8px 6px;">
+        <td data-cell="chk" style="padding: 8px 6px; width: 32px;"><input type="checkbox" data-role="row-checkbox" aria-label="Select annotation" /></td>
+        <td data-cell="pin" data-slot="pin-number" style="padding: 8px 6px; font-weight: 600;"></td>
+        <td data-cell="type" data-slot="type" style="padding: 8px 6px;"></td>
+        <td data-cell="sev" style="padding: 8px 6px;">
           <span data-slot="severity" style="font-weight: 500;"></span>
         </td>
-        <td data-slot="status" style="padding: 8px 6px;"></td>
+        <td data-cell="status" data-slot="status" style="padding: 8px 6px;"></td>
         <td
+          data-cell="body"
           data-slot="body"
           style="padding: 8px 6px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
         ></td>
@@ -1301,6 +1236,7 @@
       >
         <h1 style="margin: 0 0 16px; font-size: 20px;">Settings</h1>
 
+        <div class="pp-tabs-wrap" data-role="tabs-wrap">
         <div
           data-role="tabs"
           style="display: flex; gap: 0; border-bottom: 1px solid var(--pp-border-heavy); margin-bottom: 20px;"
@@ -1335,6 +1271,7 @@
             data-role="tab-appearance"
             style="padding: 8px 16px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--pp-text-secondary); font-weight: 400; cursor: pointer; font-size: 14px;"
           >Appearance</button>
+        </div>
         </div>
 
         <!-- Profile tab. -->
@@ -1545,8 +1482,9 @@
           data-action="toggleDropdown"
           aria-label="Notifications"
           style="position: relative; background: none; border: none; cursor: pointer; font-size: 18px; padding: 4px 6px; line-height: 1;"
-        >🔔<span
+        ><span aria-hidden="true">🔔</span><span
             data-role="badge"
+            aria-hidden="true"
             hidden
             style="position: absolute; top: -2px; right: -2px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 600; min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px;"
           ></span></button>
@@ -1590,20 +1528,6 @@
       </div>
     </template>
 
-    <!-- Reporting page -->
-    <template id="reporting-page">
-      <div class="reporting-page">
-        <h1>Reports</h1>
-        <div class="reporting-grid" data-slot="cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;"></div>
-      </div>
-    </template>
-    <template id="reporting-card">
-      <div class="reporting-card" style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; background: var(--pp-bg-primary);">
-        <h3 data-slot="title" style="margin: 0 0 8px; font-size: 14px; color: var(--pp-text-secondary);"></h3>
-        <div data-slot="value" class="reporting-value" style="font-size: 24px; font-weight: 600; margin-bottom: 8px;"></div>
-        <div data-slot="detail" class="reporting-detail" style="color: var(--pp-text-secondary); font-size: 13px;"></div>
-      </div>
-    </template>
 
     <!-- 404 Not Found page (catch-all fallback). -->
     <template id="not-found-page">
@@ -1636,100 +1560,16 @@
     <template id="tpl-heatmap-overlay">
       <div style="margin-top: 16px;">
         <p data-slot="heatmap-status" style="font-size: 13px; color: var(--pp-text-secondary); margin: 0 0 8px;"></p>
-        <div data-role="heatmap-grid" style="position: relative; overflow: auto; border: 1px solid var(--pp-border-heavy); border-radius: 6px; background: var(--pp-bg-secondary); min-height: 100px;"></div>
-      </div>
-    </template>
-
-    <!-- Workflows Page. -->
-    <template id="tpl-workflows-page">
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px;">
-        <h1 style="font-size: 20px; margin: 0 0 20px;">Workflow Automation</h1>
-
-        <!-- Automation Rules -->
-        <section style="margin-bottom: 32px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h2 style="font-size: 16px; margin: 0;">Automation Rules</h2>
-            <button type="button" data-action="create-rule" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;">+ Create Rule</button>
-          </div>
-          <div data-role="rules-list" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; overflow: hidden;"></div>
-          <div data-role="rule-form" hidden style="margin-top: 12px; border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px;">
-            <div style="display: grid; gap: 10px;">
-              <input data-role="rule-name" type="text" placeholder="Rule name" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <select data-role="rule-trigger" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
-                <option value="annotation.created">Annotation Created</option>
-                <option value="annotation.status_changed">Status Changed</option>
-                <option value="comment.created">Comment Created</option>
-              </select>
-              <select data-role="rule-action" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
-                <option value="assign">Assign</option>
-                <option value="set_status">Set Status</option>
-                <option value="set_due_date">Set Due Date</option>
-                <option value="notify">Notify</option>
-              </select>
-              <textarea data-role="rule-params" placeholder='Action params (JSON), e.g. {"assigneeId":"..."}' rows="3" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px; font-family: monospace;"></textarea>
-              <button type="button" data-action="submit-rule" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 8px 14px; cursor: pointer; font-size: 13px; justify-self: start;">Save Rule</button>
-            </div>
-          </div>
-        </section>
-
-        <!-- SLA Policies -->
-        <section>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h2 style="font-size: 16px; margin: 0;">SLA Policies</h2>
-            <button type="button" data-action="create-sla" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px;">+ Create SLA</button>
-          </div>
-          <div data-role="sla-list" style="border: 1px solid var(--pp-border-heavy); border-radius: 6px; overflow: hidden;"></div>
-          <div data-role="sla-form" hidden style="margin-top: 12px; border: 1px solid var(--pp-border-heavy); border-radius: 6px; padding: 16px;">
-            <div style="display: grid; gap: 10px;">
-              <input data-role="sla-name" type="text" placeholder="Policy name" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <select data-role="sla-severity" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
-                <option value="critical">Critical</option>
-                <option value="major">Major</option>
-                <option value="minor">Minor</option>
-              </select>
-              <input data-role="sla-response" type="number" placeholder="Response time (hours)" min="1" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <input data-role="sla-resolution" type="number" placeholder="Resolution time (hours)" min="1" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <button type="button" data-action="submit-sla" style="background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; padding: 8px 14px; cursor: pointer; font-size: 13px; justify-self: start;">Save SLA</button>
-            </div>
-          </div>
-        </section>
-      </div>
-    </template>
-
-    <!-- Client Portal page (task: final-polish). -->
-    <template id="tpl-client-portal-page">
-      <div style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-          <h1 style="margin: 0; font-size: 22px;">Client Portals</h1>
-          <button type="button" data-action="showCreate" style="padding: 8px 14px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">+ Create Portal</button>
+        <!-- The grid is sized to the page's annotation extent (often wider
+             than a phone), so the wrapper scrolls instead of clipping cells. -->
+        <div data-role="heatmap-scroll" tabindex="0" aria-label="Annotation heatmap" style="max-width: 100%; overflow: auto; margin-bottom: 16px;">
+        <div data-role="heatmap-grid" style="position: relative; min-height: 100px;"></div>
         </div>
-        <p data-role="error" hidden style="color: var(--pp-error); font-size: 13px; margin: 0 0 12px;"></p>
-        <div data-role="portal-form" hidden style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; margin-bottom: 20px; background: var(--pp-bg-secondary);">
-          <form data-role="create-form" data-action="submit:submitPortal" novalidate>
-            <div style="display: grid; gap: 10px;">
-              <select name="projectId" data-role="project-select" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;">
-                <option value="">Select a project</option>
-              </select>
-              <input name="title" type="text" placeholder="Portal title" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <input name="slug" type="text" placeholder="Slug (URL path)" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <input name="welcomeMessage" type="text" placeholder="Welcome message" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <input name="brandColor" type="color" value="#4f46e5" style="width: 48px; height: 32px; border: 1px solid var(--pp-input-border); border-radius: 4px; cursor: pointer;" />
-              <input name="logoUrl" type="url" placeholder="Logo URL (optional)" style="padding: 6px 10px; border: 1px solid var(--pp-input-border); border-radius: 4px; font-size: 13px;" />
-              <button type="submit" style="padding: 8px 14px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; justify-self: start;">Create</button>
-            </div>
-          </form>
-        </div>
-        <div data-role="portal-list" style="display: grid; gap: 10px;"></div>
       </div>
     </template>
 
-    <!-- Integrations Page (Task 5). -->
-    <template id="tpl-integrations-page">
-      <div style="max-width: 720px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
-        <h1 style="font-size: 20px; margin: 0 0 20px;">Integrations</h1>
-        <div data-role="integrations-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"></div>
-      </div>
-    </template>
+
+
 
     <!-- Command Palette (C3 Global Search). -->
     <template id="tpl-command-palette">

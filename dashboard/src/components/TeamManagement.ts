@@ -301,6 +301,9 @@ export function mountTeamManagement(
     if (canManage) {
       select.hidden = false;
       attr(select, 'data-user-id', member.userId);
+      attr(select, 'aria-label', `Role for ${member.name || member.email}`);
+      // The select already shows the role; a badge beside it is duplicate noise.
+      row.querySelector<HTMLElement>('[data-role="role-badge"]')?.setAttribute('hidden', '');
       // Mark options. We can't reuse the `option.value=member.role` shorthand
       // alone because jsdom's setter accepts arbitrary strings and we want
       // typescript-friendly enumeration.
@@ -428,6 +431,7 @@ export function mountTeamManagement(
       // value. Normalise both shapes so the component is resilient to
       // either contract.
       const teams =
+        (teamsResponse as { data?: TeamWithMembers[] }).data ??
         (teamsResponse as TeamsResponse).teams ??
         (teamsResponse as TeamWithMembers[]);
 

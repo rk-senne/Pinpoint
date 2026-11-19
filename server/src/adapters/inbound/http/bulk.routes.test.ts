@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
 
@@ -14,7 +14,7 @@ function noopAuth(_req: express.Request, _res: express.Response, next: express.N
   next();
 }
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
 
 function makeApp(deps: BulkRouteDeps): express.Express {
   const app = express();
@@ -52,7 +52,7 @@ describe('bulk.routes', () => {
       const res = await request(app)
         .post('/api/v1/projects/proj-1/annotations/bulk')
         .send({
-          ids: ['a0000000-0000-0000-0000-000000000001'],
+          ids: ['a0000000-0000-4000-8000-000000000001'],
           action: 'invalid_action',
         });
 
@@ -64,7 +64,7 @@ describe('bulk.routes', () => {
       // Mock: projects ownership check passes, then whereIn → andWhere chain returns matching annotations
       const update = vi.fn().mockResolvedValue(1);
       const whereIn = vi.fn().mockReturnValue({
-        andWhere: vi.fn().mockResolvedValue([{ id: 'a0000000-0000-0000-0000-000000000001', project_id: 'proj-1' }]),
+        andWhere: vi.fn().mockResolvedValue([{ id: 'a0000000-0000-4000-8000-000000000001', project_id: 'proj-1' }]),
         update,
       });
       mockDb = vi.fn().mockImplementation((table: string) => {
@@ -72,7 +72,7 @@ describe('bulk.routes', () => {
           const builder: any = {};
           const chain = () => builder;
           builder.where = vi.fn(chain);
-          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID }));
+          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID, owner_id: 'u1' }));
           return builder;
         }
         return { whereIn };
@@ -83,7 +83,7 @@ describe('bulk.routes', () => {
       const res = await request(app)
         .post('/api/v1/projects/proj-1/annotations/bulk')
         .send({
-          ids: ['a0000000-0000-0000-0000-000000000001'],
+          ids: ['a0000000-0000-4000-8000-000000000001'],
           action: 'assign',
         });
 
@@ -92,7 +92,7 @@ describe('bulk.routes', () => {
     });
 
     it('accepts valid bulk resolve request', async () => {
-      const annotationId = 'a0000000-0000-0000-0000-000000000001';
+      const annotationId = 'a0000000-0000-4000-8000-000000000001';
       const annotations = [{ id: annotationId, project_id: 'proj-1' }];
 
       const update = vi.fn().mockResolvedValue(1);
@@ -107,7 +107,7 @@ describe('bulk.routes', () => {
           const builder: any = {};
           const chain = () => builder;
           builder.where = vi.fn(chain);
-          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID }));
+          builder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: ORG_ID, owner_id: 'u1' }));
           return builder;
         }
         callCount++;
@@ -124,6 +124,8 @@ describe('bulk.routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ affected: 1, action: 'resolve' });
+      // The verb `resolve` must be persisted as the real status `resolved`.
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: 'resolved' }));
     });
 
     it('rejects non-uuid ids', async () => {
@@ -170,10 +172,29 @@ describe('bulk.routes', () => {
 
       const res = await request(app)
         .post('/api/v1/projects/proj-1/annotations/bulk')
-        .send({ ids: ['a0000000-0000-0000-0000-000000000001'], action: 'resolve' });
+        .send({ ids: ['a0000000-0000-4000-8000-000000000001'], action: 'resolve' });
 
       expect(res.status).toBe(404);
       expect(res.body.error.code).toBe('NOT_FOUND');
+    });
+
+    // GAP 7 — validation failures use the canonical envelope with the
+    // standardized details.issues (flatten() shape), never flat issues.
+    it('emits the canonical error envelope with flatten()-shaped details.issues', async () => {
+      mockDb = vi.fn().mockReturnValue({});
+      const app = makeApp({ authMiddleware: noopAuth, db: mockDb as any });
+
+      const res = await request(app)
+        .post('/api/v1/projects/proj-1/annotations/bulk')
+        .send({ ids: [], action: 'resolve' });
+
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('object');
+      expect(res.body.error.code).toBe('VALIDATION');
+      expect(res.body.error.details.issues).toBeDefined();
+      // flatten() shape, not the bare `.flatten().fieldErrors`.
+      expect(res.body.error.details.issues.fieldErrors).toBeDefined();
+      expect(res.body.issues).toBeUndefined();
     });
   });
 });

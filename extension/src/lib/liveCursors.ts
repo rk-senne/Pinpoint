@@ -8,9 +8,14 @@
  * remote cursors.
  */
 
+import { sanitizePageUrl } from './pageUrl';
+
 export interface CursorPosition {
   userId: string;
-  email: string;
+  /** Display name relayed by the server (emails are no longer broadcast). */
+  name?: string;
+  /** Legacy servers only. */
+  email?: string;
   x: number;
   y: number;
   pageUrl: string;
@@ -33,7 +38,7 @@ export function startCursorBroadcast(
       email: userInfo.email,
       x: e.clientX + window.scrollX,
       y: e.clientY + window.scrollY,
-      pageUrl: window.location.href,
+      pageUrl: sanitizePageUrl(window.location.href),
     });
   };
 
@@ -60,7 +65,7 @@ export function renderRemoteCursor(cursor: CursorPosition): () => void {
   svg.appendChild(path);
 
   const label = document.createElement('span');
-  label.textContent = cursor.email.split('@')[0];
+  label.textContent = cursor.name || cursor.email?.split('@')[0] || 'Teammate';
   Object.assign(label.style, {
     background: '#4f46e5',
     color: '#fff',

@@ -66,7 +66,10 @@ The same login response body includes `{ token }`:
 
 - JWTs are short-lived (configurable, default 24h).
 - Sliding-window refresh (`POST /api/v1/auth/refresh`) with a 7-day grace
-  window post-expiry is planned for Phase 15.
+  window post-expiry (`JWT_GRACE_WINDOW_SECONDS`) is implemented; refresh
+  re-checks the user, `token_version` and org membership before re-signing.
+- Logout, password reset, `POST /api/v1/org/revoke-sessions` and member
+  removal bump `users.token_version`, revoking every outstanding JWT.
 - `POST /api/v1/auth/logout` clears both cookies (dashboard) and the extension
   removes the token from `chrome.storage.local`.
 

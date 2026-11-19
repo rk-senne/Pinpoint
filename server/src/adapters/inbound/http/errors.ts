@@ -83,7 +83,7 @@ export function sendDomainError(res: Response, error: DomainError): Response {
     res.setHeader('Retry-After', String(error.retryAfterSeconds));
   }
 
-  const code = CODE_BY_KIND[error.kind] ?? 'INTERNAL_ERROR';
+  const code = error.code ?? CODE_BY_KIND[error.kind] ?? 'INTERNAL_ERROR';
   const details: Record<string, unknown> = {};
 
   // Surface domain-level details (e.g. Validation.issues).
@@ -146,6 +146,33 @@ export function sendZodFailure(
 }
 
 /**
+ * Emit the canonical error envelope directly from a status/code/message
+ * triple. This is the shared replacement for the per-file `sendError`
+ * helpers that previously lived in `billing.routes.ts` and
+ * `premium.routes.ts` (GAP 7). Routes that do not have a `DomainError`
+ * (thin-CRUD + catch blocks) use this to stay on the one canonical shape:
+ *
+ * ```json
+ * { "error": { "code": "SNAKE_UPPER_CASE", "message": "...", "details"?: {} } }
+ * ```
+ *
+ * `details` is omitted entirely when empty so the envelope stays minimal.
+ */
+export function sendError(
+  res: Response,
+  status: number,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+): Response {
+  const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = {
+    error: { code, message },
+  };
+  if (details && Object.keys(details).length > 0) body.error.details = details;
+  return res.status(status).json(body);
+}
+
+/**
  * Coerce a `req.params[name]` slot to a single string. Express types
  * the field as `string | string[]` (the array variant only happens
  * when route params are listed twice in the path); routes that mount
@@ -171,4 +198,18 @@ export function validateUuidParam(res: Response, paramName: string, value: strin
     return false;
   }
   return true;
+}
+
+/**
+ * True only for absolute http(s) URLs. `z.string().url()` accepts any scheme
+ * (`javascript:`, `data:`, `file:`), which then flows into stored page URLs
+ * and dashboard links; page URLs must be web pages (F-23).
+ */
+export function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
 }

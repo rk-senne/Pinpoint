@@ -27,11 +27,11 @@ export interface TeamsRouteDeps {
 }
 
 const CreateTeamBodySchema = z.object({
-  name: z.string().trim().min(1, 'Team name is required.'),
+  name: z.string().trim().min(1, 'Team name is required.').max(255),
 });
 
 const InviteBodySchema = z.object({
-  email: z.string().trim().min(1, 'Email is required.'),
+  email: z.string().trim().min(1, 'Email is required.').max(254),
 });
 
 const UpdateRoleBodySchema = z.object({
@@ -61,6 +61,7 @@ export function createTeamsRoutes(deps: TeamsRouteDeps): Router {
     }
     const result = await createTeam.execute({
       ownerUserId: req.user!.userId,
+      orgId: req.user!.orgId,
       name: parsed.data.name,
     });
     if (!result.ok) {
@@ -121,6 +122,7 @@ export function createTeamsRoutes(deps: TeamsRouteDeps): Router {
     const result = await inviteMember.execute({
       actorUserId: req.user!.userId,
       teamId: paramString(req.params.id),
+      orgId: req.user!.orgId,
       email: parsed.data.email,
     });
     if (!result.ok) {

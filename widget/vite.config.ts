@@ -11,12 +11,11 @@ export default defineConfig({
     },
     outDir: 'dist',
     emptyOutDir: true,
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-      },
-    },
+    // Vite's built-in esbuild minifier — no optional `terser` dependency.
+    // Console calls are intentionally NOT dropped: the widget's console
+    // capture (Mission C2) passes through to the host console, and the
+    // init-time misconfiguration errors are meant for integrators.
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         extend: true,

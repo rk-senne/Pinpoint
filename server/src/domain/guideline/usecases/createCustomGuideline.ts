@@ -12,6 +12,8 @@ import type { GuidelineRepo } from '../ports/GuidelineRepo.js';
 export interface CreateCustomGuidelineInput {
   /** Caller's user id; persisted as the creator. */
   userId: string;
+  /** Caller's org; the guideline is visible only within it. */
+  orgId: string;
   name: string;
   description: string;
 }
@@ -41,6 +43,7 @@ export class CreateCustomGuideline {
       description,
       isDefault: false,
       createdByUserId: input.userId,
+      orgId: input.orgId,
     });
     return ok(created);
   }

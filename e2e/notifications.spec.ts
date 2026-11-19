@@ -36,7 +36,6 @@ test.describe('notifications', () => {
       session,
       { name: `e2e-notif-${Date.now()}`, urls: ['https://example.com/'] },
       async (project) => {
-        const pageId = project.pages[0].id;
 
         // Create annotation
         const createRes = await request.post(
@@ -44,18 +43,26 @@ test.describe('notifications', () => {
           {
             headers: session.mutatingHeaders(),
             data: {
-              pageId,
+              pageUrl: project.pages[0].url,
               body: 'Notification test annotation',
               type: 'note',
               severity: 'minor',
-              selector: 'body',
-              position: { x: 0, y: 0 },
+              target: {
+                cssSelector: 'body',
+                xpath: '/html/body',
+                pageX: 0,
+                pageY: 0,
+                tagName: 'BODY',
+                textSnippet: '',
+              },
               environment: {
                 browserFamily: 'Chrome',
                 browserVersion: '120.0',
                 osFamily: 'macOS',
                 osVersion: '14.0',
                 deviceType: 'desktop',
+                userAgentRaw:
+                  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               },
             },
           },
@@ -89,14 +96,14 @@ test.describe('notifications', () => {
           const notifId = notifications[0].id;
 
           // Mark single notification read
-          const markRes = await request.put(
+          const markRes = await request.patch(
             `${API_BASE_URL}/api/v1/notifications/${notifId}/read`,
             { headers: session.mutatingHeaders() },
           );
           expect(markRes.ok()).toBe(true);
 
           // Mark all read
-          const markAllRes = await request.put(
+          const markAllRes = await request.post(
             `${API_BASE_URL}/api/v1/notifications/read-all`,
             { headers: session.mutatingHeaders() },
           );

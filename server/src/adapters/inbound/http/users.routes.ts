@@ -37,6 +37,7 @@ const UpdateProfileBodySchema = z
     name: z.unknown().optional(),
     email: z.unknown().optional(),
     avatarUrl: z.unknown().optional(),
+    currentPassword: z.string().max(256).optional(),
   })
   .passthrough();
 
@@ -113,6 +114,7 @@ export function createUsersRoutes(deps: UsersRouteDeps): Router {
       name?: string;
       email?: string;
       avatarUrl?: string | null;
+      currentPassword?: string;
     } = { userId: req.user!.userId };
     if (parsed.data.name !== undefined) input.name = parsed.data.name as string;
     if (parsed.data.email !== undefined) input.email = parsed.data.email as string;
@@ -120,14 +122,20 @@ export function createUsersRoutes(deps: UsersRouteDeps): Router {
       input.avatarUrl = parsed.data.avatarUrl as string | null;
     }
 
+    if (parsed.data.currentPassword !== undefined) input.currentPassword = parsed.data.currentPassword;
+
     const result = await updateProfile.execute(input);
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
     }
+    const emailChange = result.value.emailChange;
     res.status(200).json({
-      message: 'Profile updated successfully.',
+      message: emailChange
+        ? 'Profile updated. If the new address is available, a confirmation link was sent to it; your login email changes once it is confirmed.'
+        : 'Profile updated successfully.',
       user: renderUser(result.value.user),
+      ...(emailChange ? { emailChangePending: true } : {}),
     });
   });
 

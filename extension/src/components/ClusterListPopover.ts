@@ -171,6 +171,7 @@ dialog.fl-cluster-list::backdrop { background: transparent; }
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${POPOVER_CSS}</style>
     <dialog class="fl-cluster-list" part="dialog" data-pinpoint="cluster-list-popover" role="dialog" aria-label="Annotations in cluster">
@@ -185,6 +186,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-cluster-list-item" role="option" tabindex="0">
       <span class="fl-severity-dot" aria-hidden="true"></span>

@@ -4,6 +4,20 @@
 // JSON) for annotations. The S3 adapter is the only file in the codebase
 // that imports `@aws-sdk/client-s3`.
 
+/**
+ * Thrown by a ScreenshotStore adapter when the backing store cannot be used
+ * at all — credentials/bucket/endpoint not configured, endpoint unreachable,
+ * or the provider is failing (5xx). It is an operational condition, not a bug
+ * in the request, so the HTTP layer reports it as 503 UNAVAILABLE rather than
+ * an opaque 500.
+ */
+export class StorageUnavailableError extends Error {
+  readonly name = 'StorageUnavailableError';
+  constructor(message: string, readonly cause?: unknown) {
+    super(message);
+  }
+}
+
 export interface UploadScreenshotInput {
   annotationId: string;
   body: Buffer;

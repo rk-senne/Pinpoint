@@ -19,6 +19,14 @@ export interface SharedLink {
 }
 
 export interface NewSharedLink {
+  /**
+   * Optional caller-supplied id. Mission A7 generates a ≥128-bit
+   * `crypto.randomBytes(16)` base64url token here so new link ids are
+   * unguessable (kills the enumeration oracle). When omitted the repo
+   * falls back to its own default (the legacy DB-generated UUID), so
+   * existing links and callers keep working.
+   */
+  id?: string;
   projectId: string;
   passwordHash?: string | null;
   allowFeedback?: boolean;

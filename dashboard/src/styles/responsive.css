@@ -171,6 +171,15 @@
   [data-role="filter-bar"] button {
     width: 100%;
     min-width: unset !important;
+    box-sizing: border-box;
+    /* `flex: 1` (desktop) in a column flexbox stretched the search box. */
+    flex: 0 0 auto !important;
+  }
+
+  /* Vertically centre the logo with the hamburger and header buttons. */
+  .fl-app-layout__logo {
+    display: inline-flex !important;
+    align-items: center;
   }
 
   /* --- Kanban board scrolls horizontally on mobile --- */
@@ -210,6 +219,14 @@
 
   [data-role="analytics-card"] {
     min-width: 100% !important;
+    box-sizing: border-box;
+  }
+
+  /* Keep short table cells (#, type, severity, status) on one line; only the
+     last (body) column may wrap, and the table scrolls horizontally. */
+  table td:not(:last-child),
+  table th:not(:last-child) {
+    white-space: nowrap;
   }
 
   /* --- Touch targets: minimum 44x44px on mobile --- */
@@ -256,10 +273,53 @@
     flex-wrap: nowrap !important;
   }
 
+  /* Tabs must keep their intrinsic width; shrinking made labels overlap. */
+  [data-role="tabs"] > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* Toggle switches are a small track, not a 44px square (the generic
+     touch-target rule above turned them into rounded blobs). */
+  [role="switch"] {
+    min-height: 0 !important;
+    min-width: 0 !important;
+  }
+
   /* Dialog panels full-width on mobile */
   [data-role="panel"] {
     width: calc(100vw - 32px) !important;
     max-width: 100%;
+  }
+
+  /* Review link: stack the explainer above the frame; a fixed 280px sidebar
+     left the reviewed page ~110px wide on a phone. */
+  .pp-review-root {
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 100vh;
+  }
+
+  .pp-review-aside {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--pp-border-medium);
+  }
+
+  .pp-review-main {
+    height: 75vh;
+  }
+
+  /* Team member rows: let the role select + Remove wrap under the name
+     instead of overflowing the card. */
+  [data-role="member"] {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  [data-role="member"] [data-role="email"] {
+    overflow-wrap: anywhere;
   }
 
   /* Header adjustments */

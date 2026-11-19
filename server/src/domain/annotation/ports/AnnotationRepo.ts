@@ -18,11 +18,6 @@ export interface ListAnnotationsFilter {
   offset?: number;
 }
 
-export interface PaginatedAnnotations {
-  rows: Annotation[];
-  total: number;
-}
-
 export interface AnnotationRepo {
   /** Insert a fully-formed annotation; pin number must already be allocated. */
   insert(input: NewAnnotation): Promise<Annotation>;

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createAnnotationRoutes, type AnnotationRouteDeps } from './annotations.routes.js';
 
@@ -12,8 +12,8 @@ import { createAnnotationRoutes, type AnnotationRouteDeps } from './annotations.
  * are rejected with 404.
  */
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const ANNOTATION_ID = 'c0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const ANNOTATION_ID = 'c0000000-0000-4000-8000-000000000001';
 
 function fakeAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
   (req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };

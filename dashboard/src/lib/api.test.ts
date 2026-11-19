@@ -41,6 +41,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('apiFetch', () => {
+  it('resolves undefined for 204 No Content instead of failing to parse a body', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))));
+    const { apiFetch } = await importApi();
+    await expect(apiFetch('/portals/abc', { method: 'DELETE' })).resolves.toBeUndefined();
+  });
+
   it('prefixes every request with /api/v1', async () => {
     const auth = await importAuth();
     auth.setCsrfToken('csrf-abc');

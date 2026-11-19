@@ -51,6 +51,7 @@ let mentionInstanceCounter = 0;
  */
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <ol class="fl-mention-dropdown" part="list" role="listbox" hidden></ol>
   `;
@@ -59,6 +60,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-mention-item" role="option" aria-selected="false">
       <strong class="fl-mention-name"></strong>

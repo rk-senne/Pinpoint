@@ -69,6 +69,16 @@ const PIN_ELEMENT_CSS = `
   outline: 2px solid var(--fl-severity-major);
   outline-offset: 2px;
 }
+:host([data-pending="true"]) {
+  /* Not synced yet (offline outbox) — hollow, dashed look. */
+  outline: 2px dashed #1a1a1a;
+  outline-offset: 2px;
+  opacity: 0.8;
+}
+:host(:focus-visible) {
+  outline: 3px solid #1a1a1a;
+  outline-offset: 2px;
+}
 .pin-number {
   pointer-events: none;
   display: inline-block;
@@ -77,6 +87,7 @@ const PIN_ELEMENT_CSS = `
 `;
 
 const PIN_TEMPLATE = document.createElement('template');
+// eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
 PIN_TEMPLATE.innerHTML = `<style>${PIN_ELEMENT_CSS}</style><span class="pin-number" part="number"></span>`;
 
 export class AnnotationPin extends HTMLElement {
@@ -100,6 +111,12 @@ export class AnnotationPin extends HTMLElement {
     // Custom Elements spec rule (and jsdom's enforcement) that constructors
     // must not mutate the host element's attributes or children.
     this.addEventListener('click', this.#handleClick);
+    this.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.click();
+      }
+    });
   }
 
   connectedCallback(): void {
@@ -108,6 +125,11 @@ export class AnnotationPin extends HTMLElement {
     // and to satisfy jsdom's strict validation.
     if (!this.hasAttribute('role')) {
       this.setAttribute('role', 'button');
+    }
+    // Pins are real controls: keyboard users (and the next/prev-pin
+    // shortcuts) must be able to focus and activate them.
+    if (!this.hasAttribute('tabindex')) {
+      this.setAttribute('tabindex', '0');
     }
     if (!this.hasAttribute('data-pinpoint')) {
       this.setAttribute('data-pinpoint', 'pin');

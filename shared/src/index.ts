@@ -31,6 +31,19 @@ export {
   // Capture buffers used by the annotation HTTP route.
   CapturedConsoleEntrySchema,
   CapturedNetworkEntrySchema,
+  // Diagnostics capture (Mission C2) + session replay (Mission C3) schemas
+  // and bounds, validated at the HTTP boundary and reused by the clients.
+  ConsoleLogEntrySchema,
+  JsErrorEntrySchema,
+  ConsoleLogsSchema,
+  JsErrorsSchema,
+  ReplayEventSchema,
+  SessionReplaySchema,
+  DIAGNOSTICS_MAX_ENTRIES,
+  DIAGNOSTICS_MESSAGE_MAX,
+  DIAGNOSTICS_STACK_MAX,
+  DIAGNOSTICS_MAX_SERIALIZED_BYTES,
+  REPLAY_EVENTS_MAX,
   // DOM/Environment payloads parsed at the HTTP boundary.
   DOMTargetSchema,
   EnvironmentMetadataSchema,
@@ -63,6 +76,8 @@ export {
   SEVERITY_COLORS,
   SEVERITY_SHAPES,
   STATUS_LABELS,
+  BRAND_COLORS,
+  STATUS_PILL_COLORS,
   sharedStyleSheet,
   themeCss,
 } from './theme.js';
@@ -80,3 +95,12 @@ export {
   type PaginatedResponse,
   paginationMeta,
 } from './pagination.js';
+
+export {
+  setText,
+  el,
+  escapeHtml,
+  isSafeUrl,
+  type Child,
+  type Attrs,
+} from './safeText.js';

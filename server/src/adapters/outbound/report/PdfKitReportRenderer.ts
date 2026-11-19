@@ -26,8 +26,13 @@ import type {
 export interface PdfKitReportRendererConfig {
   /** Bucket the screenshot store writes to. Used for embed fetches. */
   bucket: string;
-  /** Build the publicly addressable URL for an object key (fallback). */
-  buildScreenshotUrl: (objectKey: string) => string;
+  /**
+   * Stable link to an annotation's screenshot for exports. Exports outlive
+   * presigned URLs and the bucket is private, so this points at the
+   * authenticated API route (`/api/v1/annotations/:id/screenshot`) rather than
+   * the raw object.
+   */
+  buildScreenshotUrl: (annotationId: string) => string;
 }
 
 interface AnnotationRow {
@@ -227,14 +232,14 @@ export class PdfKitReportRenderer implements ReportRenderer {
               doc
                 .fontSize(9)
                 .fillColor('#1d4ed8')
-                .text(`Screenshot: ${this.config.buildScreenshotUrl(a.screenshot_object_key)}`);
+                .text(`Screenshot: ${this.config.buildScreenshotUrl(a.id)}`);
             }
           } else {
             doc.moveDown(0.3);
             doc
               .fontSize(9)
               .fillColor('#1d4ed8')
-              .text(`Screenshot: ${this.config.buildScreenshotUrl(a.screenshot_object_key)}`);
+              .text(`Screenshot: ${this.config.buildScreenshotUrl(a.id)}`);
           }
         }
 
@@ -248,9 +253,10 @@ export class PdfKitReportRenderer implements ReportRenderer {
 
 // ---- Helpers ----------------------------------------------------------
 
-function generateCsv(
+/** @internal exported for tests */
+export function generateCsv(
   annotations: AnnotationRow[],
-  buildScreenshotUrl: (objectKey: string) => string,
+  buildScreenshotUrl: (annotationId: string) => string,
 ): string {
   const headers = [
     'Pin Number',
@@ -275,7 +281,7 @@ function generateCsv(
   const rows = annotations.map((a) => {
     const env = parseEnvironment(a.environment);
     const screenshotUrl = a.screenshot_object_key
-      ? buildScreenshotUrl(a.screenshot_object_key)
+      ? buildScreenshotUrl(a.id)
       : '';
     return [
       String(a.pin_number),
@@ -288,7 +294,7 @@ function generateCsv(
       a.page_url ?? '',
       a.guideline_name ?? '',
       a.assignee_id ?? '',
-      a.due_date ? (typeof a.due_date === 'string' ? a.due_date : a.due_date.toISOString()) : '',
+      a.due_date ? dueDateOnly(a.due_date) : '',
       env.browserFamily,
       env.browserVersion ?? '',
       env.osFamily,
@@ -299,9 +305,31 @@ function generateCsv(
   });
 
   const csvLines = [headers, ...rows].map((row) =>
-    row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','),
+    row.map((cell) => encodeCsvCell(cell)).join(','),
   );
   return csvLines.join('\n');
+}
+
+/**
+ * Encode a single CSV cell safely against both CSV-structure breakage and
+ * spreadsheet formula injection (CWE-1236).
+ *
+ * Formula injection: a cell whose first character is one of `= + - @` or a
+ * control char (TAB `\t`, CR `\r`) is interpreted by Excel/Sheets/LibreOffice
+ * as a formula when the file is opened — e.g. `=cmd|' /C calc'!A0`. We neutralise
+ * it by prefixing a single quote, which forces the spreadsheet to treat the
+ * cell as literal text while leaving the visible value intact after import.
+ *
+ * CSV structure: the (possibly prefixed) value is then wrapped in double
+ * quotes with inner quotes doubled, so embedded commas, quotes, and newlines
+ * never break the row/column grid.
+ */
+export function encodeCsvCell(value: unknown): string {
+  let s = String(value);
+  if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 function parseEnvironment(raw: unknown): ParsedEnvironment {
@@ -339,4 +367,12 @@ function capitalize(s: string): string {
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+}
+
+/** `date` columns arrive as 'YYYY-MM-DD'; a stray Date is read in local time (never toISOString, which shifts by the UTC offset). */
+export function dueDateOnly(value: string | Date): string {
+  if (typeof value === 'string') return value.slice(0, 10);
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
 }

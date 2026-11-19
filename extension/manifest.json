@@ -2,12 +2,23 @@
   "manifest_version": 3,
   "name": "Pinpoint",
   "version": "0.1.0",
-  "description": "Collaborative website feedback tool — annotate live websites with your team.",
-  "permissions": ["activeTab", "storage", "tabs", "webNavigation"],
+  "description": "Collaborative website feedback tool \u2014 annotate live websites with your team.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting",
+    "webNavigation"
+  ],
   "_host_permissions_comment": "Development defaults only. The production build pipeline replaces host_permissions (and content_scripts.matches) with the deployment allow-list configured per Requirement 32.3.",
   "host_permissions": [
     "http://localhost:*/*",
     "http://127.0.0.1:*/*"
+  ],
+  "_optional_host_permissions_comment": "Requested at runtime, never at install time. `https://*/*` + `http://*/*` back the on-demand content-script injection on any site the user chooses (granted temporarily per-tab via activeTab on action click; a durable grant is requested from the options page via chrome.permissions.request for the user's configured Server URL).",
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
     "service_worker": "src/background.ts",
@@ -19,9 +30,25 @@
         "http://localhost:*/*",
         "http://127.0.0.1:*/*"
       ],
-      "js": ["src/content.ts"],
+      "js": [
+        "src/content.ts"
+      ],
       "run_at": "document_idle",
       "all_frames": true
+    }
+  ],
+  "_web_accessible_resources_comment": "The content entry dynamically imports its chunks at runtime; on-demand injection runs it on arbitrary origins, so the chunks must be fetchable from any site. This exposes only the extension's own JS/assets (standard for CRXJS). CRXJS appends its own hashed content/asset entries (scoped to the static localhost matches) at build time; this entry widens the SAME chunks to every origin so the on-demand loader's dynamic import resolves on non-localhost hosts. `use_dynamic_url` is left false to match CRXJS's own chunk entry — CRXJS emits a fixed `chrome.runtime.getURL(...)` in the loader, and a per-session rotating URL would not line up with it.",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content.ts",
+        "assets/*",
+        "*.js"
+      ],
+      "matches": [
+        "*://*/*"
+      ],
+      "use_dynamic_url": false
     }
   ],
   "icons": {
@@ -56,15 +83,15 @@
     },
     "next-pin": {
       "suggested_key": {
-        "default": "Alt+]",
-        "mac": "Alt+]"
+        "default": "Alt+Shift+Period",
+        "mac": "Alt+Shift+Period"
       },
       "description": "Jump to the next annotation pin"
     },
     "prev-pin": {
       "suggested_key": {
-        "default": "Alt+[",
-        "mac": "Alt+["
+        "default": "Alt+Shift+Comma",
+        "mac": "Alt+Shift+Comma"
       },
       "description": "Jump to the previous annotation pin"
     }

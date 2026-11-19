@@ -23,7 +23,7 @@
 
 import bcrypt from 'bcrypt';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../supertestClient.js';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createSharedLinkRoutes } from '../../adapters/inbound/http/sharedLinks.routes.js';
@@ -39,6 +39,8 @@ import {
 import type { SharedLink } from '../../domain/sharedLink/SharedLink.js';
 import { FakeClock } from '../fakes/FakeClock.js';
 import { FakeSharedLinkRepo } from '../fakes/FakeSharedLinkRepo.js';
+import { FakeAnnotationRepo } from '../fakes/FakeAnnotationRepo.js';
+import { FakePageRepo } from '../fakes/FakePageRepo.js';
 
 interface SeedOverrides {
   id?: string;
@@ -100,6 +102,11 @@ function buildHarness(): Harness {
     createSharedLink,
     verifyLinkPassword,
     authMiddleware: (_req, _res, next) => next(),
+    sharedLinkRepo,
+    annotationRepo: new FakeAnnotationRepo(clock),
+    pageRepo: new FakePageRepo(clock),
+    accessSecret: 'test-secret',
+    cookieInsecure: true,
   });
 
   const app = express();
@@ -166,12 +173,13 @@ describe('Integration: Shared link password flow with lockout', () => {
       .post(`/api/v1/shared/${link.id}/verify`)
       .send({ password: 'wrongpass' });
 
-    // Hex envelope: 401 status is the canonical InvalidPassword signal,
-    // and `attemptsRemaining` is a flat top-level field rather than
-    // `error.details.attemptsRemaining`.
+    // Canonical error envelope (ApiErrorEnvelope): 401 is the
+    // InvalidPassword signal, with the human-readable text under
+    // `error.message` and the remaining-attempts countdown under
+    // `error.details.attemptsRemaining` (the shape the dashboard reads).
     expect(res.status).toBe(401);
-    expect(res.body.error).toBe('Incorrect password.');
-    expect(res.body.attemptsRemaining).toBe(2);
+    expect(res.body.error.message).toBe('Incorrect password.');
+    expect(res.body.error.details.attemptsRemaining).toBe(2);
   });
 
   it('locks access after 3 consecutive failed attempts', async () => {
@@ -182,22 +190,22 @@ describe('Integration: Shared link password flow with lockout', () => {
       .post(`/api/v1/shared/${link.id}/verify`)
       .send({ password: 'wrong1' });
     expect(res1.status).toBe(401);
-    expect(res1.body.attemptsRemaining).toBe(2);
+    expect(res1.body.error.details.attemptsRemaining).toBe(2);
 
     // Attempt 2
     const res2 = await request(h.app)
       .post(`/api/v1/shared/${link.id}/verify`)
       .send({ password: 'wrong2' });
     expect(res2.status).toBe(401);
-    expect(res2.body.attemptsRemaining).toBe(1);
+    expect(res2.body.error.details.attemptsRemaining).toBe(1);
 
     // Attempt 3 — triggers lockout. 423 is the canonical Locked signal.
     const res3 = await request(h.app)
       .post(`/api/v1/shared/${link.id}/verify`)
       .send({ password: 'wrong3' });
     expect(res3.status).toBe(423);
-    expect(typeof res3.body.lockedUntil).toBe('string');
-    expect(res3.body.retryAfterSeconds).toBe(LOCKOUT_MINUTES * 60);
+    expect(typeof res3.body.error.details.lockedUntil).toBe('string');
+    expect(res3.body.error.details.retryAfterSeconds).toBe(LOCKOUT_MINUTES * 60);
     expect(res3.headers['retry-after']).toBe(String(LOCKOUT_MINUTES * 60));
   });
 
@@ -216,7 +224,7 @@ describe('Integration: Shared link password flow with lockout', () => {
       .send({ password: 'correctpass' });
 
     expect(res.status).toBe(423);
-    expect(typeof res.body.lockedUntil).toBe('string');
+    expect(typeof res.body.error.details.lockedUntil).toBe('string');
   });
 
   it('allows access after lockout period expires', async () => {
@@ -281,6 +289,6 @@ describe('Integration: Shared link password flow with lockout', () => {
       .send({ password: 'wrong' });
 
     expect(lockRes.status).toBe(423);
-    expect(typeof lockRes.body.lockedUntil).toBe('string');
+    expect(typeof lockRes.body.error.details.lockedUntil).toBe('string');
   });
 });

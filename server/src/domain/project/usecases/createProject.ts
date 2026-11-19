@@ -14,8 +14,11 @@
 import type { NewProject, Project } from '../Project.js';
 import type { Page } from '../Page.js';
 import type { ProjectRepo } from '../ports/ProjectRepo.js';
+import type { TeamRepo } from '../../team/ports/TeamRepo.js';
+import type { TeamMemberRepo } from '../../team/ports/TeamMemberRepo.js';
 import type { PageRepo } from '../ports/PageRepo.js';
 import {
+  NotFound,
   Validation,
   type DomainError,
   type Result,
@@ -50,6 +53,9 @@ export interface CreateProjectDeps {
   pageRepo: PageRepo;
   /** Wraps the project insert + per-URL page inserts in one transaction. */
   runInTransaction: TransactionRunner;
+  /** Needed to validate `teamId` (PP-03). Without them a teamId is rejected (fail closed). */
+  teamRepo?: TeamRepo;
+  teamMemberRepo?: TeamMemberRepo;
 }
 
 export class CreateProject {
@@ -72,6 +78,21 @@ export class CreateProject {
     // Deduplicate while preserving order so the unique (project_id, url)
     // constraint on pages is never violated by a noisy client.
     const uniqueUrls = Array.from(new Set(trimmedUrls));
+
+    // PP-03: the team must be in the caller's org and the caller must be able to
+    // manage it. Anything else is a 404 (no existence oracle for foreign teams).
+    if (input.teamId) {
+      const { teamRepo, teamMemberRepo } = this.deps;
+      const team = teamRepo && (await teamRepo.findById(input.teamId));
+      const membership =
+        team && teamMemberRepo
+          ? await teamMemberRepo.findByTeamAndUser(team.id, input.ownerUserId)
+          : null;
+      const sameOrg = team && (input.orgId === undefined || team.orgId === input.orgId);
+      if (!team || !sameOrg || !membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+        return err(new NotFound('Team not found.'));
+      }
+    }
 
     const newProject: NewProject = {
       name: trimmedName,

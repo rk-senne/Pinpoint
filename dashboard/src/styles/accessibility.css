@@ -100,3 +100,18 @@ textarea:focus-visible,
   color: var(--pp-severity-info-text);
   border: 1px solid var(--pp-severity-info);
 }
+
+/* ─── The `hidden` attribute must always win ───
+ * Many templates set an inline `display:flex` on elements that script toggles
+ * via `hidden`. An inline display beats the UA `[hidden]{display:none}` rule,
+ * which left "Reconnecting…" banners, the bulk-action bar and the inactive
+ * list/kanban subview visible at the same time. */
+[hidden] {
+  display: none !important;
+}
+
+/* Programmatic focus targets (headings focused on route change, tabindex=-1)
+   are not interactive; a focus ring on them reads as a stray box. */
+[tabindex="-1"]:focus {
+  outline: none;
+}

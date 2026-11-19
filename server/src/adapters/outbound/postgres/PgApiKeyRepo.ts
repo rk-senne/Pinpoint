@@ -1,5 +1,5 @@
 import type { Knex } from 'knex';
-import type { ApiKey, ApiKeyRepo, NewApiKey } from '../../../domain/org/ports/ApiKeyRepo.js';
+import type { ApiKey, ApiKeyRepo, ApiKeyType, NewApiKey } from '../../../domain/org/ports/ApiKeyRepo.js';
 
 export class PgApiKeyRepo implements ApiKeyRepo {
   constructor(private readonly db: Knex) {}
@@ -12,6 +12,10 @@ export class PgApiKeyRepo implements ApiKeyRepo {
       key_prefix: input.keyPrefix,
       scopes: input.scopes,
       created_by: input.createdBy,
+      key_type: input.keyType ?? 'standard',
+      project_id: input.projectId ?? null,
+      allowed_origins: input.allowedOrigins ?? [],
+      daily_quota: input.dailyQuota ?? null,
     }).returning('*');
     return this.map(row);
   }
@@ -45,6 +49,10 @@ export class PgApiKeyRepo implements ApiKeyRepo {
       lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
       revokedAt: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      keyType: (row.key_type ?? 'standard') as ApiKeyType,
+      projectId: row.project_id ?? null,
+      allowedOrigins: row.allowed_origins ?? [],
+      dailyQuota: row.daily_quota ?? null,
     };
   }
 }

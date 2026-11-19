@@ -16,7 +16,7 @@
  * viewer itself never mutates state).
  */
 import type { MarkupDocument } from '@pinpoint/shared';
-import { renderMarkupSvg } from '@pinpoint/shared';
+import { renderMarkupSvg } from '@pinpoint/shared/dist/markupRender.js';
 import { adoptStyles } from '../styles/sharedStyleSheet';
 import { withBoundary } from '../lib/withBoundary';
 import { apiFetch } from '../lib/api';
@@ -51,9 +51,10 @@ const VIEWER_CSS = `
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${VIEWER_CSS}</style>
-    <div class="fl-screenshot-stage" part="stage" role="img" tabindex="0">
+    <div class="fl-screenshot-stage" part="stage" role="img" tabindex="0" hidden>
       <img class="fl-screenshot-img" part="image" alt="Annotation screenshot" />
       <div class="fl-screenshot-overlay" part="overlay"></div>
     </div>
@@ -95,11 +96,13 @@ export class FlScreenshotViewer extends HTMLElement {
   connectedCallback(): void {
     this.#stage.addEventListener('click', this.#onStageClick);
     this.#img.addEventListener('load', this.#onImageLoad);
+    this.#img.addEventListener('error', this.#onImageError);
   }
 
   disconnectedCallback(): void {
     this.#stage.removeEventListener('click', this.#onStageClick);
     this.#img.removeEventListener('load', this.#onImageLoad);
+    this.#img.removeEventListener('error', this.#onImageError);
   }
 
   /** URL of the screenshot bitmap. Setting reloads the image. */
@@ -169,6 +172,11 @@ export class FlScreenshotViewer extends HTMLElement {
     this.#renderOverlay();
   }
 
+  /** Never show a broken-image icon: hide the stage if the URL fails. */
+  #onImageError = (): void => {
+    this.#stage.hidden = true;
+  };
+
   #onImageLoad = (): void => {
     this.#naturalWidth = this.#img.naturalWidth;
     this.#naturalHeight = this.#img.naturalHeight;
@@ -204,6 +212,7 @@ export class FlScreenshotViewer extends HTMLElement {
     // safe here because shape values originate in the user's own
     // markup editor (and the server validates them on the way in via
     // `MarkupDocumentSchema`).
+    // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
     this.#overlay.innerHTML = svg;
   }
 }

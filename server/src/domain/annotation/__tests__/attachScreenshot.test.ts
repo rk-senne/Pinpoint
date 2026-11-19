@@ -10,6 +10,7 @@ import {
   FakeTeamMemberRepo,
 } from '../../../__tests__/fakes/index.js';
 import { AttachScreenshot } from '../usecases/attachScreenshot.js';
+import { StorageUnavailableError } from '../ports/ScreenshotStore.js';
 
 async function seed() {
   const clock = new FakeClock(new Date('2024-06-01T00:00:00Z'));
@@ -125,5 +126,34 @@ describe('attachScreenshot use case', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe('NotFound');
+  });
+
+  it('returns Unavailable (not a thrown error) when storage is not configured/reachable', async () => {
+    const { usecase, annotation, annotationRepo, screenshotStore } = await seed();
+    screenshotStore.uploadScreenshot = async () => {
+      throw new StorageUnavailableError('no creds');
+    };
+
+    const result = await usecase.execute({
+      annotationId: annotation.id,
+      actorUserId: 'owner-1',
+      body: Buffer.from([1]),
+      contentType: 'image/png',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('Unavailable');
+    expect(annotationRepo.annotations.get(annotation.id)?.screenshotObjectKey).toBeUndefined();
+  });
+
+  it('still throws genuine unexpected errors', async () => {
+    const { usecase, annotation, screenshotStore } = await seed();
+    screenshotStore.uploadScreenshot = async () => {
+      throw new Error('bug');
+    };
+    await expect(
+      usecase.execute({ annotationId: annotation.id, actorUserId: 'owner-1', body: Buffer.from([1]), contentType: 'image/png' }),
+    ).rejects.toThrow('bug');
   });
 });

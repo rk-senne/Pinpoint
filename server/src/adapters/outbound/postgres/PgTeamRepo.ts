@@ -8,6 +8,7 @@ interface TeamRow {
   id: string;
   name: string;
   owner_id: string;
+  org_id?: string | null;
   created_at: Date | string;
 }
 
@@ -20,8 +21,8 @@ export class PgTeamRepo implements TeamRepo {
 
   async insert(input: NewTeam): Promise<Team> {
     const [created] = await this.db<TeamRow>('teams')
-      .insert({ name: input.name, owner_id: input.ownerId })
-      .returning(['id', 'name', 'owner_id', 'created_at']);
+      .insert({ name: input.name, owner_id: input.ownerId, org_id: input.orgId ?? null })
+      .returning(['id', 'name', 'owner_id', 'org_id', 'created_at']);
     return this.mapRow(created);
   }
 
@@ -38,6 +39,7 @@ export class PgTeamRepo implements TeamRepo {
         'teams.id',
         'teams.name',
         'teams.owner_id',
+        'teams.org_id',
         'teams.created_at',
         'team_members.role',
       )
@@ -54,6 +56,7 @@ export class PgTeamRepo implements TeamRepo {
       id: row.id,
       name: row.name,
       ownerId: row.owner_id,
+      orgId: row.org_id ?? null,
       createdAt: toIso(row.created_at),
     };
   }

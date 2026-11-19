@@ -1,0 +1,18 @@
+<!-- Loaded on demand with the page module (see lib/lazyTemplates.ts). -->
+    <!-- Reporting page -->
+    <template id="reporting-page">
+      <div class="reporting-page pp-page">
+        <header class="pp-page__header">
+          <h1 class="pp-page__title">Reports</h1>
+          <p class="pp-page__lede">Feedback volume, resolution and team activity.</p>
+        </header>
+        <div class="reporting-grid" data-slot="cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;"></div>
+      </div>
+    </template>
+    <template id="reporting-card">
+      <div class="reporting-card" style="border: 1px solid var(--pp-border); border-radius: 8px; padding: 16px; background: var(--pp-bg-primary);">
+        <h3 data-slot="title" style="margin: 0 0 8px; font-size: 14px; color: var(--pp-text-secondary);"></h3>
+        <div data-slot="value" class="reporting-value" style="font-size: 24px; font-weight: 600; margin-bottom: 8px;"></div>
+        <div data-slot="detail" class="reporting-detail" style="color: var(--pp-text-secondary); font-size: 13px;"></div>
+      </div>
+    </template>

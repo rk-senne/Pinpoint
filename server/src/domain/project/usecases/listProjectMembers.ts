@@ -50,7 +50,7 @@ export class ListProjectMembers {
       input.userId,
     );
     if (!allowed) {
-      return err(new Forbidden('You do not have access to this project.'));
+      return err(new NotFound('Project not found.'));
     }
 
     const members = await projectRepo.listMembers(project.id);

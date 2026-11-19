@@ -54,6 +54,20 @@ describe('WebhookDispatchingEventBus', () => {
     });
   });
 
+  it.each(['annotation.status_changed', 'annotation.updated'])(
+    'dispatches %s to webhooks (org resolved from projectId)',
+    async (type) => {
+      const { bus, dispatchWebhook, primary } = makeBus({ org_id: 'org-9' });
+      const payload = { id: 'a1', projectId: 'p1', status: 'resolved' };
+
+      bus.emit({ type, room: 'project:p1', payload } as never);
+      await flush();
+
+      expect(primary.emit).toHaveBeenCalledOnce();
+      expect(dispatchWebhook.execute).toHaveBeenCalledWith({ orgId: 'org-9', eventType: type, payload });
+    },
+  );
+
   it('uses orgId directly from the payload without a projects lookup', async () => {
     const { bus, dispatchWebhook, where } = makeBus(undefined);
 

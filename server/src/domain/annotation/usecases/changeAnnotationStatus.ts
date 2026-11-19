@@ -10,6 +10,8 @@ import type {
 import type { AnnotationRepo } from '../ports/AnnotationRepo.js';
 import type { ProjectRepo } from '../../project/ports/ProjectRepo.js';
 import type { TeamMemberRepo } from '../../team/ports/TeamMemberRepo.js';
+import type { PageRepo } from '../../project/ports/PageRepo.js';
+import type { EventBus } from '../../shared/ports/EventBus.js';
 import type { NotificationTriggers } from '../../notification/usecases/notificationTriggers.js';
 import { hasProjectAccess } from '../../shared/projectAccess.js';
 import {
@@ -37,6 +39,10 @@ export interface ChangeAnnotationStatusDeps {
   projectRepo: ProjectRepo;
   teamMemberRepo: TeamMemberRepo;
   notificationTriggers?: NotificationTriggers;
+  /** Broadcasts `annotation.status_changed` to the project room (realtime + webhooks). */
+  eventBus: EventBus;
+  /** Resolves `pageUrl` for the broadcast payload (omitted when absent). */
+  pageRepo?: PageRepo;
 }
 
 export class ChangeAnnotationStatus {
@@ -73,8 +79,27 @@ export class ChangeAnnotationStatus {
       status: input.status,
     });
 
+    if (annotation.status !== input.status) {
+      const page = await this.deps.pageRepo?.findById(updated.pageId);
+      this.deps.eventBus.emit({
+        type: 'annotation.status_changed',
+        room: `project:${updated.projectId}`,
+        payload: {
+          ...updated,
+          pageUrl: page?.url ?? null,
+          previousStatus: annotation.status,
+          changedBy: input.actorUserId,
+        },
+      });
+    }
+
     // Fire-and-forget: notify annotation author of status change
-    if (this.deps.notificationTriggers && annotation.authorId !== input.actorUserId && input.orgId) {
+    if (
+      this.deps.notificationTriggers &&
+      annotation.authorId !== null && // guest/widget rows have no user to notify
+      annotation.authorId !== input.actorUserId &&
+      input.orgId
+    ) {
       this.deps.notificationTriggers
         .triggerStatusChangeNotification(annotation.authorId, input.actorUserId, input.annotationId, input.status, input.orgId)
         .catch(() => {}); // best-effort

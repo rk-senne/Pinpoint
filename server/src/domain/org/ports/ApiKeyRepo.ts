@@ -1,3 +1,5 @@
+export type ApiKeyType = 'standard' | 'widget';
+
 export interface ApiKey {
   id: string;
   orgId: string;
@@ -8,6 +10,14 @@ export interface ApiKey {
   lastUsedAt: string | null;
   revokedAt: string | null;
   createdAt: string;
+  /** 'standard' for Bearer API keys, 'widget' for project-bound pk_widget_ keys. */
+  keyType: ApiKeyType;
+  /** Target project for widget keys; null for standard keys. */
+  projectId: string | null;
+  /** Origins the widget CORS layer may reflect. Empty = any origin (never credentials). */
+  allowedOrigins: string[];
+  /** Max widget submissions per UTC day; null = unlimited. */
+  dailyQuota: number | null;
 }
 
 export interface NewApiKey {
@@ -17,6 +27,14 @@ export interface NewApiKey {
   keyPrefix: string;
   scopes: string[];
   createdBy: string;
+  /** Defaults to 'standard' when omitted. */
+  keyType?: ApiKeyType;
+  /** Required for widget keys; ignored for standard keys. */
+  projectId?: string | null;
+  /** Origins the widget CORS layer may reflect. Defaults to empty (any origin). */
+  allowedOrigins?: string[];
+  /** Per-key daily submission quota; null/omitted = unlimited. */
+  dailyQuota?: number | null;
 }
 
 export interface ApiKeyRepo {

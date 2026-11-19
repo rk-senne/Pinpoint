@@ -9,8 +9,9 @@
  *   3. On submit, dispatches a `submit` `CustomEvent` (bubbling, composed)
  *      with `{ detail: { body, mentions } }`.
  *
- * Mention extraction reuses the same `/@(\w+)/g` regex as the legacy React
- * implementation so user-visible behavior is preserved (Req 31.5).
+ * Mentions: the composer offers `<fl-mention-autocomplete>` over the
+ * project `members`; `detail.mentions` carries USER IDS (what the API
+ * resolves for notifications), not raw `@word` tokens.
  *
  * The element follows the same Shadow DOM + adopted-stylesheet pattern as
  * the rest of the extension's Custom Elements:
@@ -21,9 +22,15 @@
  */
 import type { Comment as FLComment } from '@pinpoint/shared';
 import { adoptStyles } from '../styles/sharedStyleSheet';
+import { upgradeShadowTree } from '../lib/upgradeShadowTree';
 import { withBoundary } from '../lib/withBoundary';
+import type { MentionCandidate } from '../lib/mentionFilter';
+import './MentionAutocomplete';
+import type { FlMentionAutocomplete, MentionSelectEventDetail } from './MentionAutocomplete';
 
 const MENTION_REGEX = /@(\w+)/g;
+/** The server resolves `@<uuid>` mentions (and the explicit list) to users. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Detail payload of the `submit` `CustomEvent` dispatched on a successful
@@ -37,14 +44,22 @@ export interface CommentThreadSubmitDetail {
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <ol class="fl-comment-thread" part="comments" hidden></ol>
-    <textarea
-      class="fl-textarea"
-      part="composer"
-      placeholder="Add a comment…"
-      aria-label="Add a comment"
-    ></textarea>
+    <div class="fl-comment-composer">
+      <textarea
+        class="fl-textarea"
+        part="composer"
+        placeholder="Add a comment… (type @ to mention)"
+        aria-label="Add a comment"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded="false"
+        aria-haspopup="listbox"
+      ></textarea>
+      <fl-mention-autocomplete part="mention-autocomplete" hidden></fl-mention-autocomplete>
+    </div>
     <div class="fl-btn-row">
       <button
         type="button"
@@ -63,6 +78,7 @@ const TEMPLATE = (() => {
  */
 const COMMENT_ITEM_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-comment">
       <span class="fl-comment-author"></span>
@@ -103,9 +119,14 @@ export class FlCommentThread extends HTMLElement {
   static readonly tagName = 'pp-comment-thread';
 
   #comments: FLComment[] = [];
+  #members: MentionCandidate[] = [];
+  /** Members picked from the autocomplete, keyed by the inserted `@Name`. */
+  #picked = new Map<string, string>();
+  #mentionStart = -1;
   #list!: HTMLOListElement;
   #textarea!: HTMLTextAreaElement;
   #submitBtn!: HTMLButtonElement;
+  #mention!: FlMentionAutocomplete;
 
   constructor() {
     super();
@@ -116,12 +137,23 @@ export class FlCommentThread extends HTMLElement {
     this.#list = root.querySelector('ol.fl-comment-thread') as HTMLOListElement;
     this.#textarea = root.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
     this.#submitBtn = root.querySelector('button.fl-btn-primary') as HTMLButtonElement;
+    this.#mention = root.querySelector('fl-mention-autocomplete') as FlMentionAutocomplete;
   }
 
   connectedCallback(): void {
+    // Upgrade child Custom Elements BEFORE assigning their properties
+    // (isolated-world polyfill upgrades late — see upgradeShadowTree.ts).
+    upgradeShadowTree(this.shadowRoot);
     this.#textarea.addEventListener('input', this.#onInput);
     this.#submitBtn.addEventListener('click', this.#onSubmit);
     this.#textarea.addEventListener('keydown', this.#onKeydown);
+    this.#mention.addEventListener('select', this.#onMentionSelect);
+    this.#mention.addEventListener('cancel', this.#onMentionCancel);
+    if (this.#mention.listboxId) {
+      this.#textarea.setAttribute('aria-controls', this.#mention.listboxId);
+    }
+    this.#mention.members = this.#members;
+    this.#mention.hidden = true;
     this.#renderList();
     this.#syncSubmitDisabled();
   }
@@ -130,6 +162,26 @@ export class FlCommentThread extends HTMLElement {
     this.#textarea.removeEventListener('input', this.#onInput);
     this.#submitBtn.removeEventListener('click', this.#onSubmit);
     this.#textarea.removeEventListener('keydown', this.#onKeydown);
+    this.#mention.removeEventListener('select', this.#onMentionSelect);
+    this.#mention.removeEventListener('cancel', this.#onMentionCancel);
+  }
+
+  /**
+   * Project members: offered by the composer's @mention autocomplete and
+   * used to show comment authors by NAME (the API returns only
+   * `authorId`, which used to be rendered verbatim as a UUID).
+   */
+  get members(): readonly MentionCandidate[] {
+    return this.#members;
+  }
+
+  set members(next: readonly MentionCandidate[] | null | undefined) {
+    this.#members = next ? [...next] : [];
+    if (this.#mention) {
+      this.#mention.members = this.#members;
+      if (this.#mentionStart < 0) this.#mention.hidden = true;
+    }
+    if (this.isConnected) this.#renderList();
   }
 
   /**
@@ -178,7 +230,7 @@ export class FlCommentThread extends HTMLElement {
       const body = node.querySelector('.fl-comment-body') as HTMLDivElement;
 
       li.dataset.commentId = c.id;
-      author.textContent = c.authorId;
+      author.textContent = this.#authorName(c.authorId);
       time.textContent = formatTime(c.createdAt);
       body.textContent = c.body;
       this.#list.appendChild(node);
@@ -189,11 +241,99 @@ export class FlCommentThread extends HTMLElement {
     this.#submitBtn.disabled = this.#textarea.value.trim().length === 0;
   }
 
+  #authorName(authorId: string): string {
+    const m = this.#members.find((x) => x.userId === authorId);
+    if (m) return m.name || m.email;
+    // Never show a raw UUID as a person's name.
+    return UUID_RE.test(authorId) ? 'Former member' : authorId;
+  }
+
   #onInput = (): void => {
+    this.#syncSubmitDisabled();
+    const ta = this.#textarea;
+    const cursor = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, cursor);
+    const lastAt = before.lastIndexOf('@');
+    const query = lastAt >= 0 ? before.slice(lastAt + 1) : '';
+    const atWordStart = lastAt === 0 || (lastAt > 0 && /\s/.test(before[lastAt - 1]));
+    if (lastAt >= 0 && atWordStart && !/\s/.test(query) && this.#members.length > 0) {
+      this.#mentionStart = lastAt;
+      this.#mention.members = this.#members;
+      this.#mention.query = query;
+      this.#mention.hidden = false;
+    } else {
+      this.#mentionStart = -1;
+      this.#mention.hidden = true;
+    }
+    this.#syncMentionAria();
+  };
+
+  #syncMentionAria(): void {
+    const open = !this.#mention.hidden;
+    this.#textarea.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  #onMentionSelect = (event: Event): void => {
+    event.stopPropagation();
+    const detail = (event as CustomEvent<MentionSelectEventDetail>).detail;
+    if (!detail || this.#mentionStart < 0) return;
+    const ta = this.#textarea;
+    const queryEnd = this.#mentionStart + 1 + (this.#mention.query?.length ?? 0);
+    const label = `@${detail.member.name}`;
+    ta.value = `${ta.value.slice(0, this.#mentionStart)}${label} ${ta.value.slice(queryEnd)}`;
+    this.#picked.set(label, detail.member.userId);
+    const caret = this.#mentionStart + label.length + 1;
+    ta.setSelectionRange?.(caret, caret);
+    this.#mention.hidden = true;
+    this.#mentionStart = -1;
+    ta.focus();
+    this.#syncMentionAria();
     this.#syncSubmitDisabled();
   };
 
+  /** Escape in the dropdown dismisses it — NOT the surrounding popover. */
+  #onMentionCancel = (event: Event): void => {
+    event.stopPropagation();
+    this.#mentionStart = -1;
+    this.#mention.hidden = true;
+    this.#textarea.focus();
+    this.#syncMentionAria();
+  };
+
+  /**
+   * Resolve the user ids mentioned in `body`: members picked from the
+   * autocomplete whose `@Name` is still present, `@handle` tokens that match
+   * a member's first name / email local-part, and raw `@<uuid>` tokens.
+   */
+  #resolveMentions(body: string): string[] {
+    const ids = new Set<string>();
+    for (const [label, userId] of this.#picked) {
+      if (body.includes(label)) ids.add(userId);
+    }
+    for (const handle of extractMentions(body)) {
+      if (UUID_RE.test(handle)) {
+        ids.add(handle);
+        continue;
+      }
+      const h = handle.toLowerCase();
+      const m = this.#members.find(
+        (x) =>
+          x.name.split(/\s+/)[0]?.toLowerCase() === h ||
+          x.name.replace(/\s+/g, '').toLowerCase() === h ||
+          x.email.split('@')[0]?.toLowerCase() === h,
+      );
+      if (m) ids.add(m.userId);
+    }
+    return Array.from(ids);
+  }
+
   #onKeydown = (e: KeyboardEvent): void => {
+    if (!this.#mention.hidden && this.#mention.handleKeydown(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.#syncMentionAria();
+      return;
+    }
     // Ctrl/Cmd+Enter submits — matches Req 42 a11y row in design.md
     // ("`<fl-comment-thread>` composer | Ctrl/Cmd+Enter submits"). The
     // legacy React implementation did not support this; adding it here
@@ -207,7 +347,7 @@ export class FlCommentThread extends HTMLElement {
   #onSubmit = (): void => {
     const trimmed = this.#textarea.value.trim();
     if (!trimmed) return;
-    const mentions = extractMentions(trimmed);
+    const mentions = this.#resolveMentions(trimmed);
     const detail: CommentThreadSubmitDetail = { body: trimmed, mentions };
     this.dispatchEvent(
       new CustomEvent<CommentThreadSubmitDetail>('submit', {
@@ -217,6 +357,10 @@ export class FlCommentThread extends HTMLElement {
       })
     );
     this.#textarea.value = '';
+    this.#picked.clear();
+    this.#mention.hidden = true;
+    this.#mentionStart = -1;
+    this.#syncMentionAria();
     this.#syncSubmitDisabled();
   };
 }

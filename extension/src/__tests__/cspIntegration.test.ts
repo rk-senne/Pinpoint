@@ -253,6 +253,11 @@ const ALLOWED_PER_PROPERTY_STYLE_TAGS = new Set([
   // The pin layer hosts pins; OverlayHost may toggle its display when
   // the project picker is shown (Req 38.2 fallback).
   'div',
+  // Popover `<dialog>`: `#applyPosition` / `#clampIntoViewport` anchor it
+  // with per-property `style.left/top` writes (documented in content.ts).
+  // This only became observable once the popover actually received its
+  // `target` (see lib/upgradeShadowTree.ts).
+  'dialog',
   // The four overlay surfaces hidden by `#applyPickerVisibility`.
   'fl-sidebar-panel',
   'fl-popover',

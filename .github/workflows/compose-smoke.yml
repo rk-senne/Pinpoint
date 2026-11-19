@@ -1,0 +1,77 @@
+# Boots both Compose stacks for real (dev: docker-compose.yml, prod:
+# deploy/docker-compose.prod.yml behind Caddy) and asserts they serve traffic.
+# See infrastructure/scripts/compose-smoke.sh and docs/DEPLOYMENT.md.
+name: compose-smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'deploy/**'
+      - '**/Dockerfile'
+      - '.dockerignore'
+      - 'infrastructure/scripts/compose-smoke.sh'
+      - '.github/workflows/compose-smoke.yml'
+      - 'server/**'
+      - 'dashboard/**'
+      - 'widget/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'deploy/**'
+      - '**/Dockerfile'
+      - '.dockerignore'
+      - 'infrastructure/scripts/compose-smoke.sh'
+      - '.github/workflows/compose-smoke.yml'
+      - 'server/**'
+      - 'dashboard/**'
+      - 'widget/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: compose-smoke (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [dev, prod]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Tool versions
+        run: |
+          docker version
+          docker compose version
+          jq --version
+          openssl version
+
+      - name: Compose smoke (${{ matrix.mode }})
+        env:
+          SMOKE_LOG_DIR: ${{ runner.temp }}/compose-smoke-logs
+        run: bash infrastructure/scripts/compose-smoke.sh "${{ matrix.mode }}"
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compose-smoke-logs-${{ matrix.mode }}
+          path: ${{ runner.temp }}/compose-smoke-logs
+          if-no-files-found: ignore
+          retention-days: 7

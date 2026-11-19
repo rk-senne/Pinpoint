@@ -1,11 +1,16 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "outDir": "node_modules/.cache/tsc",
+    "tsBuildInfoFile": "node_modules/.cache/tsc/tsconfig.tsbuildinfo",
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/__tests__/optionsPage.test.ts", "src/__tests__/popupPage.test.ts"],
+  "exclude": [
+    "src/__tests__/optionsPage.test.ts",
+    "src/__tests__/popupPage.test.ts",
+    "src/__tests__/serverOriginPermission.test.ts"
+  ],
   "references": [
     { "path": "../shared" }
   ]

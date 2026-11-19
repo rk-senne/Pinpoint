@@ -56,7 +56,7 @@
 
 ## Extension UX Improvements
 
-- **Keyboard shortcut:** `Ctrl+Shift+F` for instant capture
+- **Keyboard shortcut:** `Alt+Shift+F` for instant capture
 - **Smart element detection:** Highlight nearest semantic element on hover
 - **Quick mode:** Shift+click = submit with defaults (no form)
 - **Offline queue:** IndexedDB storage, auto-sync on reconnect, badge count

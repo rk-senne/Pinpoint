@@ -11,6 +11,7 @@
 //     separate operation (`updateMemberRole` → `owner`).
 
 import type { TeamRepo } from '../ports/TeamRepo.js';
+import type { EventBus } from '../../shared/ports/EventBus.js';
 import type { TeamMemberRepo } from '../ports/TeamMemberRepo.js';
 import {
   Forbidden,
@@ -37,6 +38,8 @@ export interface RemoveMemberOutput {
 export interface RemoveMemberDeps {
   teamRepo: TeamRepo;
   teamMemberRepo: TeamMemberRepo;
+  /** Optional: used to cut the removed member's live sockets (PP-02). */
+  eventBus?: EventBus;
 }
 
 export class RemoveMember {
@@ -73,6 +76,11 @@ export class RemoveMember {
     }
 
     await teamMemberRepo.remove(team.id, input.targetUserId);
+    this.deps.eventBus?.emit({
+      type: 'session.revoked',
+      room: `user:${input.targetUserId}`,
+      payload: {},
+    });
 
     return ok({ teamId: team.id, removedUserId: input.targetUserId });
   }

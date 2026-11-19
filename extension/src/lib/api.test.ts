@@ -341,6 +341,15 @@ describe('apiFetchRaw — sliding-window refresh (Req 33.4)', () => {
     const [, init] = fetchSpy.mock.calls[0]!;
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
+
+  it('never sends ambient cookies (credentials: omit) — bearer-only client', async () => {
+    installChromeStub();
+    const fetchSpy = vi.fn(async (_url: string, _init: RequestInit) => jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchSpy);
+    await apiFetchRaw('/projects', { method: 'POST', body: '{}' });
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(init.credentials).toBe('omit');
+  });
 });
 
 describe('apiFetchRaw — 401 cleanup (Req 33.5, task 24.5)', () => {
@@ -491,5 +500,39 @@ describe('apiFetchRaw — 401 cleanup (Req 33.5, task 24.5)', () => {
     expect(chromeStub.action!.openPopup).not.toHaveBeenCalled();
     expect(fakeWindow.dispatchEvent).not.toHaveBeenCalled();
     expect(chromeStub.storage.local._data[STORAGE_KEY_TOKEN]).toBe(token);
+  });
+});
+
+describe('apiFetchRaw in a content script (F8)', () => {
+  function installContentScriptChrome(status = 200) {
+    const stub = installChromeStub({ initialToken: 'stored-secret-token' }) as ChromeStub & {
+      runtime?: unknown;
+    };
+    const sendMessage = vi.fn((_msg: unknown, cb: (r: unknown) => void) =>
+      cb({ ok: status < 400, status, statusText: '', headers: {}, bodyText: '{}' }),
+    );
+    stub.runtime = { id: 'ext-id', sendMessage };
+    // Content-script fingerprint: runtime id + a real document on an http(s) page.
+    vi.stubGlobal('document', {});
+    vi.stubGlobal('location', { protocol: 'https:' });
+    return { stub, sendMessage };
+  }
+
+  it('never reads the bearer from chrome.storage.local and sends no Authorization header', async () => {
+    const { stub, sendMessage } = installContentScriptChrome(200);
+    await apiFetchRaw('/projects');
+    expect(stub.storage.local.get).not.toHaveBeenCalled();
+    const relayed = sendMessage.mock.calls[0]![0] as { headers: Record<string, string> };
+    expect(Object.keys(relayed.headers).map((k) => k.toLowerCase())).not.toContain('authorization');
+    expect(JSON.stringify(relayed)).not.toContain('stored-secret-token');
+  });
+
+  it('does not clear storage on 401 (the service worker owns that) but still surfaces the prompt', async () => {
+    const { stub } = installContentScriptChrome(401);
+    const dispatchEvent = vi.fn(() => true);
+    vi.stubGlobal('window', { dispatchEvent });
+    await apiFetchRaw('/projects');
+    expect(stub.storage.local.remove).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalled();
   });
 });

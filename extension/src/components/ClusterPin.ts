@@ -96,6 +96,7 @@ const CLUSTER_ELEMENT_CSS = `
 `;
 
 const CLUSTER_TEMPLATE = document.createElement('template');
+// eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
 CLUSTER_TEMPLATE.innerHTML = `<style>${CLUSTER_ELEMENT_CSS}</style><span class="cluster-count" part="count"></span>`;
 
 /**

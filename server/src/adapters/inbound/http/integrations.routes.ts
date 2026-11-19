@@ -3,18 +3,25 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Integration, IntegrationRepo } from '../../../domain/integration/ports/IntegrationRepo.js';
 import { requireOrgAdmin } from './access.js';
-import type { EgressGuardOptions } from '../../../services/egressGuard.js';
+import type { EgressGuardOptions, safeFetch as defaultSafeFetch } from '../../../services/egressGuard.js';
 import {
   OAuthExchangeError,
   buildAuthorizeUrl,
   exchangeAuthorizationCode,
   type IntegrationOAuthProvider,
 } from '../../../services/integrations/oauthExchange.js';
+import {
+  TARGET_CONFIG_SCHEMAS,
+  TargetsFetchError,
+  isTargetProvider,
+  listTargets,
+  resolveSingleJiraSite,
+} from '../../../services/integrations/targets.js';
 
 /** Lifetime of the OAuth state cookie, enforced server-side via the signed `exp`. */
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-const PROVIDERS = ['slack', 'jira', 'linear', 'github'] as const;
+const PROVIDERS = ['slack', 'jira', 'linear', 'github', 'clickup', 'asana'] as const;
 
 /** Constant-time string comparison (prevents timing attacks on HMAC). */
 function constantTimeEqual(a: string, b: string): boolean {
@@ -38,6 +45,8 @@ export interface IntegrationsRouteDeps {
   cookieInsecure?: boolean;
   /** Egress policy for the token exchange (tests inject a fake endpoint resolver). */
   egress?: EgressGuardOptions;
+  /** Outbound fetch for target discovery / Jira site lookup (tests inject a fake). */
+  safeFetch?: typeof defaultSafeFetch;
 }
 
 const ConnectSchema = z.object({
@@ -74,6 +83,13 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
   const redirectUriFor = (provider: string): string =>
     `${(deps.callbackBaseUrl ?? '').replace(/\/+$/, '')}/api/v1/integrations/${provider}/callback`;
   const router = Router();
+  /** Where the browser lands after the provider round-trip: the dashboard page. */
+  const dashboardUrl = (query: Record<string, string>): string =>
+    `${(deps.callbackBaseUrl ?? '').replace(/\/+$/, '')}/integrations?${new URLSearchParams(query).toString()}`;
+  const targetFetchOpts = () => ({
+    ...(deps.safeFetch ? { safeFetch: deps.safeFetch } : {}),
+    ...(deps.egress ? { egress: deps.egress } : {}),
+  });
 
   // GET /api/v1/integrations/:provider/callback — handle OAuth callback
   // This route is NOT behind authMiddleware because OAuth providers redirect
@@ -94,7 +110,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
     if (typeof req.query.error === 'string') {
       // The user denied consent (or the provider failed); nothing to exchange.
       res.clearCookie('integration_oauth_state');
-      res.status(400).json({ error: { code: 'OAUTH_DENIED', message: 'The provider did not grant access.' } });
+      res.redirect(302, dashboardUrl({ error: 'OAUTH_DENIED' }));
       return;
     }
     if (!code) {
@@ -150,7 +166,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
     const providerCfg = deps.oauthProviders?.[provider];
     if (!providerCfg) {
-      res.status(501).json({ error: { code: 'INTEGRATION_NOT_CONFIGURED', message: `OAuth for ${provider} is not configured on this server.` } });
+      res.redirect(302, dashboardUrl({ error: 'INTEGRATION_NOT_CONFIGURED', provider }));
       return;
     }
     let tokens;
@@ -160,19 +176,38 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
         redirectUri: redirectUriFor(provider),
         ...(deps.egress ? { egress: deps.egress } : {}),
       });
-    } catch (e) {
-      const message = e instanceof OAuthExchangeError ? e.message : 'Token exchange failed.';
-      res.status(502).json({ error: { code: 'OAUTH_EXCHANGE_FAILED', message } });
+    } catch {
+      // The provider's body is never echoed; the API log has no token either.
+      res.redirect(302, dashboardUrl({ error: 'OAUTH_EXCHANGE_FAILED', provider }));
       return;
     }
+
+    // Keep an earlier "Finish setup" choice (repo/project/team) across a reconnect.
+    const existing = await integrationRepo.findByOrgAndProvider(orgId, provider);
+    const config: Record<string, unknown> = { ...(existing?.config ?? {}), ...tokens.config };
+    // Jira: with exactly one accessible site the cloudId needs no human choice.
+    if (provider === 'jira' && !config.cloudId) {
+      const site = await resolveSingleJiraSite(tokens.accessToken, targetFetchOpts());
+      if (site) {
+        config.cloudId = site.cloudId;
+        if (site.siteUrl) config.siteUrl = site.siteUrl;
+      }
+    }
+    // Everything the refresh worker needs to renew an expiring token. The
+    // secret is encrypted at rest by the repository and never leaves the server.
+    if (tokens.refreshToken) {
+      config.tokenEndpoint = providerCfg.tokenUrl;
+      config.clientId = providerCfg.clientId;
+      config.clientSecret = providerCfg.clientSecret;
+    }
     // The repository encrypts access/refresh tokens with SecretBox before persisting.
-    const integration = await integrationRepo.upsert(orgId, provider, {
+    await integrationRepo.upsert(orgId, provider, {
       accessToken: tokens.accessToken,
       ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
       ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
-      config: tokens.config,
+      config,
     });
-    res.json({ integration: { id: integration.id, provider, enabled: integration.enabled } });
+    res.redirect(302, dashboardUrl({ connected: provider }));
   });
 
   // All routes below require authentication
@@ -210,7 +245,7 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
 
     const providerCfg = deps.oauthProviders?.[provider];
     if (!providerCfg) {
-      res.status(501).json({ error: { code: 'INTEGRATION_NOT_CONFIGURED', message: `OAuth for ${provider} is not configured on this server.` } });
+      res.status(501).json({ error: { code: 'INTEGRATION_NOT_CONFIGURED', message: `OAuth for ${provider} is not configured on this server. Set INTEGRATION_${provider.toUpperCase()}_CLIENT_ID/_CLIENT_SECRET (see docs/INTEGRATIONS_SETUP.md).` } });
       return;
     }
 
@@ -230,6 +265,66 @@ export function createIntegrationsRoutes(deps: IntegrationsRouteDeps): Router {
       secure: !deps.cookieInsecure,
     });
     res.json({ redirectUrl: buildAuthorizeUrl(providerCfg, { state, redirectUri: redirectUriFor(provider) }) });
+  });
+
+  // GET /api/v1/integrations/:provider/targets — what the stored token can deliver to
+  router.get('/:provider/targets', requireOrgAdmin, async (req: Request, res: Response) => {
+    const provider = req.params.provider as string;
+    if (!isTargetProvider(provider)) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: `${provider} has no delivery targets` } });
+      return;
+    }
+    const integration = await integrationRepo.findByOrgAndProvider(req.user!.orgId, provider);
+    if (!integration) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Integration not found' } });
+      return;
+    }
+    if (!integration.enabled || !integration.accessToken) {
+      res.status(409).json({ error: { code: 'INTEGRATION_NOT_CONNECTED', message: `${provider} is not connected` } });
+      return;
+    }
+    try {
+      const targets = await listTargets(provider, integration.accessToken, targetFetchOpts());
+      res.json({ targets });
+    } catch (e) {
+      const message = e instanceof TargetsFetchError ? e.message : 'Could not load targets from the provider.';
+      res.status(502).json({ error: { code: 'PROVIDER_ERROR', message } });
+    }
+  });
+
+  // PATCH /api/v1/integrations/:provider — save the delivery target (merged into config)
+  router.patch('/:provider', requireOrgAdmin, async (req: Request, res: Response) => {
+    const provider = req.params.provider as string;
+    if (!isTargetProvider(provider)) {
+      res.status(400).json({ error: { code: 'VALIDATION', message: `${provider} has no delivery targets` } });
+      return;
+    }
+    const body = z.object({ config: z.unknown() }).safeParse(req.body ?? {});
+    const parsed = body.success ? TARGET_CONFIG_SCHEMAS[provider].safeParse(body.data.config) : null;
+    if (!parsed || !parsed.success) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION',
+          message: 'Invalid config',
+          details: parsed && !parsed.success ? parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) : undefined,
+        },
+      });
+      return;
+    }
+    const existing = await integrationRepo.findByOrgAndProvider(req.user!.orgId, provider);
+    if (!existing) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Integration not found' } });
+      return;
+    }
+    // upsert() rewrites every column, so carry the (decrypted) credentials through.
+    const updated = await integrationRepo.upsert(req.user!.orgId, provider, {
+      accessToken: existing.accessToken,
+      ...(existing.refreshToken ? { refreshToken: existing.refreshToken } : {}),
+      ...(existing.tokenExpiresAt ? { tokenExpiresAt: existing.tokenExpiresAt } : {}),
+      enabled: existing.enabled,
+      config: { ...existing.config, ...parsed.data },
+    });
+    res.json({ integration: toIntegrationDto(updated) });
   });
 
   // DELETE /api/v1/integrations/:provider — disconnect

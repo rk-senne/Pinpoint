@@ -8,7 +8,7 @@
 
 import { readBodyCapped, safeFetch, type EgressGuardOptions } from '../egressGuard.js';
 
-export type IntegrationOAuthProviderName = 'slack' | 'jira' | 'linear' | 'github';
+export type IntegrationOAuthProviderName = 'slack' | 'jira' | 'linear' | 'github' | 'clickup' | 'asana';
 
 export interface IntegrationOAuthProvider {
   clientId: string;
@@ -51,6 +51,25 @@ const DEFAULTS: Record<IntegrationOAuthProviderName, Omit<IntegrationOAuthProvid
     tokenUrl: 'https://api.linear.app/oauth/token',
     scopes: ['read', 'write'],
     scopeSeparator: ',',
+    tokenRequest: 'form',
+  },
+  // ClickUp has no OAuth scopes; the authorize page is `app.clickup.com/api`
+  // and the token endpoint takes the client credentials + code. Tokens do not expire.
+  clickup: {
+    authorizeUrl: 'https://app.clickup.com/api',
+    tokenUrl: 'https://api.clickup.com/api/v2/oauth/token',
+    scopes: [],
+    scopeSeparator: ' ',
+    tokenRequest: 'json',
+  },
+  // Asana: access tokens last 1 h and come with a refresh token. Scopes are
+  // optional for apps created with full-access permissions; override with
+  // INTEGRATION_ASANA_SCOPES (e.g. `tasks:write projects:read`) if needed.
+  asana: {
+    authorizeUrl: 'https://app.asana.com/-/oauth_authorize',
+    tokenUrl: 'https://app.asana.com/-/oauth_token',
+    scopes: [],
+    scopeSeparator: ' ',
     tokenRequest: 'form',
   },
 };

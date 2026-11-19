@@ -173,8 +173,8 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
         .get(`/api/v1/integrations/slack/callback?code=abc123&state=${parsed.state}`)
         .set('Cookie', `integration_oauth_state=${cookieMatch[1]}`);
 
-      expect(callbackRes.status).toBe(200);
-      expect(callbackRes.body.integration).toBeDefined();
+      expect(callbackRes.status).toBe(302);
+      expect(callbackRes.headers.location).toBe('https://app.example/integrations?connected=slack');
 
       // Verify upsert was called with orgId from the cookie, not from the query param
       expect(deps.integrationRepo.upsert).toHaveBeenCalledWith(
@@ -196,7 +196,7 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
         .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
         .set('Cookie', buildStateCookie(cookiePayload));
 
-      expect(callbackRes.status).toBe(200);
+      expect(callbackRes.status).toBe(302);
       // Even though an attacker could control the state query param, orgId comes from the cookie
       expect(deps.integrationRepo.upsert).toHaveBeenCalledWith(
         'org-123', // from cookie, NOT from query
@@ -271,7 +271,7 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
         .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
         .set('Cookie', buildStateCookie(cookiePayload));
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(302);
       const cookies = (Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'] : [res.headers['set-cookie']]) as string[];
       const clearCookie = cookies?.find((c: string) => c.includes('integration_oauth_state'));
       expect(clearCookie).toBeDefined();
@@ -437,7 +437,7 @@ describe('integrations.routes — IDOR/CSRF security fix', () => {
         .get(`/api/v1/integrations/slack/callback?code=xyz&state=${nonce}`)
         .set('Cookie', buildStateCookie(cookiePayload));
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(302);
       expect(deps.integrationRepo.upsert).toHaveBeenCalledWith(
         'org-123',
         'slack',
@@ -524,7 +524,7 @@ describe('PP-21 — real OAuth code exchange', () => {
     expect(await cookieOf(true)).not.toMatch(/Secure/i);
   });
 
-  it('unconfigured provider answers 501 on connect and callback, and never stores a token', async () => {
+  it('unconfigured provider answers 501 on connect, redirects with an error from the callback, and never stores a token', async () => {
     const deps = makeDeps({ oauthProviders: {} });
     const app = makeApp(deps);
     const c = await request(app).post('/api/v1/integrations/slack/connect').send({});
@@ -534,7 +534,8 @@ describe('PP-21 — real OAuth code exchange', () => {
     const cb = await request(app)
       .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
       .set('Cookie', stateCookieFor(nonce));
-    expect(cb.status).toBe(501);
+    expect(cb.status).toBe(302);
+    expect(cb.headers.location).toBe('https://app.example/integrations?error=INTEGRATION_NOT_CONFIGURED&provider=slack');
     expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
   });
 
@@ -545,7 +546,8 @@ describe('PP-21 — real OAuth code exchange', () => {
     const res = await request(makeApp(deps))
       .get(`/api/v1/integrations/slack/callback?code=the-code&state=${nonce}`)
       .set('Cookie', stateCookieFor(nonce));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('https://app.example/integrations?connected=slack');
     expect(idpSeen).toHaveLength(1);
     expect(idpSeen[0]!.method).toBe('POST');
     expect(idpSeen[0]!.body).toMatchObject({
@@ -560,24 +562,31 @@ describe('PP-21 — real OAuth code exchange', () => {
     expect(provider).toBe('slack');
     expect(data.accessToken).toBe('at-for-the-code');
     expect(data.tokenExpiresAt).toMatch(/^\d{4}-/);
-    expect(data.config).toEqual({ scope: 'chat:write', workspace: 'Acme' });
-    // The response never contains the token.
-    expect(JSON.stringify(res.body)).not.toContain('at-for-the-code');
+    // Refresh material is stored so the refresh worker can renew the token (secret is encrypted by the repo).
+    expect(data.config).toEqual({
+      scope: 'chat:write',
+      workspace: 'Acme',
+      tokenEndpoint: `http://${IDP_HOST}:${idpPort}/token`,
+      clientId: 'client-1',
+      clientSecret: 'client-secret-1',
+    });
+    // The redirect never contains the token.
+    expect(res.headers.location).not.toContain('at-for-the-code');
   });
 
-  it.each(['bad-code', 'http-500', 'no-token'])('provider failure (%s) → 502, nothing stored, provider body not echoed', async (code) => {
+  it.each(['bad-code', 'http-500', 'no-token'])('provider failure (%s) → redirect with error, nothing stored, provider body not echoed', async (code) => {
     const deps = makeDeps();
     const nonce = 'f'.repeat(32);
     const res = await request(makeApp(deps))
       .get(`/api/v1/integrations/slack/callback?code=${code}&state=${nonce}`)
       .set('Cookie', stateCookieFor(nonce));
-    expect(res.status).toBe(502);
-    expect(res.body.error.code).toBe('OAUTH_EXCHANGE_FAILED');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('https://app.example/integrations?error=OAUTH_EXCHANGE_FAILED&provider=slack');
     expect(JSON.stringify(res.body)).not.toContain('do-not-leak');
     expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
   });
 
-  it('an unreachable / SSRF-blocked token endpoint → 502 (egress guard enforced)', async () => {
+  it('an unreachable / SSRF-blocked token endpoint → error redirect (egress guard enforced)', async () => {
     const deps = makeDeps({
       oauthProviders: { slack: { ...fakeProvider(), tokenUrl: 'http://169.254.169.254/token' } },
     });
@@ -585,7 +594,8 @@ describe('PP-21 — real OAuth code exchange', () => {
     const res = await request(makeApp(deps))
       .get(`/api/v1/integrations/slack/callback?code=abc&state=${nonce}`)
       .set('Cookie', stateCookieFor(nonce));
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('error=OAUTH_EXCHANGE_FAILED');
     expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
   });
 
@@ -604,8 +614,8 @@ describe('PP-21 — real OAuth code exchange', () => {
     const denied = await request(app)
       .get(`/api/v1/integrations/slack/callback?error=access_denied&state=${n}`)
       .set('Cookie', stateCookieFor(n));
-    expect(denied.status).toBe(400);
-    expect(denied.body.error.code).toBe('OAUTH_DENIED');
+    expect(denied.status).toBe(302);
+    expect(denied.headers.location).toBe('https://app.example/integrations?error=OAUTH_DENIED');
     expect(deps.integrationRepo.upsert).not.toHaveBeenCalled();
   });
 });

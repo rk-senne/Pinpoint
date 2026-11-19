@@ -60,6 +60,8 @@ RUN npm ci --workspace @pinpoint/shared --workspace @pinpoint/server --include-w
  && npm cache clean --force
 
 COPY --from=builder /app/shared/dist ./shared/dist
+# Runtime data read by shared at runtime (password blocklist).
+COPY --from=builder /app/shared/data ./shared/data
 COPY --from=builder /app/server/dist ./server/dist
 COPY --from=builder /app/widget/dist ./widget/dist
 

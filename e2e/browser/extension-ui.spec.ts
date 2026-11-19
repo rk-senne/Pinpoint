@@ -410,7 +410,8 @@ test.describe('Chrome Extension UI — landing page', () => {
     // The click is captured by the overlay — the host button must NOT fire.
     await page.locator('#cta').click();
     const disclosure = page.locator('fl-popover fl-disclosure-modal dialog');
-    await expect(disclosure).toBeVisible();
+    // The disclosure gate awaits chrome.storage.sync; a cold profile on CI can take >5s.
+    await expect(disclosure).toBeVisible({ timeout: 15_000 });
     await page.screenshot({ path: `${SHOTS}/extension-disclosure.png` });
     await page.locator('fl-disclosure-modal button', { hasText: 'Acknowledge' }).click();
     expect(await page.evaluate(() => (window as unknown as { __ctaClicks?: number }).__ctaClicks ?? 0)).toBe(0);

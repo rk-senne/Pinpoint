@@ -21,8 +21,11 @@ export function dbConfigFromEnv(env: NodeJS.ProcessEnv = process.env): DbConfig 
     host: env.DB_HOST || 'localhost',
     port: Number(env.DB_PORT || 5432),
     database: env.DB_NAME || 'pinpoint',
-    user: env.DB_USER || 'postgres',
-    password: env.DB_PASSWORD || 'postgres',
+    // The demo/cleanup scripts act as the schema OWNER (they backdate rows, switch
+    // plans, delete across orgs). The API's DB_USER is the RLS-bound pinpoint_app
+    // role (PP-08), so prefer DB_MIGRATION_USER when it is set.
+    user: env.DB_MIGRATION_USER || env.DB_USER || 'postgres',
+    password: env.DB_MIGRATION_PASSWORD || env.DB_PASSWORD || 'postgres',
   };
 }
 

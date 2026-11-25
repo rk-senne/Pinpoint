@@ -1,4 +1,5 @@
 import type { Knex } from 'knex';
+import { runAsSystem } from '../../../infrastructure/tenantContext.js';
 import type { ApiKey, ApiKeyRepo, ApiKeyType, NewApiKey } from '../../../domain/org/ports/ApiKeyRepo.js';
 
 export class PgApiKeyRepo implements ApiKeyRepo {
@@ -21,7 +22,11 @@ export class PgApiKeyRepo implements ApiKeyRepo {
   }
 
   async findByHash(keyHash: string): Promise<ApiKey | null> {
-    const row = await this.db('api_keys').where({ key_hash: keyHash }).whereNull('revoked_at').first();
+    // Pre-tenant lookup by secret hash: the org is unknown until the key resolves (RLS system scope).
+    // (`await` INSIDE the scope: knex builders are lazy and run on first await.)
+    const row = await runAsSystem(async () =>
+      await this.db('api_keys').where({ key_hash: keyHash }).whereNull('revoked_at').first(),
+    );
     return row ? this.map(row) : null;
   }
 
@@ -35,7 +40,9 @@ export class PgApiKeyRepo implements ApiKeyRepo {
   }
 
   async updateLastUsed(id: string): Promise<void> {
-    await this.db('api_keys').where({ id }).update({ last_used_at: this.db.fn.now() });
+    await runAsSystem(async () => {
+      await this.db('api_keys').where({ id }).update({ last_used_at: this.db.fn.now() });
+    });
   }
 
   private map(row: any): ApiKey {

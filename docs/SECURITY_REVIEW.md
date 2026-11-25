@@ -199,19 +199,68 @@ require it (README calls it "recommended").
 - Fix: in the exposed-deployment preflight, fail boot if `METRICS_TOKEN` is empty; or gate on `req.ip` (honours
   `trust proxy`) and additionally block when `X-Forwarded-For` is present. Prefer a separate internal listener port.
 
-#### PP-08 — Row-Level Security is enabled but inert, while docs claim DB-level isolation
-Medium (5.0 — control-gap, `AV:N/AC:H/PR:L/UI:N/S:C/C:H/I:H/A:N`) · LIVE (DB role) + CODE
+#### PP-08 — Row-Level Security was enabled but inert (now enforced) — FIXED
+Medium (5.0 — control-gap) · was LIVE (DB role) + CODE · **Status: Fixed**
 
-Migration `20260522000002_enable_rls.ts` enables/forces RLS on `projects`, `annotations`, `comments`, `shared_links`
-keyed on `current_setting('app.current_org_id')`, but (1) nothing in `server/src` ever sets that GUC, and (2) the app
-connects as a `SUPERUSER` role with `BYPASSRLS` (verified: `rolsuper=t, rolbypassrls=t`), so policies are never
-evaluated. If someone "fixes" (2) without (1) every query returns zero rows. Tenant isolation is therefore purely
-application-level (which the IDOR matrix shows holds today), contrary to the migration's stated intent.
+Originally `20260522000002_enable_rls.ts` enabled RLS keyed on `app.current_org_id`, but nothing set that GUC and the app
+connected as a `SUPERUSER`/`BYPASSRLS` role, so isolation was application-layer only. RLS is now a real second line:
 
-- Where: `server/src/migrations/20260522000002_enable_rls.ts:12-44`; no `set_config('app.current_org_id'` anywhere.
-- Fix: either implement it (non-superuser, non-owner app role; per-request transaction with
-  `select set_config('app.current_org_id', $1, true)`; policies for every org-scoped table) or drop the migration/claims.
-  Production must never use a superuser app role (separate migration role).
+- **Role** — the API connects as `pinpoint_app` (`LOGIN NOSUPERUSER NOBYPASSRLS`; DML on all tables + sequences,
+  `ALTER DEFAULT PRIVILEGES` for future tables). Migrations run as the schema owner (`DB_MIGRATION_USER` /
+  `DB_MIGRATION_PASSWORD`, default `DB_USER`); the role is created/updated idempotently from `DB_APP_PASSWORD`
+  (`server/src/migrations/20261125000101_row_level_security.ts:85`). `deploy/docker-compose.prod.yml` (api = `pinpoint_app`,
+  migrate = owner), `deploy/install.sh`/`upgrade.sh` generate `DB_APP_PASSWORD`; `docker-compose.yml` and the CI e2e job do
+  the same.
+- **Context** — `server/src/infrastructure/tenantContext.ts`: an `AsyncLocalStorage` store `{ orgId, system }`. On every
+  knex connection acquire (`installTenantContext`, `container.ts:171`) it runs
+  `select set_config('app.current_org_id', $1, false), set_config('app.system', $2, false)`; a transaction acquires once
+  so it keeps the setting. Each raw connection remembers the last pushed context and re-pushes only when it differs, so a
+  pooled connection can never run a query under another tenant's context (verified by the concurrency test). The request
+  scope is opened after the body parser from the signed session token's org (`container.ts:332`); API-key auth sets it from
+  the verified key (`middleware/apiKeyAuth.ts`); socket handlers bind to the socket user's org (`collab.gateway.ts`).
+- **Fail closed** — no scope ⇒ both GUCs empty ⇒ every policy is false (0 rows, inserts rejected).
+- **What RLS does and does not protect against.** The tenant settings are session GUCs that the
+  `pinpoint_app` role can set itself (verified: `set_config('app.system','on',false)` as `pinpoint_app`
+  reveals all rows). RLS therefore stops *application bugs* — a query that forgets its `org_id` filter,
+  a wrong join, a missed access check — from crossing tenants, and fails closed (zero rows) when no
+  context is set. It does **not** stop an attacker who can already execute arbitrary SQL as the app
+  role (SQL injection); that remains covered by parameterised queries everywhere (SQLi fuzzing found
+  nothing, §7). Closing that gap would need per-tenant database roles or signed context tokens, which
+  is not planned.
+- **System context** (`app.system = 'on'`, set only by server code via `runAsSystem` / `systemScope`, never from input):
+  background workers (`container.ts:830`), public/pre-tenant routes — `/api/v1/auth/*` (login, register, reset, OAuth),
+  `/api/v1/shared/*`, `/api/v1/widget/*`, `/review/*`, public client-portal endpoints, the Stripe webhook, invitation
+  accept, org switch — and the API-key lookup by hash (`PgApiKeyRepo.findByHash`). The handlers' own `org_id` predicates still
+  apply inside these scopes; RLS is the second line, not the only one.
+
+Policy table (`FOR ALL`, identical `USING` and `WITH CHECK`; predicate `ORG` =
+`org_id = nullif(current_setting('app.current_org_id', true), '')::uuid`, `SYS` = `current_setting('app.system', true) = 'on'`):
+
+| Kind | Tables | Predicate |
+|---|---|---|
+| Direct `org_id` | projects, annotations, comments, api_keys, approval_workflows, audit_logs, automation_rules, client_portals, feedback_boards, integrations, invitations, memberships, notification_preferences, satisfaction_scores, sla_policies, subscription_events, teams, usage_records, user_notifications, webhook_endpoints | `ORG OR SYS` |
+| Direct + built-ins | guidelines | `ORG OR SYS`, plus a `SELECT`-only policy for built-in rows (`org_id IS NULL`, Nielsen's heuristics) |
+| Child via parent | pages, shared_links, tags, activity_events (→ projects); annotation_external_links, annotation_tags, approval_instances, sla_breaches (→ annotations); board_posts, board_votes (→ feedback_boards); portal_sessions (→ client_portals); team_members (→ teams); webhook_deliveries (→ webhook_endpoints) | `EXISTS (parent row) OR SYS` — the parent's policy applies inside the subquery, so it is transitive |
+| Own id | organizations | `id = current org OR SYS` |
+| **No RLS (by design)** | users, oauth_accounts, auth_tokens (identity; spans orgs; looked up by secret before a tenant is known), notifications (outbox, no org column), knex_migrations* | app-layer only |
+
+Legacy rows with `org_id IS NULL` (guest/widget annotations and their comments) are back-filled from the project, and
+`PgAnnotationRepo` / `PgCommentRepo` now inherit the org on insert so guest rows stay visible to their tenant.
+`down()` restores the previous state; the role and its grants are kept.
+
+Limits: `users` and `memberships` joins across orgs are still gated by application checks; routes under `systemScope`
+rely on their own org predicates; a superuser owner (the stock Postgres image) bypasses RLS, so the API must never use
+the owner credentials — enforced by the compose files, not the code.
+
+- Where: `server/src/infrastructure/tenantContext.ts:78-127`, `server/src/migrations/20261125000101_row_level_security.ts`,
+  `server/src/composition/container.ts:171,332,830`.
+- Tests: `server/src/__tests__/integration/rls.test.ts` (as `pinpoint_app`: cross-org rows invisible on direct, child and
+  organizations policies; foreign `org_id` insert rejected by `WITH CHECK`; cross-org update/delete affects 0 rows; no
+  context ⇒ 0 rows; system sees all; a transaction keeps its context; concurrent contexts on a 2-connection pool never
+  leak; a recycled connection is reset), `server/src/infrastructure/tenantContext.test.ts`, and the full Playwright suite
+  run against the API as `pinpoint_app`.
+- Overhead (loopback, `select 1`): 0.073 ms/query with a steady context vs 0.076 ms baseline; worst case (context
+  alternating every query on one connection, i.e. one extra `set_config` round trip) 0.137 ms (+0.06 ms).
 
 ### Low
 
@@ -458,7 +507,7 @@ Medium against the rebuilt API on `127.0.0.1:3001` — all passed.
 | PP-05 | **Fixed** | `adapters/inbound/http/access.ts:238` `guardViewerWrites` wraps the auth middleware of **every** tenant router in `adapters/inbound/http/index.ts:170` (only users/notifications/auth stay self-service). Exemptions are an explicit allow-list (`VIEWER_WRITE_EXEMPT`: org switch, invitation accept, approval decision). `GET /webhooks` (`webhooks.routes.ts:72`) and `GET /api-keys` (`apiKeys.routes.ts:110`) require owner/admin. | `__tests__/integration/viewerWriteGuard.test.ts` — boots the real composition root, enumerates **every mounted mutating route** and asserts `403` for a viewer unless listed in `NOT_VIEWER_GUARDED` (and fails on stale entries), plus the two GET routes; live reviewer repro: all 8 requests `403`. |
 | PP-06 | **Fixed** | `domain/user/usecases/updateProfile.ts:37-120`: different e-mail ⇒ `currentPassword` required (wrong ⇒ 403, missing ⇒ 400); stored as `users.pending_email` (migration `20261116000401`), confirmation link (`/verify-email/:token`, kind `change_email`, 1 h) mailed to the **new** address and a notice to the **old** one; a taken address is silently ignored (no account oracle). `domain/auth/usecases/verifyEmail.ts:74` applies it on confirmation, clears `pending_email` and bumps `token_version` (all sessions + sockets revoked). Re-uses the existing dashboard `/verify-email/:token` page. | `domain/user/__tests__/updateProfile.test.ts` ("e-mail change"), `domain/auth/__tests__/confirmEmailChange.test.ts`, live: full flow incl. SMTP sink mails, old JWT → 401 after confirm. Dashboard needs a password field — see §9. |
 | PP-07 | **Fixed** | `config.ts:173` — the exposed-deployment preflight exits 1 unless `METRICS_TOKEN` is ≥ 16 chars. `infrastructure/metrics.ts:105` decides by `req.ip` (honours `trust proxy`) and refuses any request with `X-Forwarded-For` / `Forwarded` / `X-Real-IP` when no token is set. README env table + self-hosting tables and `docs/DEPLOYMENT.md` updated. | `config.test.ts` ("METRICS_TOKEN preflight"), `infrastructure/metrics.test.ts` ("tokenless: …"), live: `X-Forwarded-For` ⇒ 403, preflight run against `dist/` refuses without a token. |
-| PP-08 | **Accepted** (claim corrected) | Not a vulnerability by itself — app-layer isolation holds (46-request IDOR matrix, `tenantIsolation.test.ts`, `authzSecurity.test.ts`). The misleading claims were removed: migration header `migrations/20260522000002_enable_rls.ts`, `docs/TECHNICAL_ROADMAP.md`, README "Migration Notes". **Rationale:** a correct RLS rollout needs a non-superuser app role, a per-request transaction that `set_config('app.current_org_id', …, true)` and policies for ~30 org-scoped tables; doing it half-way breaks every query. **Future hardening:** (1) separate migration role vs. runtime role without `BYPASSRLS`; (2) request-scoped transaction wrapper; (3) policies for every table with `org_id`; (4) CI test that a connection *without* the GUC sees zero rows. | — |
+| PP-08 | **Fixed** | RLS is enforced: API runs as the unprivileged `pinpoint_app` role (`migrations/20261125000101_row_level_security.ts`), tenant context pushed per connection (`infrastructure/tenantContext.ts`, `composition/container.ts:171,332`), policies on every tenant table, fail-closed, explicit `system` context for workers and pre-tenant routes. See the PP-08 section for the policy table. | `__tests__/integration/rls.test.ts`, `infrastructure/tenantContext.test.ts`, full Playwright suite as `pinpoint_app`. |
 
 ### Low
 

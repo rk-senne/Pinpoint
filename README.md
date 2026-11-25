@@ -26,6 +26,12 @@ Shadow Root, sharing one constructable stylesheet.
 For details on the post-React migration, see [Migration Notes](#migration-notes)
 below.
 
+**More docs:** [Go-live plan](./docs/GO_LIVE_PLAN.md) (cheapest path, owner checklist) ·
+[Deployment](./docs/DEPLOYMENT.md) · [Integrations setup](./docs/INTEGRATIONS_SETUP.md) ·
+[Store submission](./docs/STORE_SUBMISSION.md) · [Security review](./docs/SECURITY_REVIEW.md) ·
+[SOC 2 readiness](./docs/SOC2_READINESS.md) (gap assessment, **not** a compliance claim) ·
+[Policy templates](./docs/compliance/README.md) · [Crash course](./docs/CRASH_COURSE.md)
+
 ---
 
 ## Quickstart
@@ -689,6 +695,8 @@ that is unset or empty falls back to the default.
 | `DB_NAME` | `pinpoint` (`pinpoint_test` when `NODE_ENV=test`) | server, migrations | Database name. |
 | `DB_USER` | `postgres` | server, migrations | Database user. |
 | `DB_PASSWORD` | `postgres` | server, migrations | Database password. The preflight rejects the default `postgres` on exposed deployments. |
+| `DB_APP_PASSWORD` | unset (Compose dev: `pinpoint-app-dev`) | migrations | Password for the unprivileged `pinpoint_app` role (`LOGIN NOSUPERUSER NOBYPASSRLS`) the API connects as so Row-Level Security applies (PP-08). The migration creates/updates the role when this is set; then run the API with `DB_USER=pinpoint_app` and `DB_PASSWORD=$DB_APP_PASSWORD`. Required by `deploy/docker-compose.prod.yml` (`install.sh` generates it). |
+| `DB_MIGRATION_USER` / `DB_MIGRATION_PASSWORD` | `DB_USER` / `DB_PASSWORD` | migrations (`server/knexfile.ts`), demo scripts | Schema-owner credentials used by `npm run migrate` and the demo/cleanup scripts, so `DB_USER` can be the RLS-bound `pinpoint_app`. |
 | `DB_POOL_MIN` / `DB_POOL_MAX` | `2` / `10` | server | Connection pool bounds. |
 | `DATABASE_URL` | unset | migrations only | Optional connection string used **only** by the `production` profile of `server/knexfile.ts`; when unset it falls back to `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`. The API itself never reads it. |
 | `REDIS_URL` | unset | server | Enables the Redis-backed rate limiter and Socket.IO adapter for multi-instance deployments. Compose: `redis://redis:6379`. |
@@ -807,12 +815,19 @@ Both clients share a single `API_BASE = '/api/v1'` constant
   `parseUserAgent(navigator.userAgent)` (with Brave/Arc overrides). Render
   surfaces and PDF/CSV exports include a single-line summary plus the full
   `EnvironmentMetadata`.
-- **Tenant isolation is enforced in the application layer** — every
-  repository query and `access.ts` check is scoped by `org_id` (covered by the
-  tenant-isolation integration tests). PostgreSQL Row-Level Security policies
-  exist in migration `20260522000002_enable_rls.ts` but are **inert**: nothing
-  sets `app.current_org_id` and the dev/Compose role bypasses RLS. Do not rely on
-  them; see `docs/SECURITY_REVIEW.md` (PP-08) for the future-hardening plan.
+- **Tenant isolation is enforced twice** — in the application layer (every
+  repository query and `access.ts` check is scoped by `org_id`; covered by the
+  tenant-isolation integration tests) **and** by PostgreSQL Row-Level Security
+  (migration `20261125000101_row_level_security.ts`, finding PP-08). The API
+  connects as the unprivileged `pinpoint_app` role (`NOSUPERUSER NOBYPASSRLS`);
+  every pooled connection is stamped with `app.current_org_id` / `app.system`
+  from an `AsyncLocalStorage` tenant context
+  (`server/src/infrastructure/tenantContext.ts`). With no context every policy
+  fails closed (zero rows). Only server code can enter the `system` context
+  (workers, login, public-id shared links / widget / portals / review links).
+  Migrations run as the schema owner via `DB_MIGRATION_USER` /
+  `DB_MIGRATION_PASSWORD`, which also creates `pinpoint_app` from
+  `DB_APP_PASSWORD`. The policy table is in `docs/SECURITY_REVIEW.md` (PP-08).
 - **Durable notification queue (Requirement 28)** — every email goes
   through the `notifications` table (`pending` → `sent` / `failed`); a
   worker uses `SELECT … FOR UPDATE SKIP LOCKED` and exponential backoff

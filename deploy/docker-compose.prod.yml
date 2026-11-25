@@ -61,7 +61,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment: *api-env
+    # Runs as the schema OWNER (DB_USER, the Postgres superuser of this
+    # image) and creates/updates the unprivileged `pinpoint_app` role from
+    # DB_APP_PASSWORD (migration 20261125000101). RLS (PP-08) is enforced
+    # because the api below connects as that role, never as the owner.
+    environment:
+      <<: *api-env
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD is required}
     command: ["npm", "run", "migrate"]
     restart: "no"
 
@@ -75,6 +81,11 @@ services:
         condition: service_healthy
     environment:
       <<: *api-env
+      # PP-08: the API runs as the NOSUPERUSER NOBYPASSRLS `pinpoint_app` role
+      # so the Row-Level Security policies apply; the owner credentials above
+      # are used only by the one-shot `migrate` service.
+      DB_USER: pinpoint_app
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD is required}
       PORT: "3001"
       HOST: 0.0.0.0
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}

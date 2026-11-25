@@ -1,3 +1,4 @@
+import { setCurrentOrg } from '../infrastructure/tenantContext.js';
 import { createHash } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import type { ApiKeyRepo } from '../domain/org/ports/ApiKeyRepo.js';
@@ -54,6 +55,8 @@ export function createApiKeyMiddleware(deps: ApiKeyMiddlewareDeps) {
       role: 'api_key',
     };
     (req as any).apiKey = apiKey;
+    // PP-08: RLS tenant context follows the verified key's org.
+    setCurrentOrg(apiKey.orgId);
 
     // Fire-and-forget last_used_at update
     apiKeyRepo.updateLastUsed(apiKey.id).catch(() => {});

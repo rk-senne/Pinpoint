@@ -77,7 +77,9 @@ export class PgAnnotationRepo implements AnnotationRepo {
       environment: JSON.stringify(input.environment),
       pin_number: input.pinNumber,
     };
-    if (input.orgId) row.org_id = input.orgId;
+    // Guest/widget annotations carry no orgId: inherit the project's, so the row
+    // is visible to its tenant under RLS (PP-08) instead of being orphaned.
+    row.org_id = input.orgId ?? this.db.raw('(select org_id from projects where id = ?)', [input.projectId]);
 
     if (input.guidelineId !== undefined) row.guideline_id = input.guidelineId;
     if (input.assigneeId !== undefined) row.assignee_id = input.assigneeId;

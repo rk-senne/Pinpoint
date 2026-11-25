@@ -20,6 +20,7 @@
 // that imports from `socket.io`; that's intentional and matches the
 // hexagonal layering rules enforced in `.eslintrc.cjs`.
 
+import { runAsOrg } from '../../../infrastructure/tenantContext.js';
 import type { Namespace, Server, Socket } from 'socket.io';
 import type { Knex } from 'knex';
 
@@ -179,7 +180,7 @@ export function installCollabGateway(
     // A valid signature is not enough: the session must still be current
     // (token_version not bumped) and the user still a member of the org.
     try {
-      const session = await checkSession(db, payload);
+      const session = await runAsOrg(payload.orgId, () => checkSession(db, payload));
       if (!session.ok) return next(new Error('Invalid or expired token'));
       (socket as AuthenticatedSocket).user = {
         userId: payload.userId,
@@ -207,6 +208,12 @@ export function installCollabGateway(
       return;
     }
 
+    // PP-08: socket events fire outside any HTTP request scope, so bind every
+    // handler to the authenticated user's org for the RLS tenant context.
+    const onEvent = (ev: string, h: (...a: any[]) => unknown): void => {
+      socket.on(ev, (...a: unknown[]) => runAsOrg(user.orgId, () => h(...a)));
+    };
+
     // Auto-join the user's personal room for notification delivery.
     socket.join(`user:${user.userId}`);
     // Org-wide room (PP-01) for org-scoped events such as invitations.
@@ -217,7 +224,7 @@ export function installCollabGateway(
     const openAnnotations = new Set<string>();
 
     // --- join event ---
-    socket.on('join', async (data: { projectId: string }) => {
+    onEvent('join', async (data: { projectId: string }) => {
       if (!data?.projectId || typeof data.projectId !== 'string') return;
 
       // Authorize with the same rule as the HTTP routes: org match AND
@@ -251,7 +258,7 @@ export function installCollabGateway(
     });
 
     // --- leave event ---
-    socket.on('leave', (data: { projectId: string }) => {
+    onEvent('leave', (data: { projectId: string }) => {
       if (!data?.projectId || typeof data.projectId !== 'string') return;
 
       const room = getRoomId(data.projectId);
@@ -282,7 +289,7 @@ export function installCollabGateway(
     });
 
     // --- annotation:open event (co-viewer presence) ---
-    socket.on('annotation:open', async (data: { id: string }) => {
+    onEvent('annotation:open', async (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
       const annotationId = data.id;
 
@@ -311,7 +318,7 @@ export function installCollabGateway(
     });
 
     // --- cursor:move event (live cursor relay) ---
-    socket.on('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
+    onEvent('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
       if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
       // Broadcast to all project rooms this socket is in (excluding sender)
       for (const room of socket.rooms) {
@@ -328,7 +335,7 @@ export function installCollabGateway(
     });
 
     // --- annotation:close event (co-viewer presence) ---
-    socket.on('annotation:close', (data: { id: string }) => {
+    onEvent('annotation:close', (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
       const annotationId = data.id;
 
@@ -351,7 +358,7 @@ export function installCollabGateway(
     });
 
     // --- disconnect event ---
-    socket.on('disconnect', () => {
+    onEvent('disconnect', () => {
       // Broadcast cursor:leave to all project rooms this socket was in.
       for (const room of socket.rooms) {
         if (room.startsWith('project:')) {

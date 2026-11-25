@@ -46,6 +46,8 @@ services:
       DB_NAME: ${DB_NAME:-pinpoint}
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      # Creates the unprivileged `pinpoint_app` role the API connects as (RLS, PP-08).
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:-pinpoint-app-dev}
       NODE_ENV: development
     command: ["npm", "run", "migrate"]
     restart: "no"
@@ -88,8 +90,10 @@ services:
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-pinpoint}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      # PP-08: the API connects as the NOSUPERUSER NOBYPASSRLS role created by
+      # `migrate`, so Row-Level Security applies. Migrations use the owner above.
+      DB_USER: pinpoint_app
+      DB_PASSWORD: ${DB_APP_PASSWORD:-pinpoint-app-dev}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
       PORT: "3001"
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4173}

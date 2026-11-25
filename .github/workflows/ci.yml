@@ -73,6 +73,10 @@ jobs:
       DB_NAME: pinpoint_test
       DB_USER: postgres
       DB_PASSWORD: postgres
+      # PP-08: migration 20261125000101 creates the unprivileged pinpoint_app
+      # role with this password; server/src/__tests__/integration/rls.test.ts
+      # connects as it to prove the RLS policies.
+      DB_APP_PASSWORD: ci-app-password-not-for-production
       JWT_SECRET: ci-test-secret
       NODE_ENV: test
     steps:
@@ -161,8 +165,14 @@ jobs:
       DB_HOST: 127.0.0.1
       DB_PORT: 5432
       DB_NAME: pinpoint
-      DB_USER: postgres
-      DB_PASSWORD: unused
+      # PP-08: the API runs as the unprivileged `pinpoint_app` role (RLS is
+      # enforced); migrations run as the owner (DB_MIGRATION_*), which also
+      # creates the role from DB_APP_PASSWORD. psql helpers use PG* (postgres).
+      DB_USER: pinpoint_app
+      DB_PASSWORD: ci-app-password-not-for-production
+      DB_APP_PASSWORD: ci-app-password-not-for-production
+      DB_MIGRATION_USER: postgres
+      DB_MIGRATION_PASSWORD: unused
       NODE_ENV: development
       PORT: 3001
       HOST: 127.0.0.1

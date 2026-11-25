@@ -156,6 +156,7 @@ create_env_file() {
   env_set INTEGRATION_ENCRYPTION_KEY "$(openssl rand -base64 32 | tr -d '\n')"
   env_set METRICS_TOKEN "$(openssl rand -hex 24)"
   env_set DB_PASSWORD "$(openssl rand -hex 24)"
+  env_set DB_APP_PASSWORD "$(openssl rand -hex 24)"
   if [ -n "${SMTP_HOST:-}" ]; then
     env_set SMTP_HOST "$SMTP_HOST"
     env_set SMTP_PORT "${SMTP_PORT:-587}"

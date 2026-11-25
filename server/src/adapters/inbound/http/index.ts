@@ -6,6 +6,7 @@
 // place means the composition root (task 4.10.2) only has to construct
 // the dependencies and call `mountInboundHttp(app, deps)`.
 
+import { systemScope } from '../../../infrastructure/tenantContext.js';
 import type { Express, NextFunction, Request, Response } from 'express';
 
 import { createAuthMiddleware, createOptionalAuthMiddleware, type AuthMiddlewareDeps } from './auth.middleware.js';
@@ -244,6 +245,7 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
     authMiddleware: tenantAuth,
   });
 
+  app.use('/api/v1/auth', systemScope);
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/projects', projectsRouter);
   app.use('/api/v1/projects/:id/annotations', projectAnnotationsRouter);
@@ -251,10 +253,12 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   app.use('/api/v1/annotations/:id/comments', commentsRouter);
   app.use('/api/v1/teams', teamsRouter);
   app.use('/api/v1/projects/:id/share', shareRouter);
+  app.use('/api/v1/shared', systemScope);
   app.use('/api/v1/shared', verifyRouter);
 
   // Guest feedback route (public, no auth)
   const guestFeedbackRouter = createGuestFeedbackRoutes(deps.guestFeedbackRoutes);
+  app.use('/api/v1/shared', systemScope);
   app.use('/api/v1/shared', guestFeedbackRouter);
 
   app.use('/api/v1/guidelines', guidelinesRouter);
@@ -274,7 +278,8 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
   // OAuth routes (optional — only mounted when provider credentials are configured)
   if (deps.oauthRoutes) {
     const oauthRouter = createOAuthRoutes({ ...deps.oauthRoutes });
-    app.use('/api/v1/auth/oauth', oauthRouter);
+    app.use('/api/v1/auth/oauth', systemScope);
+  app.use('/api/v1/auth/oauth', oauthRouter);
   }
 
   // Billing routes (optional — only mounted when STRIPE_SECRET_KEY is set)

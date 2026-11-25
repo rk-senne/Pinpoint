@@ -75,6 +75,7 @@ openssl rand -base64 48   # JWT_SECRET, OAUTH_STATE_SECRET (>= 32 bytes)
 openssl rand -base64 32   # INTEGRATION_ENCRYPTION_KEY (exactly 32 bytes)
 openssl rand -base64 24   # METRICS_TOKEN (>= 16 chars)
 openssl rand -hex 24      # DB_PASSWORD (not "postgres")
+openssl rand -hex 24      # DB_APP_PASSWORD (the unprivileged pinpoint_app role the API runs as; RLS, PP-08)
 ```
 
 Start it (alias for brevity):

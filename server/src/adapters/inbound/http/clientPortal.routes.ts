@@ -1,3 +1,4 @@
+import { systemScope } from '../../../infrastructure/tenantContext.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { createHash, randomBytes } from 'node:crypto';
@@ -166,7 +167,7 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
   // === Guest routes (no auth — token-based) ===
 
   // GET /portal/:slug — public portal info
-  router.get('/:slug/info', async (req: Request, res: Response) => {
+  router.get('/:slug/info', systemScope, async (req: Request, res: Response) => {
     const portal = await db('client_portals').where({ slug: req.params.slug, active: true }).first();
     if (!portal) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Portal not found' } }); return; }
     const { id, title, welcome_message, brand_color, logo_url, allow_new_feedback, require_email } = portal;
@@ -178,7 +179,7 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
   // The caller supplies an email but has not proven they own it, so NO token
   // is ever returned here: the link is emailed to the supplied address and the
   // response is identical whether or not the portal exists / the mail went out.
-  router.post('/:slug/access', accessLimiter, async (req: Request, res: Response) => {
+  router.post('/:slug/access', systemScope, accessLimiter, async (req: Request, res: Response) => {
     const parsed = PortalAccessSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid access request.', parsed.error.flatten()); return; }
     const slug = String(req.params.slug);
@@ -219,7 +220,7 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
   });
 
   // GET /portal/:slug/feedback — view feedback (token required)
-  router.get('/:slug/feedback', async (req: Request, res: Response) => {
+  router.get('/:slug/feedback', systemScope, async (req: Request, res: Response) => {
     const header = req.headers.authorization;
     const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (!token) { res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Token required' } }); return; }

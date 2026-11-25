@@ -1,3 +1,4 @@
+import { systemScope } from '../../../infrastructure/tenantContext.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { CreateCheckoutSession, HandleStripeWebhook, GetBillingPortal, GetUsageSummary } from '../../../domain/billing/usecases/billing.js';
@@ -67,7 +68,7 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
   });
 
   // POST /api/v1/billing/webhook — Stripe webhook (no auth, signature verified)
-  router.post('/webhook', async (req: Request, res: Response) => {
+  router.post('/webhook', systemScope, async (req: Request, res: Response) => {
     try {
       const signature = req.headers['stripe-signature'] as string;
       if (!signature) { sendError(res, 400, 'MISSING_SIGNATURE', 'stripe-signature header is required'); return; }

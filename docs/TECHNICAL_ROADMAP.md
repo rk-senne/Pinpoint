@@ -15,10 +15,10 @@
 
 ---
 
-## Multi-Tenancy: Shared DB, application-layer isolation (RLS = future hardening)
+## Multi-Tenancy: Shared DB, application-layer isolation + enforced PostgreSQL RLS
 
 - `org_id` column on all tenant tables
-- Tenant isolation is enforced in the application layer (org_id predicates + access checks). PostgreSQL RLS policies exist but are inert today (no `app.current_org_id` is ever set and the app role bypasses RLS) — see docs/SECURITY_REVIEW.md PP-08; a per-request `SET LOCAL app.current_org_id` wrapper with a non-superuser role is planned future hardening
+- Tenant isolation is enforced in the application layer (org_id predicates + access checks) and, as a second line, by PostgreSQL RLS: the API runs as the unprivileged `pinpoint_app` role and every connection carries `app.current_org_id` / `app.system` from an AsyncLocalStorage tenant context (docs/SECURITY_REVIEW.md PP-08, migration `20261125000101_row_level_security.ts`)
 - JWT extended with `org_id` + `role` claims
 
 ---

@@ -1,3 +1,4 @@
+import { systemScope } from '../../../infrastructure/tenantContext.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Knex } from 'knex';
@@ -206,7 +207,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
   });
 
   // POST /api/v1/org/invitations/accept — accept invitation (requires auth)
-  router.post('/invitations/accept', authMiddleware, async (req: Request, res: Response) => {
+  router.post('/invitations/accept', authMiddleware, systemScope, async (req: Request, res: Response) => {
     const parsedBody = AcceptInvitationSchema.safeParse(req.body ?? {});
     if (!parsedBody.success) return sendZodFailure(res, 'Invalid invitation token.', parsedBody.error.flatten());
     // Bind redemption to the invited email using the account's CURRENT email.
@@ -222,7 +223,7 @@ export function createOrgRoutes(deps: OrgRouteDeps): Router {
   });
 
   // POST /api/v1/org/switch — switch active org, re-issue JWT
-  router.post('/switch', authMiddleware, async (req: Request, res: Response) => {
+  router.post('/switch', authMiddleware, systemScope, async (req: Request, res: Response) => {
     const parsed = SwitchOrgSchema.safeParse(req.body);
     if (!parsed.success) return sendZodFailure(res, 'Invalid switch request.', parsed.error.flatten());
     const { orgId } = parsed.data;

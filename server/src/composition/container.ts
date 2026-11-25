@@ -33,6 +33,7 @@ import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { createMetrics } from '../infrastructure/metrics.js';
+import { installTenantContext, runAsSystem, runWithStore, systemScope } from '../infrastructure/tenantContext.js';
 import rateLimit from 'express-rate-limit';
 import { Server as HttpServer, createServer } from 'http';
 import knex, { type Knex } from 'knex';
@@ -165,6 +166,9 @@ export function buildContainer(config: Config): Container {
     },
     acquireConnectionTimeout: 10000,
   });
+  // PP-08: push the AsyncLocalStorage tenant context into every pooled
+  // connection so PostgreSQL RLS policies see app.current_org_id / app.system.
+  installTenantContext(db);
 
   const s3ClientConfig: ConstructorParameters<typeof S3Client>[0] = {
     region: config.s3.region,
@@ -320,6 +324,15 @@ export function buildContainer(config: Config): Container {
     },
   }));
   app.use(cookieParser());
+  // PP-08: open the per-request tenant scope AFTER the body parser (stream
+  // callbacks would otherwise drop the AsyncLocalStorage store). The org comes
+  // from the signed session token (pure crypto, no DB); the auth layer and the
+  // pre-tenant lookups refine it (setCurrentOrg / runAsSystem). Starts with no
+  // `system` flag, so anything not explicitly granted fails closed.
+  const resolveTokenOrg = orgIdFromVerifiedToken(adapters.tokenIssuer);
+  app.use((req, _res, next) => {
+    runWithStore({ orgId: resolveTokenOrg(req) ?? null, system: false }, next);
+  });
   app.use(compress(1024));
   app.use(requestId);
   app.use(securityHeaders);
@@ -560,6 +573,7 @@ export function buildContainer(config: Config): Container {
     // `/api/v1` (no auth) at `GET /review/:linkId`: server-side-fetches the
     // project's target page via the SSRF egress guard and returns it wrapped
     // with an injected <base>, strict CSP, and the guest-feedback overlay.
+    app.use('/review', systemScope);
     app.use(
       '/review',
       createProxyRoutes({
@@ -582,6 +596,7 @@ export function buildContainer(config: Config): Container {
   // Public widget feedback surface (A1/A3). Project-bound pk_widget_ keys;
   // fail-closed per-key Redis rate limit + daily quota. Mounted directly
   // (outside mountInboundHttp) because its CORS/auth model is bespoke.
+  app.use('/api/v1/widget', systemScope);
   app.use(
     '/api/v1/widget',
     createWidgetRoutes({
@@ -810,10 +825,14 @@ export function buildContainer(config: Config): Container {
       httpServer.once('listening', onListening);
       httpServer.listen(config.port, config.host);
     });
-    worker.start();
-    digestWorker?.start();
-    integrationRefreshWorker.start();
-    webhookDeliveryWorker.start();
+    // Background workers are trusted server code that scan across tenants;
+    // timers inherit the async context, so every tick runs as system.
+    runAsSystem(() => {
+      worker.start();
+      digestWorker?.start();
+      integrationRefreshWorker.start();
+      webhookDeliveryWorker.start();
+    });
   };
 
   const stop = async (): Promise<void> => {

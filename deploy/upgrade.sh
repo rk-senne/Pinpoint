@@ -38,6 +38,13 @@ main() {
     ok "added ACME_EMAIL to $ENV_FILE"
   fi
 
+  # DB_APP_PASSWORD (the unprivileged pinpoint_app role the API runs as, so RLS
+  # applies) is new; older env files lack it. Generate it once.
+  if [ -z "$(env_get DB_APP_PASSWORD)" ]; then
+    env_set DB_APP_PASSWORD "$(openssl rand -hex 24)"
+    ok "added DB_APP_PASSWORD to $ENV_FILE"
+  fi
+
   if [ "${PINPOINT_SKIP_BACKUP:-0}" != 1 ]; then
     log "Pre-upgrade backup"
     "$DEPLOY_DIR/backup.sh"

@@ -37,6 +37,26 @@ on port 4173.
 
 ## 2. First deploy
 
+### One command (Ubuntu 22.04 / 24.04 VPS)
+
+```bash
+git clone https://github.com/rk-senne/Pinpoint.git /opt/pinpoint
+sudo /opt/pinpoint/deploy/install.sh
+```
+
+`deploy/install.sh` is idempotent. It installs Docker Engine + the compose
+plugin from Docker's apt repo if missing, enables `ufw` for 22/80/443 (if
+installed), asks for `DOMAIN` and `ADMIN_EMAIL` (Let's Encrypt) and optional
+SMTP, generates every secret with `openssl` into `deploy/.env.production`
+(mode 600, only if that file is absent), pulls the GHCR images (building from
+source if they cannot be pulled), migrates, starts the stack and waits for
+`https://$DOMAIN/api/v1/health`. Non-interactive: export `DOMAIN`,
+`ADMIN_EMAIL` (and optionally `SMTP_*`) and set `PINPOINT_NONINTERACTIVE=1`.
+Nothing else needs buying: screenshots live on a local Docker volume.
+`deploy/upgrade.sh` and `deploy/backup.sh` (below) are the day-2 commands.
+
+### Manual
+
 Requirements: a Linux VM with Docker 24+ and Compose v2, a DNS record for your
 domain pointing at it, ports 80 and 443 open (80 is needed for the ACME
 challenge and the HTTP→HTTPS redirect), and an SMTP account.
@@ -110,14 +130,26 @@ never `true` (rejected by the preflight on an exposed deployment). Related
 knobs: `TENANT_RATE_LIMIT_MAX` (per organisation per hour, default 1000) and
 `AUTH_RATE_LIMIT_IP_MAX` (per IP per minute on auth endpoints, default 20).
 
-### Screenshot storage (optional)
+### Screenshot storage
 
-Screenshots use any S3-compatible object store (MinIO, Cloudflare R2,
-Backblaze B2, Wasabi, …). Set `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`,
-`S3_FORCE_PATH_STYLE` (usually `true` for self-hosted), `S3_PUBLIC_BASE_URL`
-and the access key pair `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` in
-`deploy/.env.production` (the compose file maps the key pair to the
-environment variables the S3 client library reads). Create the bucket first.
+`STORAGE_DRIVER=local|s3`. When unset it is `s3` if `S3_ENDPOINT` or an S3
+access key is configured, otherwise `local`.
+
+- **local (default for the prod stack)** — PNGs and markup JSON are written
+  atomically (mode 0600 files, 0700 directories) under `LOCAL_STORAGE_DIR`
+  (`/data/screenshots`, the `screenshots` named volume). The browser never
+  sees a path: `GET /api/v1/annotations/:id/screenshot` returns a 15-minute
+  HMAC-signed URL (`/api/v1/screenshots/<token>`, key derived from
+  `JWT_SECRET`, `Cache-Control: private`, `image/png`, `nosniff`). Rotating
+  `JWT_SECRET` only invalidates URLs already issued. `deploy/backup.sh`
+  archives the volume.
+- **s3** — any S3-compatible store (MinIO, Cloudflare R2, Backblaze B2,
+  Wasabi, …). Set `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`,
+  `S3_FORCE_PATH_STYLE` (usually `true` for self-hosted), `S3_PUBLIC_BASE_URL`
+  and the access key pair `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` in
+  `deploy/.env.production`. Create the bucket first.
+
+Switching drivers does not migrate existing objects.
 
 ## 3. Upgrades
 
@@ -146,8 +178,19 @@ sets `stop_grace_period: 30s`, above that window.
 
 ## 4. Backups and restore
 
-Everything stateful is in Postgres (plus Caddy's certificates and, if used, the
-object store). Back up Postgres with `pg_dump` in custom format from the
+Everything stateful is in Postgres, the `screenshots` volume (local storage
+driver) and Caddy's certificates. The easy way:
+
+```bash
+/opt/pinpoint/deploy/backup.sh        # -> /opt/pinpoint/backups: pg_dump + screenshots tar.gz
+# cron, daily 02:30, retention BACKUP_RETENTION_DAYS (default 14):
+30 2 * * * /opt/pinpoint/deploy/backup.sh >> /var/log/pinpoint-backup.log 2>&1
+```
+
+`BACKUP_DIR`, `BACKUP_RETENTION_DAYS` and `BACKUP_INCLUDE_ENV=1` are
+supported (see the script header). Restore the screenshots archive with
+`dc exec -T api tar -xzf - -C /data/screenshots < pinpoint-screenshots-<stamp>.tar.gz`.
+`deploy/upgrade.sh` takes a backup before it upgrades. By hand, back up Postgres with `pg_dump` in custom format from the
 running container:
 
 ```bash
@@ -278,7 +321,18 @@ both Compose stacks on a GitHub-hosted runner via
   header work through Caddy; `/metrics` is **not** reachable through Caddy but
   is 401 without / 200 with the bearer token inside the `api` container;
   register → verified → login over HTTPS sets a `Secure` `__Host-fl_session`
-  cookie.
+  cookie; with `STORAGE_DRIVER=local`, a screenshot is uploaded, fetched back
+  byte-identical through Caddy via its signed URL (a tampered URL is 403), and
+  survives an API restart.
 
 Reproduce locally (needs a working Docker, `jq`, `openssl`; the prod mode binds
 ports 80/443): `bash infrastructure/scripts/compose-smoke.sh prod`.
+
+### Shell script checks and GHCR publishing
+
+The `shell-scripts` CI job runs `bash -n` and `shellcheck` over
+`deploy/*.sh` and `infrastructure/scripts/*.sh`. The `docker-publish` job
+pushes `<sha>` + `latest` on `main`. To exercise it from a branch, run the
+workflow manually (Actions → ci → Run workflow, tick `publish_tag`): it
+publishes only `ghcr.io/<owner>/<repo>/{server,dashboard}:test-<sha>` and never
+touches `latest`. `packages: write` is granted to that job only.

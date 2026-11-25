@@ -111,9 +111,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-no-reply@${DOMAIN}}
-      # Optional S3-compatible screenshot storage (MinIO, Cloudflare R2,
-      # Backblaze B2, ...). Leave S3_BUCKET unset-equivalent by not
-      # configuring credentials to run without screenshot storage.
+      # Screenshot storage. Default (no S3 settings): local disk on the
+      # `screenshots` volume - nothing to buy. To use an S3-compatible
+      # service (MinIO, Cloudflare R2, Backblaze B2, ...) set the S3_* values
+      # (STORAGE_DRIVER then resolves to s3 on its own, or force it).
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-}
+      LOCAL_STORAGE_DIR: /data/screenshots
       S3_BUCKET: ${S3_BUCKET:-pinpoint}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
@@ -129,6 +132,8 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       OAUTH_CALLBACK_BASE_URL: https://${DOMAIN}
+    volumes:
+      - screenshots:/data/screenshots
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -159,6 +164,7 @@ services:
       - dashboard
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required (Let's Encrypt contact)}
     ports:
       - "80:80"
       - "443:443"
@@ -190,6 +196,7 @@ services:
 
 volumes:
   db_data:
+  screenshots: # local-disk screenshots (STORAGE_DRIVER=local) - back this up
   caddy_data:
   caddy_config:
   prometheus_data:

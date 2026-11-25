@@ -2,6 +2,11 @@
 # Certificates are obtained and renewed automatically (Let's Encrypt) for
 # $DOMAIN; ports 80 and 443 must be reachable from the internet and DNS for
 # $DOMAIN must point at this host.
+{
+	# Contact for Let's Encrypt expiry notices (ACME_EMAIL in .env.production).
+	email {$ACME_EMAIL}
+}
+
 {$DOMAIN} {
 	encode zstd gzip
 

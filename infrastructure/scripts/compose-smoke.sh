@@ -162,10 +162,13 @@ gen_prod_env() {
   METRICS_TOKEN="$(openssl rand -hex 24)"
   set_var METRICS_TOKEN "$METRICS_TOKEN"
   set_var DB_PASSWORD "$(openssl rand -hex 24)"
+  set_var ACME_EMAIL smoke@example.test
   set_var SMTP_HOST localhost
   set_var SMTP_FROM no-reply@localhost
   rm -f "$f.bak"
   chmod 600 "$f"
+  # Screenshots on the local-disk driver (no S3 provider needed).
+  echo "STORAGE_DRIVER=local" >>"$f"
   # Build locally (no GHCR pull) under CI-local image names.
   {
     echo "PINPOINT_SERVER_IMAGE=pinpoint-server:compose-smoke"
@@ -245,6 +248,63 @@ smoke_prod() {
   grep -iE '^set-cookie: __Host-fl_session=.*;[[:space:]]*Secure' "$hdrs" >/dev/null ||
     fail "login lacks Secure __Host-fl_session cookie: $(grep -i '^set-cookie' "$hdrs" | sed 's/=[^;]*/=<redacted>/')"
   echo "ok   login 200 with Secure __Host-fl_session cookie"
+
+  smoke_screenshot
+}
+
+# Upload a screenshot and fetch it back through Caddy via the signed URL
+# (STORAGE_DRIVER=local). Uses the bearer token (CSRF-exempt) from the login body.
+smoke_screenshot() {
+  local base=https://localhost
+  step "screenshot upload + signed-URL fetch through Caddy (local storage)"
+  local login token auth pid page ann url png="$TMP/shot.png"
+  login="$(curl -sSk --max-time 15 -X POST "$base/api/v1/auth/login" \
+    -H 'Content-Type: application/json' -d "$(login_payload)")" || fail "login (bearer) failed"
+  token="$(jq -r '.token // empty' <<<"$login")"
+  [ -n "$token" ] || fail "login body lacks a bearer token"
+  auth="Authorization: Bearer $token"
+  # 1x1 PNG
+  printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' |
+    base64 -d >"$png"
+
+  local proj
+  proj="$(curl -sSk --max-time 15 -X POST "$base/api/v1/projects" -H "$auth" \
+    -H 'Content-Type: application/json' -d '{"name":"smoke-shots","urls":["https://example.com/"]}')" ||
+    fail "create project failed"
+  pid="$(jq -r '.project.id // .id // empty' <<<"$proj")"
+  page="$(jq -r '(.project.pages // .pages)[0].url // empty' <<<"$proj")"
+  [ -n "$pid" ] && [ -n "$page" ] || fail "project create response unexpected: $proj"
+
+  ann="$(curl -sSk --max-time 15 -X POST "$base/api/v1/projects/$pid/annotations" -H "$auth" \
+    -H 'Content-Type: application/json' -d "$(jq -nc --arg u "$page" '{pageUrl:$u,body:"smoke",type:"note",severity:"minor",
+      target:{cssSelector:"body",xpath:"/html/body",pageX:1,pageY:1,tagName:"BODY",textSnippet:""},
+      environment:{browserFamily:"Chrome",browserVersion:"120.0",osFamily:"macOS",osVersion:"14.0",deviceType:"desktop",userAgentRaw:"smoke"}}')")" ||
+    fail "create annotation failed"
+  ann="$(jq -r '.annotation.id // empty' <<<"$ann")"
+  [ -n "$ann" ] || fail "annotation id missing"
+
+  [ "$(http_code -k -X POST "$base/api/v1/annotations/$ann/screenshot" -H "$auth" -F "image=@$png;type=image/png")" = 200 ] ||
+    fail "screenshot upload did not return 200"
+  echo "ok   screenshot upload 200"
+
+  url="$(curl -sSk --max-time 15 "$base/api/v1/annotations/$ann/screenshot" -H "$auth" | jq -r '.screenshotUrl // empty')"
+  case "$url" in *"/api/v1/screenshots/"*) ;; *) fail "unexpected screenshot url: $url" ;; esac
+  echo "ok   signed URL minted"
+  # The URL's origin is APP_URL (https://localhost); fetch it WITHOUT credentials.
+  local hdrs="$TMP/shot.headers" got="$TMP/shot.fetched"
+  [ "$(http_code -k -D "$hdrs" -o "$got" "$url")" = 200 ] || fail "signed URL fetch did not return 200"
+  cmp -s "$png" "$got" || fail "fetched screenshot differs from the uploaded bytes"
+  grep -qi '^content-type: image/png' "$hdrs" || fail "signed URL is not served as image/png"
+  grep -qi '^x-content-type-options: nosniff' "$hdrs" || fail "signed URL lacks nosniff"
+  echo "ok   signed URL returns the identical PNG (image/png, nosniff)"
+  assert_code 403 "tampered signed URL" -k "${url/\/screenshots\//\/screenshots\/A}"
+  # Survives an API restart because it lives on the named volume.
+  "${COMPOSE[@]}" restart api >/dev/null
+  retry "$TIMEOUT_S" "API health after restart" curl -fsSk "$base/api/v1/health"
+  local fresh
+  fresh="$(curl -sSk --max-time 15 "$base/api/v1/annotations/$ann/screenshot" -H "$auth" | jq -r '.screenshotUrl // empty')"
+  [ "$(http_code -k "$fresh")" = 200 ] || fail "screenshot missing after API restart (volume not persistent?)"
+  echo "ok   screenshot persisted across an API restart"
 }
 
 "smoke_$MODE"

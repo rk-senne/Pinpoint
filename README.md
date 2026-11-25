@@ -702,7 +702,9 @@ that is unset or empty falls back to the default.
 | `SMTP_SECURE` | `false` | server | `true` uses TLS from connect (typically port 465). |
 | `SMTP_USER` / `SMTP_PASSWORD` | unset | server | SMTP credentials (optional). |
 | `SMTP_FROM` | `no-reply@pinpoint.local` | server | From address. |
-| `S3_BUCKET` | `pinpoint` | server | Bucket for screenshots. |
+| `STORAGE_DRIVER` | `s3` if `S3_ENDPOINT` or `AWS_ACCESS_KEY_ID` is set, else `local` | server | `local` stores screenshots on disk (no provider needed); `s3` uses an S3-compatible bucket. |
+| `LOCAL_STORAGE_DIR` | `./var/screenshots` (`/data/screenshots` in the image) | server | Directory for the `local` driver (created 0700). Must be absolute on exposed deployments; mount a volume there. Screenshots are served via 15-minute signed `/api/v1/screenshots/:token` URLs. |
+| `S3_BUCKET` | `pinpoint` | server | Bucket for screenshots (`s3` driver). |
 | `S3_REGION` | `us-east-1` (the SDK's `AWS_REGION` is also honoured) | server | Bucket region (`auto` for Cloudflare R2). |
 | `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | unset / `false` / unset | server | S3-compatible storage (MinIO, etc.) options. Use `S3_FORCE_PATH_STYLE=true` with MinIO. The bucket is expected to be **private**: `GET /api/v1/annotations/:id/screenshot` returns a short-lived (15 min) presigned URL that the browser can load directly, so `S3_ENDPOINT` must be reachable from the user's browser. Set `S3_PUBLIC_BASE_URL` (CDN / public bucket) to get plain `<base>/<key>` URLs instead. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | server | Credentials for the bucket (the standard AWS SDK provider chain; for MinIO use its root/service-account key). Without resolvable credentials screenshot uploads fail with 503 `UNAVAILABLE`. |

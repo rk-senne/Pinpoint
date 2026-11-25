@@ -16,7 +16,9 @@ export type NotificationKind =
   | 'daily_digest'
   | 'promoted_to_owner'
   | 'project_deleted'
-  | 'verify_email';
+  | 'verify_email'
+  /** Not an email: a durable "post this annotation to Slack" job (see ChannelDeliverer). */
+  | 'slack_annotation';
 
 /** Discriminated payload for a queued Notification (Req 28). */
 export interface NotificationPayload {

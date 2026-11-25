@@ -286,19 +286,105 @@ describe('IntegrationsPage — Finish setup', () => {
     teardown();
   });
 
-  it('Slack has no Finish setup step; a fully configured integration shows "Change target"', async () => {
+  it('a fully configured integration shows "Change target" and no setup hint', async () => {
     stubApi({
       'GET /integrations': [200, { integrations: [
-        { id: 'i1', provider: 'slack', enabled: true, config: {} },
         { id: 'i2', provider: 'jira', enabled: true, config: { cloudId: 'c', projectKey: 'WEB' } },
       ] }],
     });
     const { grid, teardown } = mount();
     await flush();
-    expect(grid.querySelector('[data-provider="slack"] [data-setup]')).toBeNull();
     expect(grid.querySelector('[data-provider="jira"] [data-role="setup-hint"]')).toBeNull();
     expect(grid.querySelector('[data-provider="jira"] [data-setup]')?.textContent).toBe('Change target');
     teardown();
+  });
+
+  describe('Slack', () => {
+    const channels = [
+      { id: 'C111', label: '#general', config: { channelId: 'C111', channelName: 'general' } },
+      { id: 'C222', label: '#<i>feedback</i>', config: { channelId: 'C222', channelName: 'feedback' } },
+    ];
+
+    it('a connected Slack without a channel offers Finish setup with channel picker, notify toggle and severity', async () => {
+      history.replaceState(null, '', '/integrations?connected=slack');
+      let cfg: Record<string, unknown> = {};
+      const calls = stubApi({
+        'GET /integrations': () => [200, { integrations: [{ id: 'i1', provider: 'slack', enabled: true, config: cfg }] }],
+        'GET /integrations/slack/targets': [200, { targets: channels }],
+        'PATCH /integrations/slack': () => {
+          cfg = { channelId: 'C222', channelName: 'feedback', notifyOnNew: true, minSeverity: 'critical' };
+          return [200, {}];
+        },
+      });
+      const { grid, teardown } = mount();
+      await flush();
+      await flush();
+
+      const card = grid.querySelector('[data-provider="slack"]') as HTMLElement;
+      const select = card.querySelector('[data-role="target-select"]') as HTMLSelectElement;
+      expect(select.options.length).toBe(2);
+      expect(select.options[1]!.textContent).toBe('#<i>feedback</i>');
+      expect(card.querySelector('option i')).toBeNull();
+
+      const notify = card.querySelector('[data-role="slack-notify"]') as HTMLInputElement;
+      const sev = card.querySelector('[data-role="slack-min-severity"]') as HTMLSelectElement;
+      // Defaults: auto-notify off, severity major (and disabled while off).
+      expect(notify.checked).toBe(false);
+      expect(sev.value).toBe('major');
+      expect(sev.disabled).toBe(true);
+
+      select.value = '1';
+      notify.checked = true;
+      notify.dispatchEvent(new Event('change'));
+      expect(sev.disabled).toBe(false);
+      sev.value = 'critical';
+      (card.querySelector('[data-role="target-save"]') as HTMLButtonElement).click();
+      await flush();
+      await flush();
+
+      const patch = calls.find((c) => c.method === 'PATCH')!;
+      expect(patch.url).toBe('/integrations/slack');
+      expect(patch.body).toEqual({
+        config: { channelId: 'C222', channelName: 'feedback', notifyOnNew: true, minSeverity: 'critical' },
+      });
+      expect(grid.querySelector('[data-role="setup-panel"]')).toBeNull();
+      expect((grid.querySelector('[data-setup="slack"]') as HTMLElement).textContent).toBe('Change target');
+      teardown();
+    });
+
+    it('prefills the current channel and notify settings when changing the target', async () => {
+      const calls = stubApi({
+        'GET /integrations': [200, { integrations: [
+          { id: 'i1', provider: 'slack', enabled: true, config: { channelId: 'C222', channelName: 'feedback', notifyOnNew: true, minSeverity: 'minor' } },
+        ] }],
+        'GET /integrations/slack/targets': [200, { targets: channels }],
+      });
+      const { grid, teardown } = mount();
+      await flush();
+      expect(grid.querySelector('[data-provider="slack"] [data-role="setup-hint"]')).toBeNull();
+      (grid.querySelector('[data-setup="slack"]') as HTMLElement).click();
+      await flush();
+      await flush();
+      expect(calls.some((c) => c.url === '/integrations/slack/targets')).toBe(true);
+      expect((grid.querySelector('[data-role="target-select"]') as HTMLSelectElement).value).toBe('1');
+      expect((grid.querySelector('[data-role="slack-notify"]') as HTMLInputElement).checked).toBe(true);
+      expect((grid.querySelector('[data-role="slack-min-severity"]') as HTMLSelectElement).value).toBe('minor');
+      teardown();
+    });
+
+    it('trackers do not get the Slack notify controls', async () => {
+      stubApi({
+        'GET /integrations': [200, { integrations: [{ id: 'i1', provider: 'github', enabled: true, config: {} }] }],
+        'GET /integrations/github/targets': [200, { targets: [{ id: 'a', label: 'a/b', config: { owner: 'a', repo: 'b' } }] }],
+      });
+      const { grid, teardown } = mount();
+      await flush();
+      (grid.querySelector('[data-setup="github"]') as HTMLElement).click();
+      await flush();
+      await flush();
+      expect(grid.querySelector('[data-role="slack-notify"]')).toBeNull();
+      teardown();
+    });
   });
 
   it('shows the provider error inside the picker when targets cannot be loaded', async () => {

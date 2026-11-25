@@ -13,6 +13,7 @@ import { createLinearProvider } from './linearProvider.js';
 import { createJiraProvider } from './jiraProvider.js';
 import { createClickUpProvider } from './clickupProvider.js';
 import { createAsanaProvider } from './asanaProvider.js';
+import { createSlackProvider } from './slackProvider.js';
 
 export {
   type TaskProvider,
@@ -31,6 +32,14 @@ export { createLinearProvider } from './linearProvider.js';
 export { createJiraProvider } from './jiraProvider.js';
 export { createClickUpProvider } from './clickupProvider.js';
 export { createAsanaProvider } from './asanaProvider.js';
+export { createSlackProvider } from './slackProvider.js';
+export {
+  createSlackAnnotationNotifier,
+  createSlackQueueDelivery,
+  withSlackAutoNotify,
+  SLACK_NOTIFICATION_KIND,
+} from './slackNotifier.js';
+export { createSlackWiring, type SlackWiring } from './slackWiring.js';
 
 type Factory = (deps: TaskProviderDeps) => TaskProvider;
 
@@ -40,6 +49,7 @@ const FACTORIES: Record<TaskProviderName, Factory> = {
   jira: createJiraProvider,
   clickup: createClickUpProvider,
   asana: createAsanaProvider,
+  slack: createSlackProvider,
 };
 
 /**

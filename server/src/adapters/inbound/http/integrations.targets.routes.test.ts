@@ -34,6 +34,15 @@ const routes: Record<string, unknown> = {
   'api.clickup.com/api/v2/space/s1/list': { lists: [{ id: 'l1', name: 'Bugs' }] },
   'app.asana.com/api/1.0/workspaces': { data: [{ gid: '111', name: 'WS' }] },
   'app.asana.com/api/1.0/projects': { data: [{ gid: '222', name: 'Proj' }] },
+  'slack.com/api/conversations.list': {
+    ok: true,
+    channels: [
+      { id: 'C222', name: 'random', is_member: false },
+      { id: 'C111', name: 'feedback', is_member: true },
+      { id: 'C333', name: 'old', is_member: true, is_archived: true },
+    ],
+    response_metadata: { next_cursor: '' },
+  },
 };
 
 // Fake token endpoint for the callback tests.
@@ -147,6 +156,10 @@ describe('GET /:provider/targets', () => {
     ], 'Bearer secret-token-xyz'],
     ['clickup', [{ id: 'l1', label: 'Team / Space / Bugs', config: { listId: 'l1' } }], 'secret-token-xyz'],
     ['asana', [{ id: '222', label: 'WS / Proj', config: { projectGid: '222', workspaceGid: '111' } }], 'Bearer secret-token-xyz'],
+    ['slack', [
+      { id: 'C111', label: '#feedback', config: { channelId: 'C111', channelName: 'feedback' } },
+      { id: 'C222', label: '#random (invite the bot first)', config: { channelId: 'C222', channelName: 'random' } },
+    ], 'Bearer secret-token-xyz'],
   ];
 
   it.each(cases)('%s: parses the provider payload, sends the right auth, never leaks the token', async (provider, expected, auth) => {
@@ -159,9 +172,9 @@ describe('GET /:provider/targets', () => {
     expect(seen.every((s) => s.auth === auth)).toBe(true);
   });
 
-  it('404 when not connected, 400 for slack, 409 when disabled', async () => {
+  it('404 when not connected, 400 for a provider without targets, 409 when disabled', async () => {
     expect((await request(app(depsFor(null))).get('/api/v1/integrations/github/targets')).status).toBe(404);
-    expect((await request(app(depsFor(integrationOf('slack')))).get('/api/v1/integrations/slack/targets')).status).toBe(400);
+    expect((await request(app(depsFor(integrationOf('mystery')))).get('/api/v1/integrations/mystery/targets')).status).toBe(400);
     const disabled = await request(app(depsFor(integrationOf('github', {}, { enabled: false })))).get('/api/v1/integrations/github/targets');
     expect(disabled.status).toBe(409);
     expect(disabled.body.error.code).toBe('INTEGRATION_NOT_CONNECTED');
@@ -215,6 +228,11 @@ describe('PATCH /:provider', () => {
     ['jira', { cloudId: 'c', projectKey: 'WEB', siteUrl: 'http://acme.atlassian.net' }],
     ['clickup', { listId: '../x' }],
     ['asana', { projectGid: 'abc' }],
+    ['slack', {}],
+    ['slack', { channelId: 'general' }],
+    ['slack', { channelId: 'C123', minSeverity: 'urgent' }],
+    ['slack', { channelId: 'C123', notifyOnNew: 'yes' }],
+    ['slack', { channelId: 'C123', webhook: 'x' }],
   ])('%s rejects invalid config %j with 400 VALIDATION', async (provider, config) => {
     const deps = depsFor(integrationOf(provider));
     const res = await request(app(deps)).patch(`/api/v1/integrations/${provider}`).send({ config });
@@ -228,14 +246,25 @@ describe('PATCH /:provider', () => {
     ['linear', { teamId: 't' }],
     ['clickup', { listId: '901' }],
     ['asana', { projectGid: '222', workspaceGid: '111' }],
+    ['slack', { channelId: 'C0123ABCD', channelName: 'feedback', notifyOnNew: true, minSeverity: 'critical' }],
   ])('%s accepts a valid config', async (provider, config) => {
     expect((await request(app(depsFor(integrationOf(provider)))).patch(`/api/v1/integrations/${provider}`).send({ config })).status).toBe(200);
   });
 
-  it('404 when not connected; 400 for slack and for a missing config', async () => {
+  it('404 when not connected; 400 for a missing config', async () => {
     expect((await request(app(depsFor(null))).patch('/api/v1/integrations/github').send({ config: { owner: 'a', repo: 'b' } })).status).toBe(404);
-    expect((await request(app(depsFor(integrationOf('slack')))).patch('/api/v1/integrations/slack').send({ config: {} })).status).toBe(400);
     expect((await request(app(depsFor(integrationOf('github')))).patch('/api/v1/integrations/github').send({})).status).toBe(400);
+  });
+});
+
+describe('PATCH /slack', () => {
+  it('stores channel + notify settings, defaulting notifyOnNew=false and minSeverity=major', async () => {
+    const deps = depsFor(integrationOf('slack', { team: 'T1' }));
+    const res = await request(app(deps)).patch('/api/v1/integrations/slack').send({ config: { channelId: 'C0123ABCD', channelName: 'feedback' } });
+    expect(res.status).toBe(200);
+    expect(deps.integrationRepo.upsert).toHaveBeenCalledWith('org-123', 'slack', expect.objectContaining({
+      config: { team: 'T1', channelId: 'C0123ABCD', channelName: 'feedback', notifyOnNew: false, minSeverity: 'major' },
+    }));
   });
 });
 

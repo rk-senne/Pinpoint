@@ -313,7 +313,8 @@ export type NotificationPayload = {
     | 'daily_digest'
     | 'promoted_to_owner'
     | 'project_deleted'
-    | 'verify_email';
+    | 'verify_email'
+    | 'slack_annotation';
   recipientUserId: string;
   [key: string]: unknown;
 };

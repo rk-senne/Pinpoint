@@ -18,6 +18,9 @@ export const TASK_PROVIDERS = [
   'jira',
   'clickup',
   'asana',
+  // Slack is a delivery *channel* rather than a tracker, but it shares the
+  // "Send to…" contract: it posts a message and returns its permalink.
+  'slack',
 ] as const;
 
 export type TaskProviderName = (typeof TASK_PROVIDERS)[number];
@@ -37,6 +40,16 @@ export interface TaskInput {
   url: string;
   severity: string;
   labels: string[];
+  /**
+   * Optional richer context (used by the Slack adapter; trackers ignore it).
+   * `annotationType` is note/suggestion/guideline, `projectUrl` is the
+   * dashboard project page `${APP_URL}/projects/<id>`.
+   */
+  annotationType?: string;
+  status?: string;
+  pageUrl?: string | null;
+  projectUrl?: string;
+  pinNumber?: number | string | null;
 }
 
 /**
@@ -81,12 +94,18 @@ export interface TaskProvider {
 export class TaskDeliveryError extends Error {
   readonly transient: boolean;
   readonly status?: number;
+  /** Upstream `Retry-After` (seconds) for rate-limited (429) responses. */
+  readonly retryAfterSeconds?: number;
 
-  constructor(message: string, opts: { transient: boolean; status?: number } = { transient: false }) {
+  constructor(
+    message: string,
+    opts: { transient: boolean; status?: number; retryAfterSeconds?: number } = { transient: false },
+  ) {
     super(message);
     this.name = 'TaskDeliveryError';
     this.transient = opts.transient;
     this.status = opts.status;
+    this.retryAfterSeconds = opts.retryAfterSeconds;
   }
 }
 

@@ -40,12 +40,12 @@ describe('SendToMenu', () => {
     teardown();
   });
 
-  it('lists only connected, deliverable providers on open', async () => {
+  it('lists only connected, configured providers on open', async () => {
     const api = makeApi({
       'GET /integrations': () => ({
         integrations: [
           { provider: 'github', enabled: true },
-          { provider: 'slack', enabled: true }, // not a task tracker — filtered out
+          { provider: 'slack', enabled: true, config: {} }, // no channel picked yet — filtered out
           { provider: 'jira', enabled: false }, // disabled — filtered out
         ],
       }),
@@ -62,8 +62,8 @@ describe('SendToMenu', () => {
     teardown();
   });
 
-  it('shows an empty-state when no task trackers are connected', async () => {
-    const api = makeApi({ 'GET /integrations': () => ({ integrations: [{ provider: 'slack', enabled: true }] }) });
+  it('shows an empty-state when nothing is connected or configured', async () => {
+    const api = makeApi({ 'GET /integrations': () => ({ integrations: [{ provider: 'slack', enabled: true, config: {} }] }) });
     const teardown = mountSendToMenu(container, { annotationId: 'a1', apiFetch: api, toast: vi.fn() });
 
     (container.querySelector('[data-role="send-to-button"]') as HTMLElement).click();
@@ -175,6 +175,41 @@ describe('SendToMenu', () => {
     const link = container.querySelector('[data-role="send-to-link"]') as HTMLAnchorElement;
     // The href was dropped by el()'s isSafeUrl gate (javascript: scheme).
     expect(link.getAttribute('href')).toBeNull();
+    teardown();
+  });
+
+  it('offers Slack once a channel is configured and delivers to it', async () => {
+    const toast = vi.fn();
+    const api = makeApi({
+      'GET /integrations': () => ({
+        integrations: [{ provider: 'slack', enabled: true, config: { channelId: 'C0123', channelName: 'feedback' } }],
+      }),
+      'POST /annotations/a1/deliver': () => ({
+        link: {
+          provider: 'slack',
+          externalId: 'C0123:1700000000.000100',
+          externalUrl: 'https://acme.slack.com/archives/C0123/p1700000000000100',
+          status: 'delivered',
+          lastError: null,
+        },
+      }),
+    });
+    const teardown = mountSendToMenu(container, { annotationId: 'a1', apiFetch: api, toast });
+
+    (container.querySelector('[data-role="send-to-button"]') as HTMLElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    const options = container.querySelectorAll('[data-role="send-to-option"]');
+    expect(options).toHaveLength(1);
+    expect(options[0].textContent).toBe('Slack');
+    (options[0] as HTMLElement).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const link = container.querySelector('[data-role="send-to-link"]') as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('https://acme.slack.com/archives/C0123/p1700000000000100');
+    expect(link.textContent).toBe('View message');
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ message: 'Posted to Slack.', variant: 'success' }));
     teardown();
   });
 });

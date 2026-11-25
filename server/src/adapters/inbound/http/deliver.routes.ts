@@ -153,8 +153,11 @@ export function createDeliverRoutes(deps: DeliverRouteDeps): Router {
     const severity = String(annotation.severity ?? 'informational');
     const title = `[Pinpoint #${pinNumber ?? '?'}] ${bodyText.slice(0, 80)}`.trim();
     const deepLink = appUrl
-      ? `${appUrl}/project/${annotation.project_id}?annotation=${annotationId}`
-      : `/project/${annotation.project_id}?annotation=${annotationId}`;
+      ? `${appUrl}/projects/${annotation.project_id}?annotation=${annotationId}`
+      : `/projects/${annotation.project_id}?annotation=${annotationId}`;
+    const page = annotation.page_id
+      ? ((await db('pages').where({ id: annotation.page_id }).first('url')) as { url?: string } | undefined)
+      : undefined;
 
     try {
       const result = await adapter.createTask(
@@ -165,6 +168,11 @@ export function createDeliverRoutes(deps: DeliverRouteDeps): Router {
           url: deepLink,
           severity: SEVERITY_LABEL[severity] ?? severity,
           labels: [`pinpoint`, severity],
+          annotationType: String(annotation.type ?? ''),
+          status: String(annotation.status ?? ''),
+          pageUrl: page?.url ?? null,
+          projectUrl: `${appUrl}/projects/${annotation.project_id}`,
+          pinNumber: (pinNumber as number | string | null | undefined) ?? null,
         },
       );
 

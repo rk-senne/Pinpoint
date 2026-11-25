@@ -6,6 +6,7 @@ import type { Knex } from 'knex';
 
 import type { Config } from './config.js';
 import type { Adapters } from './adapters.js';
+import type { DispatchPendingNotificationsDeps } from '../domain/notification/usecases/dispatchPendingNotifications.js';
 
 // --- domain (use cases) ------------------------------------------------
 import {
@@ -179,10 +180,12 @@ export interface BuildUseCasesDeps {
   eventBus: WebhookDispatchingEventBus;
   logger: PinoLogger;
   db: Knex;
+  /** Extra notification channels (e.g. Slack) keyed by notification kind. */
+  channelDeliverers?: DispatchPendingNotificationsDeps['channelDeliverers'];
 }
 
 export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
-  const { adapters, config, eventBus, logger, db } = deps;
+  const { adapters, config, eventBus, logger, db, channelDeliverers } = deps;
   const {
     userRepo,
     projectRepo,
@@ -450,6 +453,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     mailer,
     clock,
     logger,
+    ...(channelDeliverers ? { channelDeliverers } : {}),
   });
 
   // ---- Webhooks -------------------------------------------------------

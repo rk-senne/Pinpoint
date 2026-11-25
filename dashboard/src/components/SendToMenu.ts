@@ -21,8 +21,8 @@ import { el, setText, BRAND_COLORS } from '@pinpoint/shared';
 import { apiFetch as defaultApiFetch } from '../lib/api';
 import { showToast } from './Toast';
 
-/** The task-tracker providers that support one-click delivery. */
-export const DELIVERABLE_PROVIDERS = ['github', 'linear', 'jira', 'clickup', 'asana'] as const;
+/** The providers that support one-click delivery (task trackers + Slack). */
+export const DELIVERABLE_PROVIDERS = ['github', 'linear', 'jira', 'clickup', 'asana', 'slack'] as const;
 export type DeliverableProvider = (typeof DELIVERABLE_PROVIDERS)[number];
 
 const PROVIDER_LABELS: Record<DeliverableProvider, string> = {
@@ -31,11 +31,13 @@ const PROVIDER_LABELS: Record<DeliverableProvider, string> = {
   jira: 'Jira',
   clickup: 'ClickUp',
   asana: 'Asana',
+  slack: 'Slack',
 };
 
 interface IntegrationSummary {
   provider: string;
   enabled?: boolean;
+  config?: Record<string, unknown>;
 }
 
 interface ExternalLink {
@@ -53,6 +55,16 @@ export interface SendToMenuOptions {
   apiFetch?: typeof defaultApiFetch;
   /** Injectable toast so tests can assert on error feedback. */
   toast?: typeof showToast;
+}
+
+/**
+ * Slack is only offered once a channel has been picked ("configured");
+ * trackers keep their existing behaviour (offered as soon as connected).
+ */
+function isReady(i: IntegrationSummary): boolean {
+  if (!isDeliverable(i.provider) || i.enabled === false) return false;
+  if (i.provider === 'slack') return typeof i.config?.channelId === 'string' && i.config.channelId !== '';
+  return true;
 }
 
 /** Is a provider name one we can deliver to? */
@@ -117,12 +129,12 @@ export function mountSendToMenu(container: HTMLElement, options: SendToMenuOptio
       return;
     }
 
-    const connected = integrations.filter((i) => isDeliverable(i.provider) && i.enabled !== false);
+    const connected = integrations.filter(isReady);
     menu.replaceChildren();
 
     if (connected.length === 0) {
       const empty = el('li', { role: 'none', 'data-role': 'send-to-empty' });
-      setText(empty, 'No task trackers connected. Connect one in Settings → Integrations.');
+      setText(empty, 'Nothing to send to yet. Connect a tracker or Slack in Settings → Integrations.');
       empty.style.cssText = 'padding:6px 10px;color:#6b7280;max-width:220px;';
       menu.appendChild(empty);
       return;
@@ -149,7 +161,7 @@ export function mountSendToMenu(container: HTMLElement, options: SendToMenuOptio
     closeMenu();
 
     const pending = el('span', { 'data-role': 'send-to-pending' });
-    setText(pending, `Creating ${PROVIDER_LABELS[provider]} task…`);
+    setText(pending, `${provider === 'slack' ? `Posting to ${PROVIDER_LABELS[provider]}…` : `Creating ${PROVIDER_LABELS[provider]} task…`}`);
     pending.style.color = '#6b7280';
     result.replaceChildren(pending);
 
@@ -159,7 +171,7 @@ export function mountSendToMenu(container: HTMLElement, options: SendToMenuOptio
         { method: 'POST', body: JSON.stringify({ provider }) },
       );
       renderLink(resp.link);
-      toast({ message: `Created a ${PROVIDER_LABELS[provider]} task.`, variant: 'success' });
+      toast({ message: provider === 'slack' ? 'Posted to Slack.' : `Created a ${PROVIDER_LABELS[provider]} task.`, variant: 'success' });
     } catch (err) {
       // apiFetch surfaces the envelope toast; add an inline retry affordance.
       const message =
@@ -185,7 +197,10 @@ export function mountSendToMenu(container: HTMLElement, options: SendToMenuOptio
       // an element whose href was already validated by `el`'s isSafeUrl gate.
       anchor.setAttribute('target', '_blank');
       anchor.setAttribute('rel', 'noopener noreferrer');
-      setText(anchor, link.externalId ? `#${link.externalId}` : 'View task');
+      setText(
+        anchor,
+        link.provider === 'slack' ? 'View message' : link.externalId ? `#${link.externalId}` : 'View task',
+      );
       anchor.style.color = BRAND_COLORS.primary;
       result.append(label, anchor);
     } else {

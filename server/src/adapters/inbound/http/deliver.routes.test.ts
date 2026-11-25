@@ -196,7 +196,7 @@ describe('POST /annotations/:id/deliver', () => {
     const [ctx, task] = createTask.mock.calls[0];
     expect(ctx.accessToken).toBe('decrypted-token');
     expect(ctx.config).toMatchObject({ owner: 'acme', repo: 'web' });
-    expect(task.url).toContain('https://app.pinpoint.test/project/p1');
+    expect(task.url).toContain('https://app.pinpoint.test/projects/p1');
     expect(task.title).toContain('#3');
     expect(task.severity).toBe('Major');
   });

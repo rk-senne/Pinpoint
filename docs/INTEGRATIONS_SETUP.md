@@ -17,7 +17,7 @@ Examples use `https://feedback.example.com` as the public origin
 | Linear | yes | yes | yes |
 | ClickUp | yes | yes | yes |
 | Asana | yes | yes | yes |
-| Slack | yes | yes | **no** (connect only; nothing sends Slack messages yet) |
+| Slack | yes | yes | yes (posts to a channel; optional auto-notify) |
 
 How the OAuth flow works from the dashboard (Settings → Integrations):
 
@@ -106,7 +106,7 @@ vs `INTEGRATION_GITHUB_CLIENT_ID`).
 
 ## 3. Integrations: the token path (works today)
 
-For GitHub, Jira, Linear (and Slack, storage only). As an org owner/admin, with a bearer
+For GitHub, Jira, Linear and Slack. As an org owner/admin, with a bearer
 JWT (extension/login token) or session cookie plus `X-CSRF-Token`:
 
 ```bash
@@ -125,7 +125,7 @@ Body schema: `accessToken`, optional `refreshToken`, optional `config`
 | GitHub | Fine-grained PAT at <https://github.com/settings/personal-access-tokens/new>, repository access to the target repo, **Issues: Read and write** (a classic PAT needs `repo`) | `owner`, `repo` |
 | Linear | Personal API key at <https://linear.app/settings/api> (sent raw in `Authorization`) | `teamId` (UUID of the team; Linear → Settings → API, or the GraphQL `teams` query) |
 | Jira | Atlassian OAuth 2.0 (3LO) access token; see note | `cloudId`, `projectKey`; optional `issueType` (default in `jiraProvider.ts`), `siteUrl` (e.g. `https://acme.atlassian.net`, used to build the browse link) |
-| Slack | Bot token (`xoxb-…`) | none required; stored only |
+| Slack | Bot token (`xoxb-…`) with `chat:write` and `channels:read` | `channelId` (e.g. `C0123ABCD`); optional `channelName`, `notifyOnNew` (boolean, default `false`), `minSeverity` (`critical`\|`major`\|`minor`\|`informational`, default `major`) |
 
 Jira note: delivery calls `https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue`
 with `Authorization: Bearer <token>`, which accepts OAuth 2.0 tokens, not plain
@@ -184,10 +184,31 @@ Redirect URI to register everywhere: `https://feedback.example.com/api/v1/integr
 ### Slack
 
 - Register: <https://api.slack.com/apps> → Create New App → From scratch. OAuth & Permissions →
-  Redirect URLs → `…/api/v1/integrations/slack/callback`; Bot Token Scopes `chat:write`,
-  `incoming-webhook`.
-- Env: `INTEGRATION_SLACK_CLIENT_ID`, `INTEGRATION_SLACK_CLIENT_SECRET`.
-- Connecting stores the token and workspace name only. No Slack delivery exists.
+  Redirect URLs → `…/api/v1/integrations/slack/callback`; Bot Token Scopes **`chat:write`** and
+  **`channels:read`** (public-channel list for the picker). If you connected earlier with
+  different scopes, update the scopes in the app and **reconnect** Slack.
+- Env: `INTEGRATION_SLACK_CLIENT_ID`, `INTEGRATION_SLACK_CLIENT_SECRET` (optional
+  `INTEGRATION_SLACK_SCOPES` overrides the default scopes).
+- Delivery target: after connecting, **Finish setup** lists the workspace's public channels
+  (`GET /api/v1/integrations/slack/targets`, ≤ ~1000, archived excluded). Channels the bot
+  has not joined are labelled "invite the bot first".
+  **The bot can only post in channels it is a member of**: run `/invite @<your app>` in the
+  channel (there is no `chat:write.public` scope by design). Without it Slack answers
+  `not_in_channel` and Pinpoint reports "invite the bot to the channel".
+- **Send to… → Slack** (annotation menu) appears once a channel is saved. It posts a Block Kit
+  message (severity, type, status, text, page URL, link back to `${APP_URL}/projects/<id>`) via
+  `chat.postMessage` and stores the message permalink (`chat.getPermalink`) like other
+  providers' issue URLs. Annotation text is escaped for Slack mrkdwn (`& < >`), so it cannot
+  trigger `@channel` mentions or inject links.
+- **Auto-notify** (optional, in Finish setup / `PATCH /api/v1/integrations/slack` with
+  `{"config":{"channelId":"C…","notifyOnNew":true,"minSeverity":"major"}}`): new annotations at
+  or above `minSeverity` are posted automatically. They go through the durable `notifications`
+  queue (kind `slack_annotation`), never on the request path; failures are logged and retried
+  with backoff (Slack `429 Retry-After` is honoured), permanent errors such as `not_in_channel`
+  or `channel_not_found` are marked failed. An annotation already posted to Slack is never
+  posted twice.
+- Errors: `channel_not_found` → pick the channel again; `not_in_channel` → invite the bot;
+  `invalid_auth`/`token_revoked` → reconnect; `missing_scope` → add the scopes and reconnect.
 
 ### ClickUp
 

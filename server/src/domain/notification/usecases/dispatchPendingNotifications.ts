@@ -19,7 +19,7 @@
 // comment) so the SMTP adapter only knows how to deliver pre-rendered
 // `(to, subject, body)` triples — it never imports a template engine.
 
-import type { NotificationPayload } from '../Notification.js';
+import type { NotificationKind, NotificationPayload } from '../Notification.js';
 import type { Mailer } from '../ports/Mailer.js';
 import type { NotificationQueue } from '../ports/NotificationQueue.js';
 import type { UserRepo } from '../../user/ports/UserRepo.js';
@@ -52,7 +52,22 @@ export interface DispatchPendingNotificationsDeps {
   mailer: Mailer;
   clock: Clock;
   logger: Logger;
+  /**
+   * Non-email channels (currently Slack). A row whose `payload.kind` has an
+   * entry here is handed to it instead of the mailer. The deliverer throws on
+   * failure; an error carrying `transient: true` (and optionally
+   * `retryAfterSeconds`) is rescheduled with backoff, anything else fails.
+   */
+  channelDeliverers?: Partial<Record<NotificationKind, ChannelDeliverer>>;
 }
+
+/** Delivers one queued non-email notification. Throw to signal failure. */
+export type ChannelDeliverer = (payload: NotificationPayload) => Promise<void>;
+
+/** Retries a transient channel failure gets before it is marked failed. */
+const MAX_CHANNEL_ATTEMPTS = 6;
+const CHANNEL_BACKOFF_BASE_MS = 30_000;
+const CHANNEL_BACKOFF_CAP_MS = 32 * 60_000;
 
 const DEFAULT_BATCH_SIZE = 10;
 
@@ -71,6 +86,31 @@ export class DispatchPendingNotifications {
     const dispatched: DispatchedNotification[] = [];
 
     for (const row of rows) {
+      const channel = this.deps.channelDeliverers?.[row.payload?.kind];
+      if (channel) {
+        try {
+          await channel(row.payload);
+          await notificationQueue.markSent(row.id);
+          dispatched.push({ id: row.id, outcome: 'sent' });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          const attempts = (row.attempts ?? 0) + 1;
+          const info = e as { transient?: boolean; retryAfterSeconds?: number };
+          if (info.transient === true && attempts < MAX_CHANNEL_ATTEMPTS) {
+            const backoff = Math.min(CHANNEL_BACKOFF_BASE_MS * 2 ** (attempts - 1), CHANNEL_BACKOFF_CAP_MS);
+            const delay = Math.max(backoff, (info.retryAfterSeconds ?? 0) * 1000);
+            await notificationQueue.markPending(row.id, attempts, new Date(now.getTime() + delay), message);
+          } else {
+            await notificationQueue.markFailed(row.id, attempts, message);
+          }
+          logger.warn(
+            { notificationId: row.id, kind: row.payload?.kind, attempts, error: message },
+            'channel notification failed',
+          );
+          dispatched.push({ id: row.id, outcome: 'failed', error: message });
+        }
+        continue;
+      }
       try {
         const recipient = row.payload?.recipientUserId;
         if (typeof recipient !== 'string' || recipient.length === 0) {
@@ -236,6 +276,9 @@ export function renderTemplate(payload: NotificationPayload): {
         ),
       };
     }
+    case 'slack_annotation':
+      // Delivered through `channelDeliverers`, never rendered as email.
+      throw new Error('slack_annotation has no email template (no Slack deliverer configured)');
     default: {
       const _exhaustive: never = payload.kind;
       throw new Error(

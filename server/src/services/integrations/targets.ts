@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { readBodyCapped, safeFetch as defaultSafeFetch, type EgressGuardOptions } from '../egressGuard.js';
 
-export const TARGET_PROVIDERS = ['github', 'linear', 'jira', 'clickup', 'asana'] as const;
+export const TARGET_PROVIDERS = ['github', 'linear', 'jira', 'clickup', 'asana', 'slack'] as const;
 export type TargetProviderName = (typeof TARGET_PROVIDERS)[number];
 
 export function isTargetProvider(v: string): v is TargetProviderName {
@@ -54,6 +54,14 @@ export const TARGET_CONFIG_SCHEMAS = {
     projectGid: z.string().trim().regex(/^[0-9]{1,40}$/),
     workspaceGid: z.string().trim().regex(/^[0-9]{1,40}$/).optional(),
   }).strict(),
+  slack: z.object({
+    channelId: z.string().trim().regex(/^[A-Z0-9]{3,32}$/, 'channelId must be a Slack channel id'),
+    channelName: z.string().trim().max(120).optional(),
+    /** Auto-post new annotations to the channel (no manual "Send to…"). */
+    notifyOnNew: z.boolean().default(false),
+    /** Lowest severity that is auto-posted. */
+    minSeverity: z.enum(['critical', 'major', 'minor', 'informational']).default('major'),
+  }).strict(),
 } as const;
 
 /** Config keys that must be present for delivery to work (mirrors the adapters). */
@@ -63,6 +71,7 @@ export const REQUIRED_CONFIG_KEYS: Record<TargetProviderName, string[]> = {
   jira: ['cloudId', 'projectKey'],
   clickup: ['listId'],
   asana: ['projectGid'],
+  slack: ['channelId'],
 };
 
 interface Ctx {
@@ -242,6 +251,74 @@ async function asanaTargets(ctx: Ctx): Promise<IntegrationTarget[]> {
   return out;
 }
 
+/**
+ * Slack: public channels via `conversations.list` (cursor-paginated, ≤ 5 pages
+ * of 200). Slack reports failures as HTTP 200 `{ok:false,error}` and rate
+ * limits as 429, so this does not use the generic `call()`.
+ */
+const SLACK_PAGE_SIZE = 200;
+const SLACK_MAX_PAGES = 5;
+const SLACK_MAX_TARGETS = SLACK_PAGE_SIZE * SLACK_MAX_PAGES;
+
+async function slackTargets(ctx: Ctx): Promise<IntegrationTarget[]> {
+  const channels: Array<{ id: string; name: string; member: boolean }> = [];
+  let cursor = '';
+  for (let page = 0; page < SLACK_MAX_PAGES; page++) {
+    const url = new URL('https://slack.com/api/conversations.list');
+    url.searchParams.set('types', 'public_channel');
+    url.searchParams.set('exclude_archived', 'true');
+    url.searchParams.set('limit', String(SLACK_PAGE_SIZE));
+    if (cursor) url.searchParams.set('cursor', cursor);
+
+    let res;
+    try {
+      res = await ctx.doFetch(
+        url.toString(),
+        { method: 'GET', headers: { Authorization: `Bearer ${ctx.token}`, Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS) },
+        ctx.egress,
+      );
+    } catch {
+      throw new TargetsFetchError('Could not reach Slack.');
+    }
+    if (res.status === 429) {
+      throw new TargetsFetchError('Slack is rate limiting requests. Try again in a moment.', 429);
+    }
+    const { text, truncated } = await readBodyCapped(res as never, MAX_BODY_BYTES);
+    if (!res.ok) throw new TargetsFetchError(`Slack responded with HTTP ${res.status}.`, res.status);
+    if (truncated) throw new TargetsFetchError('Provider response was too large.');
+    let body: Record<string, unknown>;
+    try {
+      body = obj(JSON.parse(text));
+    } catch {
+      throw new TargetsFetchError('Provider response was not valid JSON.');
+    }
+    if (body.ok !== true) {
+      const code = str(body.error) ?? 'unknown_error';
+      if (code === 'ratelimited') throw new TargetsFetchError('Slack is rate limiting requests. Try again in a moment.', 429);
+      if (code === 'missing_scope') throw new TargetsFetchError('The Slack app needs the channels:read scope. Reconnect Slack.');
+      if (['invalid_auth', 'not_authed', 'token_revoked', 'token_expired', 'account_inactive'].includes(code)) {
+        throw new TargetsFetchError('The provider rejected the stored token. Reconnect the integration.', 401);
+      }
+      throw new TargetsFetchError(`Slack error: ${code}`);
+    }
+    for (const c of arr(body.channels).map(obj)) {
+      const id = str(c.id);
+      const name = str(c.name);
+      if (!id || !name || c.is_archived === true) continue;
+      channels.push({ id, name, member: c.is_member === true });
+    }
+    cursor = str(obj(body.response_metadata).next_cursor) ?? '';
+    if (!cursor) break;
+  }
+  // The bot can only post where it is a member (no chat:write.public), so list those first.
+  channels.sort((a, b) => Number(b.member) - Number(a.member) || a.name.localeCompare(b.name));
+  return channels.slice(0, SLACK_MAX_TARGETS).map((c) => ({
+    id: c.id,
+    label: c.member ? `#${c.name}` : `#${c.name} (invite the bot first)`,
+    config: { channelId: c.id, channelName: c.name },
+  }));
+}
+
 /** List the delivery targets reachable with `token`. Throws `TargetsFetchError`. */
 export async function listTargets(
   provider: TargetProviderName,
@@ -249,8 +326,8 @@ export async function listTargets(
   opts: ListTargetsOptions = {},
 ): Promise<IntegrationTarget[]> {
   const ctx: Ctx = { token, doFetch: opts.safeFetch ?? defaultSafeFetch, egress: opts.egress ?? {} };
-  const impl = { jira: jiraTargets, linear: linearTargets, github: githubTargets, clickup: clickupTargets, asana: asanaTargets }[provider];
-  return (await impl(ctx)).slice(0, MAX_TARGETS);
+  const impl = { jira: jiraTargets, linear: linearTargets, github: githubTargets, clickup: clickupTargets, asana: asanaTargets, slack: slackTargets }[provider];
+  return (await impl(ctx)).slice(0, provider === 'slack' ? SLACK_MAX_TARGETS : MAX_TARGETS);
 }
 
 /**

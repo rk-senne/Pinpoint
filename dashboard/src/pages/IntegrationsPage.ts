@@ -20,12 +20,12 @@ const PROVIDER_LABELS: Record<string, string> = {
   slack: 'Slack',
 };
 
-/** Task trackers first; Slack can be connected but nothing delivers to it yet. */
+/** Task trackers first, then Slack (a delivery channel; see SLACK_SEVERITIES). */
 const PROVIDERS = ['github', 'jira', 'linear', 'clickup', 'asana', 'slack'] as const;
 
 /**
  * Config keys a tracker needs before "Send to…" can create tasks (mirrors the
- * server adapters). Providers absent here (Slack) have no delivery target.
+ * server adapters). Slack needs a channel.
  */
 const REQUIRED_CONFIG: Record<string, string[]> = {
   github: ['owner', 'repo'],
@@ -33,7 +33,15 @@ const REQUIRED_CONFIG: Record<string, string[]> = {
   linear: ['teamId'],
   clickup: ['listId'],
   asana: ['projectGid'],
+  slack: ['channelId'],
 };
+
+const SLACK_SEVERITIES: Array<[string, string]> = [
+  ['critical', 'Critical only'],
+  ['major', 'Major and above'],
+  ['minor', 'Minor and above'],
+  ['informational', 'All severities'],
+];
 
 /** Human-readable messages for the `?error=<code>` the OAuth callback redirects with. */
 const OAUTH_ERRORS: Record<string, string> = {
@@ -139,16 +147,69 @@ export function mountIntegrationsPage(
         setText(opt, t.label);
         select.appendChild(opt);
       });
+      const current = integrations.find((i) => i.provider === provider)?.config ?? {};
+      if (provider === 'slack') {
+        const idx = state.targets.findIndex((t) => t.config.channelId === current.channelId);
+        if (idx >= 0) select.value = String(idx);
+      }
       const save = document.createElement('button');
       save.type = 'button';
       save.dataset.role = 'target-save';
       setText(save, 'Save');
       save.style.cssText = buttonCss(BRAND_COLORS.primary);
+      panel.append(label, select);
+
+      // Slack: optional auto-notify for new annotations at/above a severity.
+      let notify: HTMLInputElement | null = null;
+      let minSeverity: HTMLSelectElement | null = null;
+      if (provider === 'slack') {
+        const notifyLabel = el('label', {});
+        notifyLabel.style.cssText = 'font-size: 12px; display: flex; align-items: center; gap: 6px;';
+        notify = document.createElement('input');
+        notify.type = 'checkbox';
+        notify.dataset.role = 'slack-notify';
+        notify.checked = current.notifyOnNew === true;
+        const notifyText = el('span', {});
+        setText(notifyText, 'Post new feedback to this channel automatically');
+        notifyLabel.append(notify, notifyText);
+
+        const sevLabel = el('label', {});
+        setText(sevLabel, 'Minimum severity to post');
+        sevLabel.style.cssText = 'font-size: 12px; font-weight: 600;';
+        minSeverity = document.createElement('select');
+        minSeverity.dataset.role = 'slack-min-severity';
+        minSeverity.setAttribute('aria-label', 'Minimum severity to post automatically');
+        minSeverity.style.cssText = 'padding: 6px; font-size: 12px;';
+        for (const [value, text] of SLACK_SEVERITIES) {
+          const opt = document.createElement('option');
+          opt.value = value;
+          setText(opt, text);
+          minSeverity.appendChild(opt);
+        }
+        minSeverity.value = typeof current.minSeverity === 'string' ? current.minSeverity : 'major';
+        if (!minSeverity.value) minSeverity.value = 'major';
+        minSeverity.disabled = !notify.checked;
+        const sevSelect = minSeverity;
+        notify.addEventListener('change', () => {
+          sevSelect.disabled = !notify!.checked;
+        });
+        const hint = el('span', { 'data-role': 'slack-invite-hint' });
+        setText(hint, 'The Pinpoint bot can only post in channels it has been invited to (/invite @Pinpoint).');
+        hint.style.cssText = `font-size: 11px; color: ${BRAND_COLORS.muted};`;
+        panel.append(notifyLabel, sevLabel, minSeverity, hint);
+      }
+
       save.addEventListener('click', () => {
         const chosen = state.targets[Number(select.value)];
-        if (chosen) void saveTarget(provider, chosen);
+        if (!chosen) return;
+        const extra: Record<string, string | boolean> = {};
+        if (provider === 'slack' && notify && minSeverity) {
+          extra.notifyOnNew = notify.checked;
+          extra.minSeverity = minSeverity.value;
+        }
+        void saveTarget(provider, chosen, extra);
       });
-      panel.append(label, select, save);
+      panel.appendChild(save);
     }
 
     const cancel = document.createElement('button');
@@ -215,7 +276,12 @@ export function mountIntegrationsPage(
       const incomplete = needsSetup(provider, entry);
       if (incomplete && setup?.provider !== provider) {
         const hint = el('div', { 'data-role': 'setup-hint' });
-        setText(hint, `Connected, but not finished: choose where ${label} tasks are created.`);
+        setText(
+          hint,
+          provider === 'slack'
+            ? 'Connected, but not finished: choose the Slack channel feedback is posted to.'
+            : `Connected, but not finished: choose where ${label} tasks are created.`,
+        );
         hint.style.cssText = 'font-size: 12px;';
         card.appendChild(hint);
       }
@@ -305,16 +371,20 @@ export function mountIntegrationsPage(
     render();
   }
 
-  async function saveTarget(provider: string, target: TargetOption): Promise<void> {
+  async function saveTarget(
+    provider: string,
+    target: TargetOption,
+    extra: Record<string, string | boolean> = {},
+  ): Promise<void> {
     try {
       await apiFetch(`/integrations/${provider}`, {
         method: 'PATCH',
-        body: JSON.stringify({ config: target.config }),
+        body: JSON.stringify({ config: { ...target.config, ...extra } }),
       });
     } catch {
       return; // apiFetch toasted the validation / server error; keep the picker open
     }
-    showToast({ message: `${PROVIDER_LABELS[provider] ?? provider} is ready — feedback will go to ${target.label}`, variant: 'success' });
+    showToast({ message: `${PROVIDER_LABELS[provider] ?? provider} is ready — feedback will go to ${target.label.replace(' (invite the bot first)', '')}`, variant: 'success' });
     setup = null;
     await load();
   }

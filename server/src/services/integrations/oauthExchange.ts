@@ -34,7 +34,7 @@ const DEFAULTS: Record<IntegrationOAuthProviderName, Omit<IntegrationOAuthProvid
   slack: {
     authorizeUrl: 'https://slack.com/oauth/v2/authorize',
     tokenUrl: 'https://slack.com/api/oauth.v2.access',
-    scopes: ['chat:write', 'incoming-webhook'],
+    scopes: ['chat:write', 'channels:read'],
     scopeSeparator: ',',
     tokenRequest: 'form',
   },

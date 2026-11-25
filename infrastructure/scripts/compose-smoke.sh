@@ -234,6 +234,7 @@ smoke_prod() {
 
   step "boot-time seeding under row-level security"
   local defaults
+  # shellcheck disable=SC2016 # $POSTGRES_* must expand inside the db container
   defaults="$("${COMPOSE[@]}" exec -T db sh -c 'psql -tA -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from guidelines where is_default"' | tr -d '[:space:]')"
   [ "$defaults" = 10 ] || fail "default guidelines not seeded on a fresh database (got '$defaults'; RLS system context?)"
   echo "ok   10 default guidelines seeded by the API (pinpoint_app, RLS on)"

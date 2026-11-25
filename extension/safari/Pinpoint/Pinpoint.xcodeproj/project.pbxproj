@@ -1,0 +1,839 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		615832C530B6F3E000925BD4 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832C430B6F3E000925BD4 /* AppDelegate.swift */; };
+		615832C930B6F3E000925BD4 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 615832C730B6F3E000925BD4 /* Main.html */; };
+		615832CB30B6F3E000925BD4 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 615832CA30B6F3E000925BD4 /* Icon.png */; };
+		615832CD30B6F3E000925BD4 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 615832CC30B6F3E000925BD4 /* Style.css */; };
+		615832CF30B6F3E000925BD4 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 615832CE30B6F3E000925BD4 /* Script.js */; };
+		615832D130B6F3E000925BD4 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832D030B6F3E000925BD4 /* ViewController.swift */; };
+		615832D430B6F3E000925BD4 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 615832D230B6F3E000925BD4 /* Main.storyboard */; };
+		615832D630B6F3E100925BD4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 615832D530B6F3E100925BD4 /* Assets.xcassets */; };
+		615832E330B6F3E100925BD4 /* PinpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832E230B6F3E100925BD4 /* PinpointTests.swift */; };
+		615832ED30B6F3E100925BD4 /* PinpointUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832EC30B6F3E100925BD4 /* PinpointUITests.swift */; };
+		615832EF30B6F3E100925BD4 /* PinpointUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832EE30B6F3E100925BD4 /* PinpointUITestsLaunchTests.swift */; };
+		615832F530B6F3E100925BD4 /* Pinpoint Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 615832F430B6F3E100925BD4 /* Pinpoint Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		615832FA30B6F3E100925BD4 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 615832F930B6F3E100925BD4 /* SafariWebExtensionHandler.swift */; };
+		6158331430B6F3E100925BD4 /* options in Resources */ = {isa = PBXBuildFile; fileRef = 6158330D30B6F3E100925BD4 /* options */; };
+		6158331530B6F3E100925BD4 /* popup in Resources */ = {isa = PBXBuildFile; fileRef = 6158330E30B6F3E100925BD4 /* popup */; };
+		6158331630B6F3E100925BD4 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 6158330F30B6F3E100925BD4 /* background.js */; };
+		6158331730B6F3E100925BD4 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 6158331030B6F3E100925BD4 /* icons */; };
+		6158331830B6F3E100925BD4 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 6158331130B6F3E100925BD4 /* manifest.json */; };
+		6158331930B6F3E100925BD4 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 6158331230B6F3E100925BD4 /* content.js */; };
+		6158331A30B6F3E100925BD4 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 6158331330B6F3E100925BD4 /* assets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		615832DF30B6F3E100925BD4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 615832B930B6F3E000925BD4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 615832C030B6F3E000925BD4;
+			remoteInfo = Pinpoint;
+		};
+		615832E930B6F3E100925BD4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 615832B930B6F3E000925BD4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 615832C030B6F3E000925BD4;
+			remoteInfo = Pinpoint;
+		};
+		615832F630B6F3E100925BD4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 615832B930B6F3E000925BD4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 615832F330B6F3E100925BD4;
+			remoteInfo = "Pinpoint Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6158330230B6F3E100925BD4 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				615832F530B6F3E100925BD4 /* Pinpoint Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		615832C130B6F3E000925BD4 /* Pinpoint.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pinpoint.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		615832C430B6F3E000925BD4 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		615832C830B6F3E000925BD4 /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		615832CA30B6F3E000925BD4 /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		615832CC30B6F3E000925BD4 /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		615832CE30B6F3E000925BD4 /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		615832D030B6F3E000925BD4 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		615832D330B6F3E000925BD4 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		615832D530B6F3E100925BD4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		615832D730B6F3E100925BD4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		615832D830B6F3E100925BD4 /* Pinpoint.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pinpoint.entitlements; sourceTree = "<group>"; };
+		615832D930B6F3E100925BD4 /* Pinpoint.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pinpoint.entitlements; sourceTree = "<group>"; };
+		615832DE30B6F3E100925BD4 /* PinpointTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PinpointTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		615832E230B6F3E100925BD4 /* PinpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinpointTests.swift; sourceTree = "<group>"; };
+		615832E830B6F3E100925BD4 /* PinpointUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PinpointUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		615832EC30B6F3E100925BD4 /* PinpointUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinpointUITests.swift; sourceTree = "<group>"; };
+		615832EE30B6F3E100925BD4 /* PinpointUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinpointUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		615832F430B6F3E100925BD4 /* Pinpoint Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Pinpoint Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		615832F930B6F3E100925BD4 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		615832FB30B6F3E100925BD4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		615832FC30B6F3E100925BD4 /* Pinpoint_Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Pinpoint_Extension.entitlements; sourceTree = "<group>"; };
+		6158330D30B6F3E100925BD4 /* options */ = {isa = PBXFileReference; lastKnownFileType = folder; name = options; path = Resources/options; sourceTree = "<group>"; };
+		6158330E30B6F3E100925BD4 /* popup */ = {isa = PBXFileReference; lastKnownFileType = folder; name = popup; path = Resources/popup; sourceTree = "<group>"; };
+		6158330F30B6F3E100925BD4 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = Resources/background.js; sourceTree = "<group>"; };
+		6158331030B6F3E100925BD4 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = Resources/icons; sourceTree = "<group>"; };
+		6158331130B6F3E100925BD4 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
+		6158331230B6F3E100925BD4 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = Resources/content.js; sourceTree = "<group>"; };
+		6158331330B6F3E100925BD4 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = Resources/assets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		615832BE30B6F3E000925BD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832DB30B6F3E100925BD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832E530B6F3E100925BD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832F130B6F3E100925BD4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		615832B830B6F3E000925BD4 = {
+			isa = PBXGroup;
+			children = (
+				615832C330B6F3E000925BD4 /* Pinpoint */,
+				615832E130B6F3E100925BD4 /* PinpointTests */,
+				615832EB30B6F3E100925BD4 /* PinpointUITests */,
+				615832F830B6F3E100925BD4 /* Pinpoint Extension */,
+				615832C230B6F3E000925BD4 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		615832C230B6F3E000925BD4 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				615832C130B6F3E000925BD4 /* Pinpoint.app */,
+				615832DE30B6F3E100925BD4 /* PinpointTests.xctest */,
+				615832E830B6F3E100925BD4 /* PinpointUITests.xctest */,
+				615832F430B6F3E100925BD4 /* Pinpoint Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		615832C330B6F3E000925BD4 /* Pinpoint */ = {
+			isa = PBXGroup;
+			children = (
+				615832C430B6F3E000925BD4 /* AppDelegate.swift */,
+				615832D030B6F3E000925BD4 /* ViewController.swift */,
+				615832D230B6F3E000925BD4 /* Main.storyboard */,
+				615832D530B6F3E100925BD4 /* Assets.xcassets */,
+				615832D730B6F3E100925BD4 /* Info.plist */,
+				615832D830B6F3E100925BD4 /* Pinpoint.entitlements */,
+				615832D930B6F3E100925BD4 /* Pinpoint.entitlements */,
+				615832C630B6F3E000925BD4 /* Resources */,
+			);
+			path = Pinpoint;
+			sourceTree = "<group>";
+		};
+		615832C630B6F3E000925BD4 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				615832C730B6F3E000925BD4 /* Main.html */,
+				615832CA30B6F3E000925BD4 /* Icon.png */,
+				615832CC30B6F3E000925BD4 /* Style.css */,
+				615832CE30B6F3E000925BD4 /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		615832E130B6F3E100925BD4 /* PinpointTests */ = {
+			isa = PBXGroup;
+			children = (
+				615832E230B6F3E100925BD4 /* PinpointTests.swift */,
+			);
+			path = PinpointTests;
+			sourceTree = "<group>";
+		};
+		615832EB30B6F3E100925BD4 /* PinpointUITests */ = {
+			isa = PBXGroup;
+			children = (
+				615832EC30B6F3E100925BD4 /* PinpointUITests.swift */,
+				615832EE30B6F3E100925BD4 /* PinpointUITestsLaunchTests.swift */,
+			);
+			path = PinpointUITests;
+			sourceTree = "<group>";
+		};
+		615832F830B6F3E100925BD4 /* Pinpoint Extension */ = {
+			isa = PBXGroup;
+			children = (
+				6158330C30B6F3E100925BD4 /* Resources */,
+				615832F930B6F3E100925BD4 /* SafariWebExtensionHandler.swift */,
+				615832FB30B6F3E100925BD4 /* Info.plist */,
+				615832FC30B6F3E100925BD4 /* Pinpoint_Extension.entitlements */,
+			);
+			path = "Pinpoint Extension";
+			sourceTree = "<group>";
+		};
+		6158330C30B6F3E100925BD4 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6158330D30B6F3E100925BD4 /* options */,
+				6158330E30B6F3E100925BD4 /* popup */,
+				6158330F30B6F3E100925BD4 /* background.js */,
+				6158331030B6F3E100925BD4 /* icons */,
+				6158331130B6F3E100925BD4 /* manifest.json */,
+				6158331230B6F3E100925BD4 /* content.js */,
+				6158331330B6F3E100925BD4 /* assets */,
+			);
+			name = Resources;
+			path = "Pinpoint Extension";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		615832C030B6F3E000925BD4 /* Pinpoint */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6158330330B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "Pinpoint" */;
+			buildPhases = (
+				615832BD30B6F3E000925BD4 /* Sources */,
+				615832BE30B6F3E000925BD4 /* Frameworks */,
+				615832BF30B6F3E000925BD4 /* Resources */,
+				6158330230B6F3E100925BD4 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				615832F730B6F3E100925BD4 /* PBXTargetDependency */,
+			);
+			name = Pinpoint;
+			packageProductDependencies = (
+			);
+			productName = Pinpoint;
+			productReference = 615832C130B6F3E000925BD4 /* Pinpoint.app */;
+			productType = "com.apple.product-type.application";
+		};
+		615832DD30B6F3E100925BD4 /* PinpointTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6158330630B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "PinpointTests" */;
+			buildPhases = (
+				615832DA30B6F3E100925BD4 /* Sources */,
+				615832DB30B6F3E100925BD4 /* Frameworks */,
+				615832DC30B6F3E100925BD4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				615832E030B6F3E100925BD4 /* PBXTargetDependency */,
+			);
+			name = PinpointTests;
+			packageProductDependencies = (
+			);
+			productName = PinpointTests;
+			productReference = 615832DE30B6F3E100925BD4 /* PinpointTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		615832E730B6F3E100925BD4 /* PinpointUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6158330930B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "PinpointUITests" */;
+			buildPhases = (
+				615832E430B6F3E100925BD4 /* Sources */,
+				615832E530B6F3E100925BD4 /* Frameworks */,
+				615832E630B6F3E100925BD4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				615832EA30B6F3E100925BD4 /* PBXTargetDependency */,
+			);
+			name = PinpointUITests;
+			packageProductDependencies = (
+			);
+			productName = PinpointUITests;
+			productReference = 615832E830B6F3E100925BD4 /* PinpointUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		615832F330B6F3E100925BD4 /* Pinpoint Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 615832FF30B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "Pinpoint Extension" */;
+			buildPhases = (
+				615832F030B6F3E100925BD4 /* Sources */,
+				615832F130B6F3E100925BD4 /* Frameworks */,
+				615832F230B6F3E100925BD4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Pinpoint Extension";
+			packageProductDependencies = (
+			);
+			productName = "Pinpoint Extension";
+			productReference = 615832F430B6F3E100925BD4 /* Pinpoint Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		615832B930B6F3E000925BD4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					615832C030B6F3E000925BD4 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					615832DD30B6F3E100925BD4 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 615832C030B6F3E000925BD4;
+					};
+					615832E730B6F3E100925BD4 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 615832C030B6F3E000925BD4;
+					};
+					615832F330B6F3E100925BD4 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+				};
+			};
+			buildConfigurationList = 615832BC30B6F3E000925BD4 /* Build configuration list for PBXProject "Pinpoint" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 615832B830B6F3E000925BD4;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 615832C230B6F3E000925BD4 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				615832C030B6F3E000925BD4 /* Pinpoint */,
+				615832DD30B6F3E100925BD4 /* PinpointTests */,
+				615832E730B6F3E100925BD4 /* PinpointUITests */,
+				615832F330B6F3E100925BD4 /* Pinpoint Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		615832BF30B6F3E000925BD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				615832CB30B6F3E000925BD4 /* Icon.png in Resources */,
+				615832D430B6F3E000925BD4 /* Main.storyboard in Resources */,
+				615832CF30B6F3E000925BD4 /* Script.js in Resources */,
+				615832C930B6F3E000925BD4 /* Main.html in Resources */,
+				615832D630B6F3E100925BD4 /* Assets.xcassets in Resources */,
+				615832CD30B6F3E000925BD4 /* Style.css in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832DC30B6F3E100925BD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832E630B6F3E100925BD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832F230B6F3E100925BD4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6158331930B6F3E100925BD4 /* content.js in Resources */,
+				6158331430B6F3E100925BD4 /* options in Resources */,
+				6158331A30B6F3E100925BD4 /* assets in Resources */,
+				6158331730B6F3E100925BD4 /* icons in Resources */,
+				6158331830B6F3E100925BD4 /* manifest.json in Resources */,
+				6158331630B6F3E100925BD4 /* background.js in Resources */,
+				6158331530B6F3E100925BD4 /* popup in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		615832BD30B6F3E000925BD4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				615832D130B6F3E000925BD4 /* ViewController.swift in Sources */,
+				615832C530B6F3E000925BD4 /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832DA30B6F3E100925BD4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				615832E330B6F3E100925BD4 /* PinpointTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832E430B6F3E100925BD4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				615832EF30B6F3E100925BD4 /* PinpointUITestsLaunchTests.swift in Sources */,
+				615832ED30B6F3E100925BD4 /* PinpointUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		615832F030B6F3E100925BD4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				615832FA30B6F3E100925BD4 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		615832E030B6F3E100925BD4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 615832C030B6F3E000925BD4 /* Pinpoint */;
+			targetProxy = 615832DF30B6F3E100925BD4 /* PBXContainerItemProxy */;
+		};
+		615832EA30B6F3E100925BD4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 615832C030B6F3E000925BD4 /* Pinpoint */;
+			targetProxy = 615832E930B6F3E100925BD4 /* PBXContainerItemProxy */;
+		};
+		615832F730B6F3E100925BD4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 615832F330B6F3E100925BD4 /* Pinpoint Extension */;
+			targetProxy = 615832F630B6F3E100925BD4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		615832C730B6F3E000925BD4 /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				615832C830B6F3E000925BD4 /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		615832D230B6F3E000925BD4 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				615832D330B6F3E000925BD4 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		615832FD30B6F3E100925BD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		615832FE30B6F3E100925BD4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		6158330030B6F3E100925BD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "Pinpoint Extension/Pinpoint_Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Pinpoint Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Pinpoint Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6158330130B6F3E100925BD4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "Pinpoint Extension/Pinpoint_Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Pinpoint Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Pinpoint Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		6158330430B6F3E100925BD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pinpoint/Pinpoint.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pinpoint/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Pinpoint;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6158330530B6F3E100925BD4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Pinpoint/Pinpoint.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pinpoint/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Pinpoint;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		6158330730B6F3E100925BD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pinpoint.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pinpoint";
+			};
+			name = Debug;
+		};
+		6158330830B6F3E100925BD4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.3;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.Tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pinpoint.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pinpoint";
+			};
+			name = Release;
+		};
+		6158330A30B6F3E100925BD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.UITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Pinpoint;
+			};
+			name = Debug;
+		};
+		6158330B30B6F3E100925BD4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinpoint.safari.UITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Pinpoint;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		615832BC30B6F3E000925BD4 /* Build configuration list for PBXProject "Pinpoint" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				615832FD30B6F3E100925BD4 /* Debug */,
+				615832FE30B6F3E100925BD4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		615832FF30B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "Pinpoint Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6158330030B6F3E100925BD4 /* Debug */,
+				6158330130B6F3E100925BD4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6158330330B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "Pinpoint" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6158330430B6F3E100925BD4 /* Debug */,
+				6158330530B6F3E100925BD4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6158330630B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "PinpointTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6158330730B6F3E100925BD4 /* Debug */,
+				6158330830B6F3E100925BD4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6158330930B6F3E100925BD4 /* Build configuration list for PBXNativeTarget "PinpointUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6158330A30B6F3E100925BD4 /* Debug */,
+				6158330B30B6F3E100925BD4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 615832B930B6F3E000925BD4 /* Project object */;
+}

@@ -13,6 +13,7 @@ When you submit an annotation, the extension sends the following to the Pinpoint
 - A resolved DOM selector identifying the element the pin is anchored to.
 - Structured environment metadata: browser name and version, operating system, viewport dimensions, device pixel ratio, and the route segment of the URL.
 - Optionally, and only when you explicitly enable each capture: a viewport screenshot, the buffered console log entries from the current page, and the buffered network request summaries from the current page.
+- A short, redacted buffer (about the last 10 seconds) of page interaction events — clicks, scrolls, input changes and DOM mutations — attached to the annotation you submit, for replay in the dashboard. Password fields and `data-fl-redact` elements are masked before capture.
 - Your authentication token, sent as a bearer credential on every request, so the API knows which account submitted the annotation.
 
 The first time you open the extension on a new host, a disclosure modal lists exactly which categories will be sent and lets you toggle each one off before any data leaves your browser.
@@ -21,14 +22,14 @@ The first time you open the extension on a new host, a disclosure modal lists ex
 
 - We do not send page content from hosts you have not chosen to use Pinpoint on. The extension auto-runs only on local development origins; on any other site it runs only after you invoke it there (toolbar click grants `activeTab` for that tab) or grant access to your configured Server URL.
 - We do not run third-party analytics, advertising, or tracking scripts.
-- We do not collect keystrokes, mouse movements, or page activity outside of an annotation submission.
+- We do not send keystrokes, mouse movements, or page activity unless they are part of the replay buffer attached to an annotation you submit.
 - We redact form inputs of `type="password"`, fields marked with `data-fl-redact`, and elements inside `[data-fl-private]` regions before they enter screenshots, console buffers, or network buffers.
 
 ## Where data is stored
 
-Annotations and their attachments are stored on the Pinpoint API server your team operates. Screenshots are written to object storage (S3 or compatible) under a key scoped to your project. Authentication tokens are stored locally in `chrome.storage.local` and never sent to any host other than the configured API origin.
+Annotations and their attachments are stored on the Pinpoint API server your team operates. Screenshots are written to object storage (S3 or compatible) under a key scoped to your project. Authentication tokens are stored locally in the browser's extension storage (`chrome.storage.local`; `browser.storage.local` in Firefox and Safari) and never sent to any host other than the configured API origin.
 
-The **Server URL** (the Pinpoint API/dashboard origin the extension talks to) is configurable on the options page and stored locally in `chrome.storage.local`. It defaults to the origin baked into the build. The extension sends your annotation data and auth token only to this configured origin.
+The **Server URL** (the Pinpoint API/dashboard origin the extension talks to) is configurable on the options page and stored locally in the browser's extension storage (`chrome.storage.local`; `browser.storage.local` in Firefox and Safari). It defaults to the origin baked into the build. The extension sends your annotation data and auth token only to this configured origin.
 
 ## How the content script reaches the API
 

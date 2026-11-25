@@ -17,6 +17,9 @@ Initial public preview of the Pinpoint extension. Delivered through Phases 14–
 
 ### Added
 
+- Firefox AMO packaging (`npm run package:firefox`: web-ext zip + reproducible source archive with `SOURCE_BUILD.md`), `data_collection_permissions` covering every category sent, and a build-time rewrite of socket.io's `Function("return this")` to `globalThis` (no `eval`-class code in the bundle).
+- Safari Web Extension: `npm run build:safari`, a manifest transform, and a committed Xcode project (`extension/safari/`, bundle id `dev.pinpoint.safari`) that builds unsigned with `xcodebuild`.
+- Store submission guide: `docs/STORE_SUBMISSION.md` (AMO and Safari/App Store).
 - Manifest V3 build pipeline using `@crxjs/vite-plugin` and Vite, producing a packaged `extension/dist` artifact.
 - Popup login flow that authenticates against the Pinpoint server and persists session state.
 - Options page for managing the per-user allow list and block list of origins where the overlay may run.

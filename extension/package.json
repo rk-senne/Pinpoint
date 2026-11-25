@@ -9,7 +9,12 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest --run",
-    "build:firefox": "vite build --outDir dist-firefox && node scripts/firefox-manifest.mjs dist-firefox"
+    "build:firefox": "vite build --outDir dist-firefox && node scripts/firefox-manifest.mjs dist-firefox",
+    "package:firefox": "npm run build:firefox && node scripts/package.mjs firefox",
+    "package:source": "node scripts/package.mjs source",
+    "build:safari": "vite build --outDir dist-safari && SAFARI_ENTRY=background vite build --config vite.safari-scripts.config.ts && SAFARI_ENTRY=content vite build --config vite.safari-scripts.config.ts && node scripts/safari-manifest.mjs dist-safari",
+    "safari:sync": "node scripts/safari-app.mjs sync",
+    "build:safari-app": "npm run build:safari && node scripts/safari-app.mjs build"
   },
   "dependencies": {
     "@pinpoint/shared": "*",

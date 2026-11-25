@@ -24,6 +24,13 @@ import { fileURLToPath } from 'node:url';
 
 export const GECKO_ID = 'pinpoint@pinpoint.dev';
 export const GECKO_MIN_VERSION = '128.0';
+export const DATA_COLLECTION_REQUIRED = [
+  'websiteContent',
+  'authenticationInfo',
+  'personallyIdentifyingInfo',
+  'browsingActivity',
+  'websiteActivity',
+];
 
 /**
  * Firefox match patterns have no port component: `http://localhost/*`
@@ -81,10 +88,20 @@ export function toFirefoxManifest(chrome) {
       id: GECKO_ID,
       strict_min_version: GECKO_MIN_VERSION,
       // Builtin consent for data sent to the user's configured Pinpoint
-      // server (annotation text/screenshots + the auth token). Enforced by
-      // Firefox 140+; older versions ignore it.
+      // server. Enforced by Firefox 140+; older versions ignore it. Every
+      // category maps to something the extension really transmits (see
+      // docs/STORE_SUBMISSION.md, "data_collection_permissions"):
+      //   websiteContent        annotation text, screenshots
+      //   authenticationInfo    sign-in credentials + bearer token
+      //   personallyIdentifyingInfo  sign-in email, @mentioned names
+      //   browsingActivity      annotated page URL / route
+      //   websiteActivity       session-replay buffer (clicks, scrolls, input)
+      // (`technicalAndInteraction` is intentionally absent: Firefox only allows
+      // it as an *optional* category, and our browser/OS/viewport + console/
+      // network diagnostics are part of the user-submitted report, covered by
+      // websiteContent / websiteActivity above.)
       data_collection_permissions: {
-        required: ['websiteContent', 'authenticationInfo'],
+        required: DATA_COLLECTION_REQUIRED,
       },
     },
   };

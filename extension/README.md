@@ -185,6 +185,9 @@ specific element, not a blanket disable on a whole page.
 |---|---|
 | `npm run build` | `vite build` via `@crxjs/vite-plugin`. Emits a Web-Store-loadable bundle to `dist/`. Set `VITE_PINPOINT_API_ORIGIN` to bake a non-default API origin into the build. |
 | `npm run build:firefox` | Same build into `dist-firefox/` plus a Firefox MV3 manifest transform (see [Firefox](#firefox-mv3)). |
+| `npm run package:firefox` | `build:firefox`, then `artifacts/pinpoint-firefox-<version>.zip` (pinned `web-ext build`) and `artifacts/pinpoint-source-<version>.zip` for AMO review. See [`docs/STORE_SUBMISSION.md`](../docs/STORE_SUBMISSION.md). |
+| `npm run build:safari` | Safari bundle in `dist-safari/` (classic `background.js`/`content.js` + Safari manifest). |
+| `npm run build:safari-app` | `build:safari`, sync into the Xcode project, unsigned `xcodebuild` (macOS + Xcode). See [Safari](#safari). |
 | `npm run dev` | `vite` dev server with content-script HMR. |
 | `npm test` | Run the Vitest suite for the extension package (Custom Element + property + relay/serverOrigin + background tests). |
 
@@ -217,9 +220,10 @@ build (`dist/`) is untouched. The transform:
   have no port; `http://localhost/*` matches every port).
 - Drops Chrome-only `use_dynamic_url` and the `_*_comment` keys.
 
-Lint (zero errors expected; the remaining warnings are the static
-`innerHTML` templates, socket.io's `Function("return this")` fallback, and a
-min-version note for `data_collection_permissions`):
+Lint (0 errors; the 13 remaining warnings are the 11 static-template
+`innerHTML` assignments and two min-version notes for
+`data_collection_permissions` — explained in `docs/STORE_SUBMISSION.md`; the
+socket.io `Function("return this")` fallback is rewritten away at build time):
 
 ```bash
 npx --yes web-ext@10.8.0 lint --source-dir extension/dist-firefox
@@ -262,6 +266,9 @@ shortcut, click-to-annotate with Firefox environment + console diagnostics,
 screenshot upload, comments with `@mention`, resolve/reopen, sidebar,
 next/prev pin, realtime, reload and a clean browser console.
 
+Verified with that runner on Firefox 161.0 (release), 140.9.1 ESR and
+128.14.0 ESR — 20/20 each (the `strict_min_version` floor of 128).
+
 ### Manual test checklist
 
 Run against the local stack (`http://localhost:5173`, API `:3001`) in Firefox ≥ 128:
@@ -280,6 +287,25 @@ Run against the local stack (`http://localhost:5173`, API `:3001`) in Firefox �
 12. Options page: change Server URL; permission prompt appears; values persist.
 13. Realtime: a second browser creates an annotation; the pin appears without reload.
 14. Sign out in popup; overlay requests re-auth.
+
+## Safari
+
+```bash
+npm run build:safari --workspace extension        # -> extension/dist-safari/
+npm run build:safari-app --workspace extension    # + unsigned xcodebuild of extension/safari/Pinpoint
+```
+
+`build:safari` re-bundles the background and content scripts as classic IIFE
+files (`vite.safari-scripts.config.ts`) because Safari does not accept
+`background.type: "module"` and content scripts cannot reliably `import()`
+web-accessible chunks, then `scripts/safari-manifest.mjs` rewrites the
+manifest (`background.scripts`, `options_ui`, no `web_accessible_resources`,
+`browser_specific_settings.safari.strict_min_version` 16.4). The committed
+Xcode project lives in `safari/Pinpoint/` (bundle id `dev.pinpoint.safari`);
+its `Pinpoint Extension/Resources/` is a git-ignored copy of `dist-safari/`
+(`npm run safari:sync`). Manual testing, signing and App Store submission:
+[`docs/STORE_SUBMISSION.md`](../docs/STORE_SUBMISSION.md#2-safari--mac-app-store).
+Not yet exercised in a running Safari (safaridriver needs sudo).
 
 ## Release Process
 

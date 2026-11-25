@@ -172,10 +172,10 @@ The dashboard adapts to small screens. The phone view is meant for reviewing, wi
 | "We can't change our site much." | One `<script>` tag. The key is tied to one project and can be limited to your domains. |
 | "We don't want to touch the site at all." | The Chrome extension or a review link. |
 | "Clients won't install anything." | Review links and the widget need no install or account. |
-| "Tell our other systems." | **Webhooks**: signed notifications to your own endpoints. Deliveries are queued and retried. |
+| "Tell our other systems." | **Webhooks**: signed notifications to your own endpoints. Deliveries are queued and retried. **Slack**: send an item to a channel, or turn on auto-notify for new feedback. |
 | "Use our task tracker." | One-click send to Jira, Linear, GitHub, ClickUp or Asana. |
 | "Let scripts and AI agents help." | **API keys** for automation, and an **MCP server**. MCP is a standard way for AI assistants to use tools. Here an agent can list feedback, read it with its diagnostics, change status and add comments. |
-| "Host it ourselves." | Self-host with Docker: `docker compose up` locally, or `deploy/docker-compose.prod.yml` on any Linux VPS (Caddy provides automatic HTTPS). The server refuses to start in an exposed setup if secrets are weak. |
+| "Host it ourselves." | Self-host with Docker: `docker compose up` locally, or on any Ubuntu VPS with one command (`deploy/install.sh` installs Docker, generates every secret, gets an HTTPS certificate through Caddy and starts the stack). `deploy/backup.sh` and `deploy/upgrade.sh` cover day 2. Screenshots are stored on the server's own disk by default, so no cloud storage account is needed. The server refuses to start in an exposed setup if secrets are weak. |
 | "Our IT uses a reverse proxy." | The dashboard and API share one web address, so it sits behind a standard proxy or load balancer. `docs/DEPLOYMENT.md` lists the routes. |
 
 ---
@@ -239,21 +239,21 @@ Pricing: `docs/BUSINESS_ANALYSIS.md` (a May 2026 draft) proposes Free, Pro $19, 
 
 Plain list of what is not finished:
 
-- **Integrations tested against simulated providers only.** No live Jira, GitHub, Linear, ClickUp or Asana accounts have been used. Run a pilot against real accounts before relying on them.
+- **Integrations tested against simulated providers only.** No live Jira, GitHub, Linear, ClickUp, Asana or Slack accounts have been used; Slack delivery and auto-notify were checked against a fake Slack. Run a pilot against real accounts before relying on them.
 - **Extension sign-in stays signed in across browser restarts.** The token is kept in the extension's own storage, which web pages can't read; sessions expire after at most 30 days and can be revoked from the server at any time.
-- **Screenshot storage needs S3-compatible storage configured.** Without it, screenshot upload fails with a visible error. You can see this in the extension screenshots, which were taken on a local stack with no storage set up.
-- **Firefox extension is early.** It builds and loads in Firefox without errors, but hasn't had a full hands-on test. There is no Safari extension. The widget and review links work in any browser.
+- **Screenshots are stored on the server's disk by default.** No cloud storage is needed, and `deploy/backup.sh` includes them. S3-compatible storage (R2, B2, MinIO and so on) is optional, for when the disk fills or you run more than one server. Switching storage does not move existing screenshots.
+- **Browsers.** The Chrome extension is the most tested. The Firefox extension passes a real-browser test run on Firefox 161 and the 140 and 128 ESR releases, and its store package and reviewer source archive are ready. The Safari project builds, but only unsigned, and it has **not been run in Safari yet**. The widget and review links work in any browser.
 - **Review links can't show every site.** Sites that refuse to be framed, or that need a login to render, won't display.
-- **Deployment.** The team deploys with the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); images are published to GitHub Container Registry by CI. Deploys are manual (pull, migrate, `up -d`), so check the pre-deploy checklist before each rollout.
+- **Deployment.** One command (`deploy/install.sh`) sets up a fresh Ubuntu VPS, and `deploy/upgrade.sh` and `deploy/backup.sh` handle upgrades and backups. CI publishes images to GitHub Container Registry, and a manual run can publish a test-tagged copy from a branch. Nothing has been deployed to a real server yet, and a **restore from backup has not been rehearsed**. Docker is also unavailable on the main development machine, so the Docker steps are exercised only by the CI runners.
 - **Some pages are thin.** Workflow Automation and Client Portals are built but were empty in the demo data.
-- **Not released yet.** All of this sits on a feature branch awaiting review and merge.
-- **No certifications.** There is no SOC 2 or ISO attestation and no third-party penetration test report.
+- **Not released yet.** All of this sits on a feature branch (PR #2) awaiting review and merge.
+- **No certifications.** There is no SOC 2 or ISO attestation and no third-party penetration test report. A set of draft policy templates exists in `docs/compliance/`, but they are templates and have not been adopted or audited.
 
 ---
 
 ## 9. FAQ
 
-**What does it cost to run, who hosts the data, and how long does it take to install?** Pinpoint is self-hosted, so you pay only for your own infrastructure. It needs a PostgreSQL database and a small Node service, plus optional Redis, email (SMTP) and S3-compatible storage for screenshots. For hosting costs, use your provider's own pricing calculator, as I haven't estimated them. Your data stays on infrastructure you control, in your database and your storage bucket. The Pinpoint team doesn't see it. On a laptop with Docker, `docker compose up` starts the database, API, dashboard and a catch-all mailbox in one command. I haven't timed it, but the first run builds images, so allow several minutes. A production setup needs real secrets and a domain, and the repo's deployment guide covers it. A site owner adds feedback to a website by pasting one snippet, which takes minutes.
+**What does it cost to run, who hosts the data, and how long does it take to install?** Pinpoint is self-hosted, so you pay only for your own infrastructure. The production setup is one small Linux server (Postgres, Redis, the API, the dashboard and Caddy all run on it), plus a domain name and an email service for verification and notification mail. Screenshots live on the server's disk, so cloud storage is optional. Many email services have a free tier. For prices, use the provider calculators linked in `docs/GO_LIVE_PLAN.md`. That plan lists indicative figures that were not re-checked, so I haven't estimated a bill here. Your data stays on infrastructure you control, in your database and on your server's disk (or your own storage bucket if you opt in). The Pinpoint team doesn't see it. On a laptop with Docker, `docker compose up` starts the database, API, dashboard and a catch-all mailbox in one command; the first run builds images, so allow several minutes (not timed). On a fresh Ubuntu server, `deploy/install.sh` does the whole production setup in one command after you point a domain at it. I haven't timed it on a real server, and it has been checked only by CI runners. A site owner adds feedback to a website by pasting one snippet, which takes minutes.
 
 ---
 

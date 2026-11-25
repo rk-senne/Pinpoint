@@ -19,15 +19,45 @@ focus) and lists what is missing.
 | Area | Technical controls in repo | Biggest gaps |
 |---|---|---|
 | Access control (CC6.1–6.3) | Strong app-level RBAC, tenant isolation, session revocation, hashed secrets | Viewer role gaps (PP-05), realtime leaks (PP-01/02), no MFA/SSO, no access reviews, no admin-access to prod procedure |
-| Monitoring / logging (CC7.1–7.3) | `pino` JSON logs w/ redaction, request ids, Prometheus metrics, Prometheus alerting rules (to be defined), app audit log | Audit log is narrow (PP-22), 30-day log retention, no SIEM / host audit-log shipping, no alert-on-security-event, no incident-response plan |
+| Monitoring / logging (CC7.1–7.3) | `pino` JSON logs w/ redaction, request ids, Prometheus metrics, app audit log (append-only, covers auth/export/sharing/integration/role events since PP-22) | No Prometheus alerting rules yet, 30-day log retention, no SIEM / host audit-log shipping, no alert-on-security-event, no incident-response plan |
 | Change management (CC8.1) | CI (lint, typecheck, tests, e2e), pinned action SHAs, GitHub `environment: production` on deploy | No evidence of mandatory PR review / branch protection, no SAST/SCA/secret scanning/SBOM, no change tickets |
-| Risk & vendor mgmt (CC3, CC9) | None | No risk register, no vendor inventory/assessments (hosting provider, Stripe, SMTP, GitHub, npm supply chain) |
-| Availability (A1) | `pg_dump` backup procedure (`docs/DEPLOYMENT.md §4`), health/ready probes, graceful shutdown, `restart: unless-stopped` | No tested restore / DR runbook, no RPO/RTO, single region, no status page, no capacity plan |
+| Risk & vendor mgmt (CC3, CC9) | Draft templates: risk register (20 seeded risks) and vendor inventory ([11](./compliance/11-risk-assessment-and-register.md), [06](./compliance/06-vendor-management-policy.md)) | Not adopted/approved; no assessments performed, no DPAs or vendor reports collected (hosting provider, Stripe, SMTP, GitHub, npm supply chain) |
+| Availability (A1) | `deploy/backup.sh` (pg_dump + screenshots archive, retention), `upgrade.sh` pre-backup, health/ready probes, graceful shutdown, `restart: unless-stopped`, DR template with RPO/RTO targets ([05](./compliance/05-business-continuity-backup-dr.md)) | **No executed restore test**, no off-box copy evidenced, RPO/RTO are targets not measurements, single region/host, no status page, no capacity plan |
 | Confidentiality (C1) | TLS 1.2/1.3 at the Caddy edge, disk/volume encryption at rest (host/provider responsibility), secrets in a root-only `deploy/.env.production`, encrypted integration tokens | No data classification, retention/deletion process (PP-10), webhook secrets plaintext (PP-11), screenshots on public object-store/CDN URLs |
-| Governance (CC1–CC2, CC5) | ADRs, CONTRIBUTING, README/DEPLOYMENT docs | No security policies, no onboarding/offboarding, training, background checks, board/management oversight |
+| Governance (CC1–CC2, CC5) | ADRs, CONTRIBUTING, README/DEPLOYMENT docs, **draft policy pack** in [`docs/compliance/`](./compliance/README.md) | Policies are unadopted templates (no named owners/approval/records); no HR onboarding/offboarding process, training, background checks, board/management oversight |
 
 Realistic effort: **6–9 months** to a Type I report and a further 3–12 months of operating evidence for Type II,
 dominated by organizational work, not code.
+
+### 1.1 Policy pack added (2026-11-25) — templates, not adopted policies
+
+[`docs/compliance/`](./compliance/README.md) now holds 11 adoptable templates tailored to Pinpoint. **They move a gap from
+"nothing written" to "draft exists"; none counts as a control until an owner is named, management approves it, people follow
+it, and records exist.** No criterion below is claimed as met.
+
+| Policy (template) | TSC criteria | Gap status after adding the template |
+|---|---|---|
+| [01 Information Security](./compliance/01-information-security-policy.md) | CC1.1–1.5, CC2.1–2.3, CC5.1–5.3 | Draft exists. Still needed: named owner/approval, training records, org chart, customer-facing system description, `SECURITY.md` |
+| [02 Access Control](./compliance/02-access-control-policy.md) | CC6.1–6.3, CC6.5 | Draft + quarterly-review procedure (uses `GET /api/v1/org/members` and the audit log). Still needed: first completed review with evidence, MFA on all staff accounts, access register |
+| [03 Change Management](./compliance/03-change-management-policy.md) | CC8.1, CC5.2 | Draft maps to the real CI gates. Still needed: GitHub branch protection/required reviews and CODEOWNERS (verify; not visible in repo), SAST/SCA gates |
+| [04 Incident Response](./compliance/04-incident-response-plan.md) | CC7.3–7.5, CC2.3 | Draft with severity matrix and breach-notification note. Still needed: contacts filled in, a tabletop exercise, counsel review |
+| [05 BCP / Backup / DR](./compliance/05-business-continuity-backup-dr.md) | CC9.1, CC7.5, A1.1–A1.3 | Draft with RPO/RTO targets and restore-test procedure. Still needed: **an executed restore test**, off-box encrypted copy, measured RPO/RTO |
+| [06 Vendor Management](./compliance/06-vendor-management-policy.md) | CC9.2, CC3.2 | Draft + inventory by deployment choice. Still needed: chosen vendors, DPAs, their SOC 2/ISO reports, subprocessor list |
+| [07 Data Retention & Deletion](./compliance/07-data-retention-deletion-policy.md) | CC6.5, C1.1–C1.2 | Draft with classification table. Still needed: decide retention periods, build org/user deletion + storage cleanup (R-10), tested erasure |
+| [08 Secure Development](./compliance/08-secure-development-policy.md) | CC8.1, CC7.1, CC6.8 | Draft codifying existing conventions. Still needed: Dependabot, `npm audit`, CodeQL, secret scanning, image scan |
+| [09 Logging & Monitoring](./compliance/09-logging-monitoring-policy.md) | CC7.1–7.3, CC4.1 | Draft with alert list. Still needed: log rotation/shipping with ≥ 12-month retention, actual alerting, monthly review records |
+| [10 Acceptable Use](./compliance/10-acceptable-use-policy.md) | CC1.1, CC1.4, CC6.7–6.8 | Draft. Still needed: signed acknowledgements, endpoint baseline (disk encryption, MDM if > a few people) |
+| [11 Risk Assessment & Register](./compliance/11-risk-assessment-and-register.md) | CC3.1–3.4, CC4.1–4.2 | Template + 20-item initial register seeded from `SECURITY_REVIEW.md`. Still needed: owner re-rating, management acceptance, annual cycle |
+
+Not covered by any template (still **Org** gaps): HR controls (background checks, onboarding/offboarding beyond access,
+disciplinary process), physical security, board/management oversight evidence, Privacy/GDPR (DPAs, records of processing,
+data-subject-request tooling), Processing Integrity.
+
+State changes since the 2026-11-16 assessment that affect the tables below (verified in repo docs/code at the time of writing,
+not re-audited): PP-08 RLS enforced via the `pinpoint_app` role; audit log append-only with auth events (PP-22); screenshots
+default to the local driver with 15-minute HMAC-signed URLs (so "screenshots on public object-store URLs" applies only to
+`STORAGE_DRIVER=s3` with `S3_PUBLIC_BASE_URL`); `deploy/install.sh`, `backup.sh`, `upgrade.sh` exist; API image is non-root;
+CI can publish a `test-<sha>` image from a branch.
 
 ## 2. Control mapping by Trust Services Criteria
 
@@ -50,7 +80,7 @@ dominated by organizational work, not code.
 
 | Criterion | Existing technical controls (file) | Gaps |
 |---|---|---|
-| **CC6.1** logical access software, infrastructure, architectures | Authn via bcrypt (`domain/auth/usecases/login.ts`), JWT HS256 + `token_version` revocation and live membership check (`adapters/inbound/http/auth.middleware.ts`), HttpOnly cookie + double-submit CSRF (`middleware/csrf.ts`), org/project access predicate (`adapters/inbound/http/access.ts`), RBAC (`requireRole`, `requireOrgAdmin`, `requireWriteAccess`), API-key scopes + route allow-list (`middleware/apiKeyOrJwt.ts`), widget key origin binding (`middleware/widgetCors.ts`, `widget.routes.ts`), SSRF egress guard (`services/egressGuard.ts`), secrets supplied via `deploy/.env.production` (mode 600, never in git), integration tokens AES-GCM (`INTEGRATION_ENCRYPTION_KEY`), boot preflight refusing dev secrets (`server/src/config.ts`) | **No MFA/TOTP/SSO (SAML/OIDC)** for customers or staff; weak password policy (PP-12); viewer RBAC incomplete (PP-05); RLS present but inert (PP-08); DB app role is superuser in the dev stack — prod role not codified; webhook secrets plaintext (PP-11); no WAF in front of Caddy; no session inventory / device list; no absolute session lifetime (PP-15) |
+| **CC6.1** logical access software, infrastructure, architectures | Authn via bcrypt (`domain/auth/usecases/login.ts`), JWT HS256 + `token_version` revocation and live membership check (`adapters/inbound/http/auth.middleware.ts`), HttpOnly cookie + double-submit CSRF (`middleware/csrf.ts`), org/project access predicate (`adapters/inbound/http/access.ts`), RBAC (`requireRole`, `requireOrgAdmin`, `requireWriteAccess`), API-key scopes + route allow-list (`middleware/apiKeyOrJwt.ts`), widget key origin binding (`middleware/widgetCors.ts`, `widget.routes.ts`), SSRF egress guard (`services/egressGuard.ts`), secrets supplied via `deploy/.env.production` (mode 600, never in git), integration tokens AES-GCM (`INTEGRATION_ENCRYPTION_KEY`), boot preflight refusing dev secrets (`server/src/config.ts`) | **No MFA/TOTP/SSO (SAML/OIDC)** for customers or staff; weak password policy (PP-12); viewer RBAC incomplete (PP-05); RLS enforced via the unprivileged `pinpoint_app` role (PP-08, fixed); the stock Postgres image's owner is a superuser, so the API must never use the owner credentials (compose files enforce this); webhook secrets plaintext (PP-11); no WAF in front of Caddy; no session inventory / device list; no absolute session lifetime (PP-15) |
 | **CC6.2** registration & authorisation of users | E-mail verification (`registerUser`, `verifyEmail`), invitations hashed + e-mail-bound + role-gated (`inviteToOrg`, `acceptInvitation`), owner/admin-only role changes with last-owner protection (`org.routes.ts:103-170`) | E-mail change without re-verification (PP-06); team membership not consent-based/tenant-scoped (PP-04); no SCIM / bulk deprovisioning; no approval workflow for granting admin; no customer-visible access review |
 | **CC6.3** role-based access, least privilege, removal | Member removal bumps `token_version`, revokes the member's API keys (`org.routes.ts:103-145`); API keys die when creator leaves org (`apiKeyOrJwt.ts`) | Realtime sockets survive removal (PP-02); no periodic access recertification (people with prod host/GitHub access); no joiner/mover/leaver checklist; orphaned data after org delete (PP-10) |
 | **CC6.4** physical access | Inherited from the hosting provider (obtain its SOC 2 / ISO 27001 reports) or own facility controls if on-prem | Vendor evidence collection; office/endpoint physical security — **Org** |
@@ -96,7 +126,7 @@ dominated by organizational work, not code.
 
 | Criterion | Existing | Gaps |
 |---|---|---|
-| C1.1 identify & maintain confidential information | Tenant isolation at app layer; PII scrub in logs/exports; hashed tokens | No data classification/inventory (annotations contain page content, session replay, console/network logs, guest e-mails, screenshots); RLS inert (PP-08); screenshots reachable by unauthenticated capability URL on the public object-store/CDN URL (64-bit random suffix, no expiry/revocation) |
+| C1.1 identify & maintain confidential information | Tenant isolation at app layer and enforced PostgreSQL RLS (PP-08); PII scrub in logs/exports; hashed tokens | No data classification/inventory (annotations contain page content, session replay, console/network logs, guest e-mails, screenshots); screenshots reachable by unauthenticated capability URL on the public object-store/CDN URL (64-bit random suffix, no expiry/revocation) |
 | C1.2 disposal | Cascade deletes | Retention periods per data type, tested org/user purge incl. object storage and backups, customer data-export/deletion request process; FK gaps (PP-10) |
 
 ## 4. Existing control inventory (for the auditor's "system description")
@@ -114,7 +144,7 @@ GHCR image publishing, config preflight that refuses unsafe prod config.
 1. PP-01/PP-02/PP-03/PP-04 tenant side channels (rooms for all events, disconnect on removal, validate `teamId`, org-scope teams).
 2. PP-05 enforce `requireWriteAccess` globally; admin-only webhook/api-key listing.
 3. PP-06 e-mail change flow (re-auth + verify new address + revoke sessions).
-4. PP-07 require `METRICS_TOKEN` when exposed; PP-08 decide RLS (implement with a least-privilege DB role, or remove).
+4. PP-07 require `METRICS_TOKEN` when exposed; PP-08 RLS implemented (least-privilege `pinpoint_app` role + enforced policies).
 5. Keep CI free of long-lived cloud credentials (only the short-lived `GITHUB_TOKEN`); enable branch protection + required reviews + CODEOWNERS on `main` and restricted SSH access to the production host.
 6. Add Dependabot/Renovate, `npm audit --omit=dev` gate, CodeQL, gitleaks, container scan (Trivy) to CI. Publish `SECURITY.md` (disclosure contact).
 
@@ -123,7 +153,7 @@ GHCR image publishing, config preflight that refuses unsafe prod config.
 8. Ship host audit logs (auditd/journald, SSH logins) to central storage and add host intrusion detection (e.g. fail2ban/Wazuh); add alerts for root/SSH login, failed-login spikes, API-key creation, export bursts.
 9. MFA (TOTP/WebAuthn) for all users, enforced for owners/admins; SSO (OIDC/SAML) for enterprise; absolute session lifetime + session list/revoke UI (PP-15).
 10. Password policy upgrade + breached-password check (PP-12); WAF/bot protection in front of Caddy (e.g. Caddy + Coraza or a CDN WAF); host firewall and container egress allow-list.
-11. Data lifecycle: FKs/cascade (PP-10), org/user deletion job incl. S3 + search of backups policy, retention schedule, customer export; encrypt webhook secrets (PP-11); signed/expiring screenshot URLs or CloudFront signed cookies.
+11. Data lifecycle: FKs/cascade (PP-10), org/user deletion job incl. S3 + search of backups policy, retention schedule, customer export; webhook secrets encrypted (PP-11, done); screenshot URLs are signed and expire after 15 min (done) signed cookies.
 12. Backups/DR: raise retention (≥ 14–35 days), copy dumps off-host and off-site and replicate object storage, **perform and document a restore test**, define RPO/RTO, runbook, quarterly exercise.
 
 ### P2 — organizational programme (months; needed for the audit itself)

@@ -232,6 +232,12 @@ smoke_prod() {
   if printf '%s' "$logs" | grep -q 'COOKIE_INSECURE'; then fail "api logs mention COOKIE_INSECURE"; fi
   echo "ok   no COOKIE_INSECURE in api logs"
 
+  step "boot-time seeding under row-level security"
+  local defaults
+  defaults="$("${COMPOSE[@]}" exec -T db sh -c 'psql -tA -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from guidelines where is_default"' | tr -d '[:space:]')"
+  [ "$defaults" = 10 ] || fail "default guidelines not seeded on a fresh database (got '$defaults'; RLS system context?)"
+  echo "ok   10 default guidelines seeded by the API (pinpoint_app, RLS on)"
+
   step "register -> verify (DB) -> login over https"
   assert_code 201 "register" -X POST -k "$base/api/v1/auth/register" \
     -H 'Content-Type: application/json' -d "$(register_payload)"
@@ -292,7 +298,9 @@ smoke_screenshot() {
   echo "ok   signed URL minted"
   # The URL's origin is APP_URL (https://localhost); fetch it WITHOUT credentials.
   local hdrs="$TMP/shot.headers" got="$TMP/shot.fetched"
-  [ "$(http_code -k -D "$hdrs" -o "$got" "$url")" = 200 ] || fail "signed URL fetch did not return 200"
+  # Not http_code(): it already passes `-o /dev/null`, and curl applies the first -o to the URL.
+  [ "$(curl -sSk --max-time 15 -D "$hdrs" -o "$got" -w '%{http_code}' "$url")" = 200 ] ||
+    fail "signed URL fetch did not return 200"
   cmp -s "$png" "$got" || fail "fetched screenshot differs from the uploaded bytes"
   grep -qi '^content-type: image/png' "$hdrs" || fail "signed URL is not served as image/png"
   grep -qi '^x-content-type-options: nosniff' "$hdrs" || fail "signed URL lacks nosniff"

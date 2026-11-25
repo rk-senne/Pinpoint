@@ -804,10 +804,14 @@ export function buildContainer(config: Config): Container {
     // Seed Nielsen's 10 default guidelines once (GAP 1). Idempotent: skip
     // when defaults already exist so restarts never duplicate them.
     try {
-      if (!(await adapters.guidelineRepo.hasDefaults())) {
-        await adapters.guidelineRepo.insertMany([...DEFAULT_GUIDELINES]);
-        logger.info({ count: DEFAULT_GUIDELINES.length }, 'Seeded default guidelines');
-      }
+      // Boot-time seeding has no request tenant: run it in the trusted system
+      // context, or RLS rejects the insert on a fresh database (PP-08).
+      await runAsSystem(async () => {
+        if (!(await adapters.guidelineRepo.hasDefaults())) {
+          await adapters.guidelineRepo.insertMany([...DEFAULT_GUIDELINES]);
+          logger.info({ count: DEFAULT_GUIDELINES.length }, 'Seeded default guidelines');
+        }
+      });
     } catch (err) {
       logger.error({ err }, 'Failed to seed default guidelines');
     }

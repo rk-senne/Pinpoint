@@ -171,6 +171,7 @@ export function buildBootReport(env: NodeJS.ProcessEnv): BootReportEntry[] {
  *   - missing OAUTH_STATE_SECRET
  *   - missing / wrong-length INTEGRATION_ENCRYPTION_KEY
  *   - missing / short METRICS_TOKEN (PP-07)
+ *   - unknown STORAGE_DRIVER / relative LOCAL_STORAGE_DIR
  *
  * On success in strict mode it prints a boot report via `report` (defaults to
  * console.info). Non-exposed deployments skip all checks.
@@ -262,6 +263,22 @@ export function validateConfig(
       'METRICS_TOKEN must be set (at least 16 characters) for an exposed deployment; ' +
         'without it GET /metrics would be readable by anyone behind the reverse proxy. ' +
         'Generate one with `openssl rand -base64 24`.',
+    );
+  }
+
+  // Screenshot storage: STORAGE_DRIVER must be one of the known drivers and a
+  // local directory must be absolute so it lands on the mounted volume rather
+  // than inside the container's ephemeral working directory.
+  const driver = (env.STORAGE_DRIVER ?? '').trim().toLowerCase();
+  if (driver !== '' && driver !== 'local' && driver !== 's3') {
+    throw new InvalidConfigError("STORAGE_DRIVER must be 'local' or 's3'.");
+  }
+  const effectiveDriver =
+    driver !== '' ? driver : env.S3_ENDPOINT || env.AWS_ACCESS_KEY_ID ? 's3' : 'local';
+  const localDir = (env.LOCAL_STORAGE_DIR ?? '').trim();
+  if (effectiveDriver === 'local' && localDir !== '' && !localDir.startsWith('/')) {
+    throw new InvalidConfigError(
+      'LOCAL_STORAGE_DIR must be an absolute path (a mounted volume) for an exposed deployment.',
     );
   }
 

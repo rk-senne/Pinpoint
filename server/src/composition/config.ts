@@ -28,6 +28,13 @@ export interface S3Config {
   keyPrefix: string;
 }
 
+/** Where screenshots live: local disk (default when no S3 is configured) or S3. */
+export interface StorageConfig {
+  driver: 'local' | 's3';
+  /** Root directory for the local driver (LOCAL_STORAGE_DIR). */
+  localDir: string;
+}
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -89,6 +96,7 @@ export interface Config {
   bcryptSaltRounds: number;
   db: DbConfig;
   s3: S3Config;
+  storage: StorageConfig;
   smtp: SmtpConfig;
   jwt: JwtConfig;
   oauth: {
@@ -126,6 +134,17 @@ export function parseTrustProxy(raw: string | undefined): boolean | number | str
   if (v.toLowerCase() === 'true') return true;
   if (/^\d+$/.test(v)) return Number(v);
   return v;
+}
+
+/**
+ * STORAGE_DRIVER=local|s3. When unset: `s3` if S3_ENDPOINT or static AWS
+ * credentials are configured, otherwise `local` (no provider to buy).
+ */
+export function resolveStorageDriver(env: NodeJS.ProcessEnv): 'local' | 's3' {
+  const explicit = (env.STORAGE_DRIVER ?? '').trim().toLowerCase();
+  if (explicit === 'local' || explicit === 's3') return explicit;
+  if (env.S3_ENDPOINT || env.AWS_ACCESS_KEY_ID) return 's3';
+  return 'local';
 }
 
 /**
@@ -181,6 +200,10 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Config 
       forcePathStyle: env.S3_FORCE_PATH_STYLE === 'true',
       ...(env.S3_PUBLIC_BASE_URL ? { publicBaseUrl: env.S3_PUBLIC_BASE_URL } : {}),
       keyPrefix: env.S3_KEY_PREFIX || 'annotations/screenshots',
+    },
+    storage: {
+      driver: resolveStorageDriver(env),
+      localDir: env.LOCAL_STORAGE_DIR || './var/screenshots',
     },
     smtp: {
       host: env.SMTP_HOST || 'localhost',

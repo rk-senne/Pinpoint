@@ -255,3 +255,30 @@ describe('METRICS_TOKEN preflight (PP-07)', () => {
     expect(() => validateConfig({ NODE_ENV: 'development' }, noop)).not.toThrow();
   });
 });
+
+describe('validateConfig — screenshot storage', () => {
+  const base: NodeJS.ProcessEnv = {
+    NODE_ENV: 'production',
+    JWT_SECRET: STRONG_JWT,
+    CORS_ORIGIN: 'https://feedback.example.com',
+    DB_PASSWORD: 'not-the-default',
+    OAUTH_STATE_SECRET: 'state-secret',
+    INTEGRATION_ENCRYPTION_KEY: VALID_ENC_KEY,
+    METRICS_TOKEN: 'm'.repeat(20),
+  };
+  const run = (extra: NodeJS.ProcessEnv): void => validateConfig({ ...base, ...extra }, () => undefined);
+
+  it('accepts local storage with an absolute directory and no S3 settings', () => {
+    expect(() => run({ STORAGE_DRIVER: 'local', LOCAL_STORAGE_DIR: '/data/screenshots' })).not.toThrow();
+    expect(() => run({})).not.toThrow();
+  });
+
+  it('rejects an unknown driver and a relative local directory', () => {
+    expect(() => run({ STORAGE_DRIVER: 'ftp' })).toThrow(InvalidConfigError);
+    expect(() => run({ STORAGE_DRIVER: 'local', LOCAL_STORAGE_DIR: './var/screenshots' })).toThrow(InvalidConfigError);
+  });
+
+  it('does not constrain the directory when S3 is the driver', () => {
+    expect(() => run({ STORAGE_DRIVER: 's3', LOCAL_STORAGE_DIR: 'relative' })).not.toThrow();
+  });
+});

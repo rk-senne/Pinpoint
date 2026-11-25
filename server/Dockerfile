@@ -75,10 +75,20 @@ COPY server/src/migrations ./server/src/migrations
 
 WORKDIR /app/server
 
+# Local-disk screenshot storage (STORAGE_DRIVER=local, the default when no S3
+# is configured). Mount a volume here; the directory is created 0700.
+ENV LOCAL_STORAGE_DIR=/data/screenshots
+RUN mkdir -p /data/screenshots && chown node:node /data/screenshots && chmod 700 /data/screenshots
+VOLUME ["/data/screenshots"]
+
 # The widget bundle path is resolved relative to dist by default; pin it.
 ENV WIDGET_DIST_DIR=/app/widget/dist
 
 EXPOSE 3001
+
+# Run as the unprivileged `node` user from the base image (the app needs no
+# root: port 3001, read-only code, writes only to /data/screenshots).
+USER node
 
 # Default command runs the API. The `migrate` service in docker-compose.yml
 # overrides this with `npm run migrate`.

@@ -25,6 +25,7 @@
 // covered by the layering exception. No other file should mirror its
 // import surface.
 
+import { createSlackWiring } from '../services/integrations/slackWiring.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRequire } from 'node:module';
 import cookieParser from 'cookie-parser';
@@ -41,6 +42,7 @@ import { Server as SocketIoServer } from 'socket.io';
 // --- extracted composition modules (Mission E2) --------------------------
 import { Config, loadConfigFromEnv } from './config.js';
 import { buildAdapters } from './adapters.js';
+import { createScreenshotTokenRoutes } from '../adapters/inbound/http/screenshots.routes.js';
 import { buildUseCases } from './usecases.js';
 
 // --- domain (billing — inline because feature-flagged) -------------------
@@ -224,7 +226,24 @@ export function buildContainer(config: Config): Container {
   adapters.userRepo.onSessionRevoked = revokeUserSockets;
 
   // ---- Build domain use cases (delegated to usecases.ts) --------------
-  const useCases = buildUseCases({ adapters, config, eventBus, logger, db });
+  // Slack: auto-notify on new annotations (durable queue) + the channel deliverer.
+  const slackWiring = createSlackWiring({
+    db,
+    integrationRepo: adapters.integrationRepo,
+    notificationQueue: adapters.notificationQueue,
+    logger,
+    appUrl: config.appUrl,
+    egressOptions: { allowHttp: config.nodeEnv !== 'production' && !config.exposed },
+  });
+  slackWiring.attach(eventBus);
+  const useCases = buildUseCases({
+    adapters,
+    config,
+    eventBus,
+    logger,
+    db,
+    channelDeliverers: slackWiring.channelDeliverers,
+  });
 
   // ---- Helper closures (still needed for inbound deps) ----------------
   const resolvePageUrls = async (
@@ -585,6 +604,18 @@ export function buildContainer(config: Config): Container {
       appUrl: config.appUrl,
     }),
   );
+
+  // Local-disk screenshot driver: serves HMAC-signed, expiring screenshot URLs
+  // (GET /api/v1/screenshots/:token). Not mounted for the S3 driver.
+  if (adapters.screenshotTokenVerifier) {
+    app.use(
+      '/api/v1/screenshots',
+      createScreenshotTokenRoutes({
+        verifyToken: adapters.screenshotTokenVerifier,
+        fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
+      }),
+    );
+  }
 
   // ---- Health endpoints (Mission D2: Enhanced Health & Readiness) ------
 

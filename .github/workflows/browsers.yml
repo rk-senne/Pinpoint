@@ -97,7 +97,7 @@ jobs:
       FL_APP_URL: http://localhost:5173
       FL_E2E_EMAIL: e2e-seed@example.test
       FL_E2E_PASSWORD: P@ssw0rd-E2E-1!
-      FX_TOOLS: ${{ runner.temp }}/fxtools
+      FX_TOOLS: ${{ github.workspace }}/../fxtools
       FX_LOG_DIR: ${{ github.workspace }}/fx-logs
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

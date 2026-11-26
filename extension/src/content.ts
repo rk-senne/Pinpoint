@@ -213,15 +213,26 @@ export async function resolveProjectForUrl(
 
   // 2. Cache miss → ask the server. Failures (404, 401, network) all
   //    funnel into `null` so the host page stays stable.
-  try {
-    const res = await apiFetch<ProjectByUrlResponse>(
-      `/projects/by-url?url=${encodeURIComponent(href)}`,
-    );
-    return res.projectId;
-  } catch {
-    return null;
+  //    A definitive answer (404: no project for this URL; 401: signed out)
+  //    returns null at once. Transient failures (relay hiccup while the
+  //    service worker wakes, network blip, 5xx) are retried briefly so a
+  //    registered page never falls back to the project picker by accident.
+  const path = `/projects/by-url?url=${encodeURIComponent(href)}`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await apiFetch<ProjectByUrlResponse>(path);
+      return res.projectId;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const definitive = /status (401|403|404)\b|No accessible project|Unauthori[sz]ed|sign(ed)? ?in/i.test(msg);
+      if (definitive || attempt >= BY_URL_RETRY_DELAYS_MS.length) return null;
+      await new Promise((r) => setTimeout(r, BY_URL_RETRY_DELAYS_MS[attempt]));
+    }
   }
 }
+
+/** Backoff for transient `by-url` failures (total ~1.2 s before giving up). */
+export const BY_URL_RETRY_DELAYS_MS = [250, 900];
 
 /**
  * Build (or reuse) the Shadow Host element. Pointer events are disabled

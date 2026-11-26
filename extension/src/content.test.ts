@@ -108,6 +108,38 @@ describe('resolveProjectForUrl — task 30.3 / Req 39.2', () => {
     );
   });
 
+  it('retries a transient by-url failure instead of falling back to the picker', async () => {
+    vi.useFakeTimers();
+    try {
+      lookupProjectMock.mockResolvedValueOnce(null);
+      apiFetchMock
+        .mockRejectedValueOnce(new Error('Could not establish connection. Receiving end does not exist.'))
+        .mockRejectedValueOnce(new Error('Request failed with status 503'))
+        .mockResolvedValueOnce({ projectId: 'p3', pageId: 'page-1' });
+      const pending = resolveProjectForUrl('https://app.acme.test/pricing');
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(pending).resolves.toBe('p3');
+      expect(apiFetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up after the retries on a persistent transient failure', async () => {
+    vi.useFakeTimers();
+    try {
+      lookupProjectMock.mockResolvedValueOnce(null);
+      apiFetchMock.mockRejectedValue(new Error('Failed to fetch'));
+      const pending = resolveProjectForUrl('https://app.acme.test/pricing');
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(pending).resolves.toBeNull();
+      expect(apiFetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+      apiFetchMock.mockReset();
+    }
+  });
+
   it('returns null when the cache misses and the by-url call rejects', async () => {
     lookupProjectMock.mockResolvedValueOnce(null);
     apiFetchMock.mockRejectedValueOnce(new Error('Request failed with status 404'));

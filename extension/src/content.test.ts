@@ -53,6 +53,7 @@ import {
   __setOverlayEnabledForTests,
   fetchPickerProjects,
   maybeShowProjectPicker,
+  __setPendingInitialResolutionForTests,
   relayHeartbeatFetch,
   resolveProjectForUrl,
 } from './content';
@@ -266,6 +267,31 @@ describe('maybeShowProjectPicker — task 29.4 / Req 38.2', () => {
     host.remove();
     vi.unstubAllGlobals();
     __setOverlayEnabledForTests(false);
+  });
+
+  it('does not open the picker while the mount-time lookup resolves to a project (toggle race)', async () => {
+    __setOverlayEnabledForTests(true);
+    let settle!: (v: string | null) => void;
+    __setPendingInitialResolutionForTests(new Promise((r) => { settle = r; }));
+    apiFetchMock.mockResolvedValue({ data: [], pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 } });
+    const shown = maybeShowProjectPicker(host);
+    settle('p-registered');
+    await shown;
+    expect(host.pickerVisible).toBe(false);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    __setPendingInitialResolutionForTests(null);
+  });
+
+  it('still opens the picker when the mount-time lookup finds no project', async () => {
+    __setOverlayEnabledForTests(true);
+    __setPendingInitialResolutionForTests(Promise.resolve(null));
+    apiFetchMock.mockResolvedValueOnce({
+      data: [{ id: 'p1', name: 'Alpha', urls: [], status: 'active', ownerId: 'u1', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-06-01T00:00:00Z' }],
+      pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+    });
+    await maybeShowProjectPicker(host);
+    expect(host.pickerVisible).toBe(true);
+    __setPendingInitialResolutionForTests(null);
   });
 
   it('reveals the picker with the fetched projects when overlay is enabled and the user is signed in', async () => {

@@ -537,6 +537,18 @@ async function fetchAllProjectAnnotations(
  * Exported so unit tests can drive the helper directly without going
  * through the top-level `runGuardThenBootstrap` side effects.
  */
+/**
+ * The mount-time `by-url` lookup while it is in flight. The picker must not
+ * open before it settles: a registered page would flash (and keep) the
+ * picker when the overlay is toggled on quickly.
+ */
+let pendingInitialResolution: Promise<string | null> | null = null;
+
+/** Test hook: simulate a mount-time lookup that is still in flight. */
+export function __setPendingInitialResolutionForTests(p: Promise<string | null> | null): void {
+  pendingInitialResolution = p;
+}
+
 export async function maybeShowProjectPicker(host: FlOverlayHost): Promise<void> {
   // Skip when the overlay is disabled. The shadow host's `display: none`
   // would hide the picker anyway, but we also avoid the `/projects`
@@ -546,6 +558,11 @@ export async function maybeShowProjectPicker(host: FlOverlayHost): Promise<void>
   // Skip when the user is signed out. The picker has nothing to show
   // and the user needs to authenticate via the popup first.
   if (!(await isSignedIn())) return;
+
+  if (pendingInitialResolution) {
+    const resolved = await pendingInitialResolution.catch(() => null);
+    if (resolved || host.projectId) return;
+  }
 
   let projects: PickerProject[];
   try {
@@ -820,15 +837,21 @@ async function mountOverlay(): Promise<void> {
   // user-configured Server URL.
   host.serverUrl = resolveServerOriginSync();
 
+  const resolution = resolveProjectForUrl(window.location.href);
+  pendingInitialResolution = resolution;
   const [token, projectId] = await Promise.all([
     // Collab socket handshake runs in the page origin and cannot be relayed;
     // this is the one explicit, in-memory token handoff from the worker.
     requestCollabToken(),
-    resolveProjectForUrl(window.location.href),
+    resolution,
   ]);
+  if (pendingInitialResolution === resolution) pendingInitialResolution = null;
   host.token = token;
   host.projectId = projectId;
   if (projectId) {
+    // The overlay may have been toggled on while this lookup was in flight
+    // and shown the picker; the page is registered, so dismiss it.
+    host.hideProjectPicker();
     await seedProjectData(host, projectId);
   }
 }

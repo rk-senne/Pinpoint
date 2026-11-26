@@ -1,0 +1,62 @@
+# End-to-end test of the owner's real go-live path on a fresh Ubuntu 24.04 host:
+# install.sh (twice) -> app flows -> backup.sh -> wipe + restore.sh -> upgrade.sh.
+# See infrastructure/scripts/install-e2e.sh and docs/DEPLOYMENT.md ("Verified in CI").
+name: install-e2e
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'server/**'
+      - 'dashboard/**'
+      - 'shared/**'
+      - 'widget/**'
+      - '**/Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'infrastructure/scripts/install-e2e.sh'
+      - '.github/workflows/install-e2e.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Tool versions
+        run: |
+          . /etc/os-release && echo "$PRETTY_NAME"
+          docker version
+          docker compose version
+          jq --version
+          openssl version
+          sudo -n true && echo "passwordless sudo: yes"
+          ss -ltn | grep -E ':(80|443)\s' || echo "ports 80/443 free"
+
+      - name: Install, back up, restore and upgrade (fresh-host drill)
+        env:
+          INSTALL_E2E_LOG_DIR: ${{ runner.temp }}/install-e2e-logs
+          PINPOINT_BUILD: '1'
+        run: bash infrastructure/scripts/install-e2e.sh
+
+      - name: Upload install-e2e logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: install-e2e-logs
+          path: ${{ runner.temp }}/install-e2e-logs
+          if-no-files-found: ignore
+          retention-days: 7

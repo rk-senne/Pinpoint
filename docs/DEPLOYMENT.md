@@ -189,8 +189,7 @@ driver) and Caddy's certificates. The easy way:
 ```
 
 `BACKUP_DIR`, `BACKUP_RETENTION_DAYS` and `BACKUP_INCLUDE_ENV=1` are
-supported (see the script header). Restore the screenshots archive with
-`dc exec -T api tar -xzf - -C /data/screenshots < pinpoint-screenshots-<stamp>.tar.gz`.
+supported (see the script header).
 `deploy/upgrade.sh` takes a backup before it upgrades. By hand, back up Postgres with `pg_dump` in custom format from the
 running container:
 
@@ -212,14 +211,33 @@ somewhere safe: **`INTEGRATION_ENCRYPTION_KEY` is needed to read stored
 integration tokens and webhook secrets**, and losing `JWT_SECRET` only signs
 everyone out.
 
-Restore into an empty database (this **replaces** the data):
+Restore (this **replaces** the database and, if you pass the archive, the
+screenshots). On a new host: clone to `/opt/pinpoint`, put the **original**
+`deploy/.env.production` back (the same `INTEGRATION_ENCRYPTION_KEY` and
+`DB_APP_PASSWORD`), run `deploy/install.sh`, then:
 
 ```bash
-dc stop api dashboard caddy
-dc exec -T db sh -c 'dropdb -U "$POSTGRES_USER" --if-exists "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
-dc exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' < /var/backups/pinpoint/pinpoint-YYYY-MM-DD.dump
-dc up -d
+sudo /opt/pinpoint/deploy/restore.sh --yes \
+  /opt/pinpoint/backups/pinpoint-<stamp>.dump \
+  /opt/pinpoint/backups/pinpoint-screenshots-<stamp>.tar.gz   # archive optional (S3 storage)
 ```
+
+`restore.sh` stops `api`/`dashboard`/`caddy`, recreates the `pinpoint_app`
+role, drops and recreates the database, runs
+`pg_restore --no-owner --exit-on-error`, refills `/data/screenshots`, runs the
+migrations (so a dump from an older release is brought up to date), starts the
+stack and waits for the health check.
+
+Why not just `dropdb`/`pg_restore` by hand? The API connects as the
+unprivileged `pinpoint_app` role (RLS, PP-08). Roles are cluster-wide, so a
+dump contains the `GRANT`s and policies that name `pinpoint_app` but not the
+role itself, and after the restore `knex_migrations` says the migration that
+creates it already ran — on a wiped volume the restore would then error on the
+grants and the API could not log in. If you must restore manually, first run
+`dc exec -T db psql -U "$POSTGRES_USER" -d postgres` and create the role
+(`CREATE ROLE pinpoint_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '<DB_APP_PASSWORD>'`)
+before `dropdb`/`createdb`/`pg_restore`, and extract the screenshots archive
+with `dc run --rm --no-deps -T api tar -xzf - -C /data/screenshots < archive.tar.gz`.
 
 Test a restore on a scratch host before you need it.
 
@@ -328,6 +346,37 @@ both Compose stacks on a GitHub-hosted runner via
 
 Reproduce locally (needs a working Docker, `jq`, `openssl`; the prod mode binds
 ports 80/443): `bash infrastructure/scripts/compose-smoke.sh prod`.
+
+### Verified in CI: `install-e2e`
+
+`.github/workflows/install-e2e.yml` (PRs to `main` touching `deploy/`, the
+server/dashboard/shared/widget code, Dockerfiles or lockfiles; pushes to `main`;
+`workflow_dispatch`) runs `infrastructure/scripts/install-e2e.sh` on a fresh
+`ubuntu-24.04` runner: the owner's go-live path from a clean machine, with
+Docker already present and `DOMAIN=localhost` (Caddy's internal CA). It always
+ends with `down -v` and uploads compose logs on failure.
+
+1. The checkout is copied to `/opt/pinpoint` and `sudo deploy/install.sh` runs
+   non-interactively (`PINPOINT_BUILD=1`, or pre-built images via
+   `PINPOINT_SERVER_IMAGE`/`PINPOINT_DASHBOARD_IMAGE`): exit 0, the preinstalled
+   Docker is detected, `deploy/.env.production` is mode 600 with every secret at
+   full length, and `https://localhost/api/v1/health` reports `database: ok`.
+2. A second `install.sh` run exits 0 and leaves `.env.production` byte-identical.
+3. register → verified in Postgres → login (`Secure` `__Host-fl_session`) →
+   project → annotation → PNG screenshot upload → byte-identical fetch via the
+   signed URL.
+4. `deploy/backup.sh` writes a non-empty `pinpoint-*.dump` and
+   `pinpoint-screenshots-*.tar.gz` into a mode-700 `backups/`.
+5. Restore drill: `down -v` (every volume gone), `install.sh` on the empty host
+   (the user can no longer log in), `deploy/restore.sh` → the user logs in, the
+   project and annotation exist and the screenshot bytes match.
+6. `deploy/upgrade.sh` exits 0, writes a pre-upgrade backup, the stack is healthy
+   and the data is still there.
+
+Not covered: Let's Encrypt issuance (needs a public DNS name), SMTP delivery,
+ufw (`PINPOINT_SKIP_UFW=1`), the Docker apt-repo install path (the runner
+already has Docker). Locally it needs a working Docker, ports 80/443 and
+`INSTALL_E2E_I_UNDERSTAND=1` (it is destructive).
 
 ### Shell script checks and GHCR publishing
 

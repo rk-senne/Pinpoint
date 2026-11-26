@@ -8,10 +8,8 @@
  *   - 11.3, 11.4 — CSV export emits the per-annotation browser/OS
  *                  metadata columns
  *
- * The export assertion is gated on a seeded project that contains at
- * least one annotation; the spec auto-skips when the seed isn't
- * present so `npm run test --workspace e2e` stays green on a fresh
- * stack.
+ * The export test seeds its own temporary project + annotation, so it runs on
+ * a fresh stack and in CI.
  */
 import { expect, test } from '@playwright/test';
 
@@ -62,39 +60,53 @@ test.describe('projects + export', () => {
   });
 
   test('CSV export includes browser/OS columns', async ({ request }) => {
-    const seedProjectId = process.env.FL_E2E_PROJECT_ID;
-    test.skip(
-      !seedProjectId,
-      'Set FL_E2E_PROJECT_ID to an existing project that already has at least one annotation to assert export contents.',
-    );
-
     const { session } = await loginExisting(
       request,
       process.env.FL_E2E_EMAIL!,
       process.env.FL_E2E_PASSWORD!,
     );
 
-    const exportRes = await request.post(
-      `${API_BASE_URL}/api/v1/projects/${seedProjectId}/export`,
-      {
-        headers: session.mutatingHeaders(),
-        data: { format: 'csv' },
+    // Self-seeding: a temporary project with one annotation carrying a known
+    // environment, so the export's contents (not just headers) are asserted.
+    await withTemporaryProject(
+      request,
+      session,
+      { name: `e2e-export-${Date.now()}`, urls: ['https://example.com/pricing'] },
+      async (project) => {
+        const ann = await request.post(`${API_BASE_URL}/api/v1/projects/${project.id}/annotations`, {
+          headers: session.mutatingHeaders(),
+          data: {
+            pageUrl: 'https://example.com/pricing',
+            body: 'Export me',
+            type: 'note',
+            severity: 'major',
+            target: { cssSelector: 'h1', xpath: '/html/body/h1', pageX: 1, pageY: 1, tagName: 'H1', textSnippet: '' },
+            environment: {
+              browserFamily: 'Firefox', browserVersion: '161', osFamily: 'Linux', osVersion: '6',
+              deviceType: 'desktop', userAgentRaw: 'Mozilla/5.0 (X11; Linux x86_64; rv:161.0) Gecko/20100101 Firefox/161.0',
+            },
+          },
+        });
+        expect(ann.status()).toBe(201);
+
+        const exportRes = await request.post(`${API_BASE_URL}/api/v1/projects/${project.id}/export`, {
+          headers: session.mutatingHeaders(),
+          data: { format: 'csv' },
+        });
+        expect(exportRes.status()).toBe(200);
+        const csv = await exportRes.text();
+        const [headerLine, ...rows] = csv.trim().split('\n');
+
+        // Per Req 11.3 / 11.4 the browser/OS columns are present.
+        for (const col of ['Browser Family', 'Browser Version', 'OS Family', 'OS Version', 'Device Type']) {
+          expect(headerLine).toContain(col);
+        }
+        const row = rows.find((r) => r.includes('Export me'));
+        expect(row, 'the annotation is exported').toBeTruthy();
+        expect(row).toContain('Firefox');
+        expect(row).toContain('161');
+        expect(row).toContain('Linux');
       },
     );
-    expect(exportRes.status()).toBe(200);
-    const csv = await exportRes.text();
-    const headerLine = csv.split('\n', 1)[0];
-
-    // Per Req 11.3 / 11.4 the browser/OS columns are present and in
-    // the documented order. We assert each column header by name.
-    for (const col of [
-      'Browser Family',
-      'Browser Version',
-      'OS Family',
-      'OS Version',
-      'Device Type',
-    ]) {
-      expect(headerLine).toContain(col);
-    }
   });
 });

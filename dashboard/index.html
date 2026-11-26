@@ -404,6 +404,12 @@
               "
             ></button>
           </p>
+          <p
+            data-slot="forgotRow"
+            style="text-align: center; margin: 0; font-size: 14px;"
+          >
+            <a href="/reset-password" data-route style="color: var(--pp-link-alt);">Forgot password?</a>
+          </p>
         </form>
       </div>
     </template>
@@ -1235,6 +1241,9 @@
         style="max-width: 720px; margin: 0 auto; padding: 24px;"
       >
         <h1 style="margin: 0 0 16px; font-size: 20px;">Settings</h1>
+        <p style="margin: 0 0 16px; font-size: 13px;">
+          <a href="/developer" data-route style="color: var(--pp-link-alt);">API keys &amp; audit log</a>
+        </p>
 
         <div class="pp-tabs-wrap" data-role="tabs-wrap">
         <div
@@ -1301,6 +1310,17 @@
                 data-role="profile-email"
                 style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
               />
+            </label>
+            <label style="display: block; margin-bottom: 12px; font-size: 13px;">
+              Current password
+              <input
+                type="password"
+                autocomplete="current-password"
+                data-role="profile-current-password"
+                aria-describedby="profile-current-password-hint"
+                style="display: block; width: 100%; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 13px; box-sizing: border-box;"
+              />
+              <span id="profile-current-password-hint" style="display: block; margin-top: 4px; color: var(--pp-text-tertiary);">Only needed when you change your email. A confirmation link is sent to the new address.</span>
             </label>
             <label style="display: block; margin-bottom: 12px; font-size: 13px;">
               Avatar URL

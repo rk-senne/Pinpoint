@@ -214,3 +214,20 @@ describe('canonical dotted realtime events', () => {
     },
   );
 });
+
+describe('single connection while connecting (regression)', () => {
+  it('joinProject + several onSocketEvent calls share ONE socket even before it is connected', async () => {
+    // Right after `io()` the client is `connected: false` but `active: true`.
+    (fakeSocket as unknown as { active: boolean }).active = true;
+    fakeSocket.connected = false;
+    const mod = await importSocketModule();
+
+    mod.joinProject('p1');
+    mod.onSocketEvent('annotation.created', () => {});
+    mod.onSocketEvent('annotation.updated', () => {});
+
+    expect(ioMock).toHaveBeenCalledTimes(1);
+    expect(fakeSocket.emit).toHaveBeenCalledWith('join', { projectId: 'p1' });
+    expect(fakeSocket.on).toHaveBeenCalledWith('annotation.created', expect.any(Function));
+  });
+});

@@ -1,4 +1,5 @@
-import { getCsrfToken } from './auth';
+import { clearAuth, getCsrfToken } from './auth';
+import { navigate } from './router';
 import { showToast } from '../components/Toast';
 import type { User } from '@pinpoint/shared';
 
@@ -37,6 +38,24 @@ export class ApiError extends Error {
  * do not require the header.
  */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** Routes that are meant to be viewed without a dashboard session. */
+const PUBLIC_PATH = /^\/(auth|login|shared|review|portal|verify-email|reset-password|invitations|onboarding)(\/|$)/;
+
+/**
+ * A 401 from an authenticated endpoint means the session is gone (expired,
+ * revoked by a password/email change, logged out elsewhere). Drop the
+ * in-memory auth state and send the user to the login form instead of leaving
+ * a half-rendered, empty shell. Credential-check endpoints (`/auth/...`)
+ * legitimately answer 401 and are left to their callers.
+ */
+function handleSessionLost(apiPath: string, status: number): boolean {
+  if (status !== 401 || apiPath.startsWith('/auth/')) return false;
+  if (PUBLIC_PATH.test(window.location.pathname)) return false;
+  clearAuth();
+  navigate('/auth');
+  return true;
+}
 
 /**
  * Issue a JSON request to the API server.
@@ -83,6 +102,9 @@ export async function apiFetch<T>(
       body?.error?.message || `Request failed with status ${res.status}`;
     const code: string = body?.error?.code || 'UNKNOWN_ERROR';
     const details: unknown = body?.error?.details;
+    if (handleSessionLost(path, res.status)) {
+      throw new ApiError(message, code, res.status, details);
+    }
     showToast({ message, variant: 'error' });
     throw new ApiError(message, code, res.status, details);
   }
@@ -116,6 +138,9 @@ export async function apiFetchBlob(
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const message = body?.error?.message || `Request failed with status ${res.status}`;
+    if (handleSessionLost(path, res.status)) {
+      throw new ApiError(message, body?.error?.code || 'UNKNOWN_ERROR', res.status, body?.error?.details);
+    }
     showToast({ message, variant: 'error' });
     throw new ApiError(message, body?.error?.code || 'UNKNOWN_ERROR', res.status, body?.error?.details);
   }

@@ -45,7 +45,16 @@ function getBaseUrl(): string {
  * Get or create the Socket.IO client connection to the /collab namespace.
  */
 function getSocket(): Socket {
-  if (socket && socket.connected) return socket;
+  // Reuse the socket while it is connected OR still connecting/reconnecting.
+  // Creating a new one whenever `connected` was false (the state right after
+  // `io()`) made every call during startup open ANOTHER connection, so the
+  // `join` emit and the event handlers ended up on different, orphaned
+  // sockets and live updates never reached the page.
+  if (socket) {
+    // A server-initiated disconnect is not retried automatically.
+    if (!socket.connected && !socket.active) socket.connect();
+    return socket;
+  }
 
   // After a hard refresh the in-memory bearer is gone; the HttpOnly
   // `fl_session` cookie still rides on the same-origin handshake and the

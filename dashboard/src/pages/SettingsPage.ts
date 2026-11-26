@@ -162,6 +162,12 @@ export function mountSettingsPage(
     contentRoot,
     'profile-avatar',
   ) as HTMLInputElement;
+  // Optional so older templates without the field keep working.
+  const profileCurrentPasswordInput = contentRoot.querySelector<HTMLInputElement>(
+    '[data-role="profile-current-password"]',
+  );
+  /** Email as loaded from the server; a different value needs the current password. */
+  let loadedEmail = '';
   const profileMessage = requireRole(contentRoot, 'profile-message');
   const profileSubmit = requireRole(
     contentRoot,
@@ -276,6 +282,7 @@ export function mountSettingsPage(
       const user = await fetchUser();
       profileNameInput.value = user.name;
       profileEmailInput.value = user.email;
+      loadedEmail = user.email;
       profileAvatarInput.value = user.avatarUrl ?? '';
       profileLoaded = true;
       profileForm.hidden = false;
@@ -293,15 +300,26 @@ export function mountSettingsPage(
     setProfileMessage('');
     const avatarValue = profileAvatarInput.value.trim();
     try {
-      await apiFetch('/users/me', {
+      const emailChanged =
+        profileEmailInput.value.trim().toLowerCase() !== loadedEmail.trim().toLowerCase();
+      const currentPassword = profileCurrentPasswordInput?.value ?? '';
+      const res = await apiFetch<{ message?: string; emailChangePending?: boolean }>('/users/me', {
         method: 'PUT',
         body: JSON.stringify({
           name: profileNameInput.value,
           email: profileEmailInput.value,
           avatarUrl: avatarValue === '' ? undefined : avatarValue,
+          ...(emailChanged && currentPassword ? { currentPassword } : {}),
         }),
       });
-      setProfileMessage('Profile updated.', 'success');
+      if (profileCurrentPasswordInput) profileCurrentPasswordInput.value = '';
+      if (res?.emailChangePending) {
+        // The login email only changes once the emailed link is confirmed.
+        profileEmailInput.value = loadedEmail;
+        setProfileMessage(res.message ?? 'Check your new address for a confirmation link.', 'success');
+      } else {
+        setProfileMessage('Profile updated.', 'success');
+      }
       showToast({ message: 'Profile updated', variant: 'success' });
     } catch (err) {
       setProfileMessage(

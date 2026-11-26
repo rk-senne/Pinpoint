@@ -25,6 +25,7 @@
 // covered by the layering exception. No other file should mirror its
 // import surface.
 
+import { attachWorkflowEngine } from '../services/workflowEngine.js';
 import { createSlackWiring } from '../services/integrations/slackWiring.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRequire } from 'node:module';
@@ -240,6 +241,7 @@ export function buildContainer(config: Config): Container {
     egressOptions: { allowHttp: config.nodeEnv !== 'production' && !config.exposed },
   });
   slackWiring.attach(eventBus);
+  attachWorkflowEngine(eventBus, db, logger);
   const useCases = buildUseCases({
     adapters,
     config,

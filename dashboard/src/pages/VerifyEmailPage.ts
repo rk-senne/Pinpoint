@@ -102,7 +102,15 @@ export function mountVerifyEmailPage(
     try {
       response = await fetch(
         `${API_BASE}/auth/verify-email/${encodeURIComponent(token)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+        // Credential-less: the emailed link is its own proof. A stale or
+        // current `fl_session` cookie would otherwise trip the CSRF check
+        // (no X-CSRF-Token here) and fail e.g. an email-change confirmation
+        // opened in the browser the user is logged in with.
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'omit',
+        },
       );
     } catch {
       showError('Network error. Please try again.');
@@ -131,6 +139,7 @@ export function mountVerifyEmailPage(
       response = await fetch(`${API_BASE}/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
         body: JSON.stringify({ email }),
       });
     } catch {

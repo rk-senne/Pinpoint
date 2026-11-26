@@ -20,6 +20,12 @@ const CreateRuleSchema = z.object({
   priority: z.number().int().optional(),
 });
 
+const UpdateRuleSchema = z.object({
+  active: z.boolean().optional(),
+  priority: z.number().int().optional(),
+  name: z.string().min(1).max(255).optional(),
+});
+
 const CreateSlaSchema = z.object({
   name: z.string().min(1).max(255),
   severity: z.enum(['critical', 'major', 'minor']),
@@ -75,7 +81,9 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
 
   router.patch('/rules/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     if (!validateUuidParam(res, 'id', req.params.id as string)) return;
-    const { active, priority, name } = req.body;
+    const parsedBody = UpdateRuleSchema.safeParse(req.body ?? {});
+    if (!parsedBody.success) { sendZodFailure(res, 'Invalid rule update.', parsedBody.error.flatten()); return; }
+    const { active, priority, name } = parsedBody.data;
     const updated = await db('automation_rules')
       .where({ id: req.params.id, org_id: req.user!.orgId })
       .update({ ...(active !== undefined && { active }), ...(priority !== undefined && { priority }), ...(name && { name }), updated_at: db.fn.now() })

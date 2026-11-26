@@ -52,6 +52,7 @@ const TEMPLATES: Record<string, string> = {
         <form data-action="submit:saveProfile" data-role="profile-form" hidden>
           <input type="text" data-role="profile-name" />
           <input type="email" data-role="profile-email" />
+          <input type="password" data-role="profile-current-password" />
           <input type="text" data-role="profile-avatar" />
           <p data-role="profile-message" hidden></p>
           <button type="submit" data-role="profile-submit">Save</button>
@@ -386,6 +387,33 @@ describe('Profile tab', () => {
     ) as HTMLElement;
     expect(message.hidden).toBe(false);
     expect(message.textContent).toBe('Profile updated.');
+  });
+
+  it('sends currentPassword only when the email changes and reports the pending confirmation', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const api = makeFakeApi({
+      '/users/me': makeUser({ name: 'Alice', email: 'alice@test.com' }),
+      'PUT /users/me': { message: 'Confirmation link sent.', emailChangePending: true },
+    });
+    mountSettingsPage(root, undefined, { apiFetch: api.fetch });
+    await flushAsync();
+
+    (root.querySelector('[data-role="profile-email"]') as HTMLInputElement).value = 'new@test.com';
+    (root.querySelector('[data-role="profile-current-password"]') as HTMLInputElement).value = 'pw-123456789';
+    root
+      .querySelector<HTMLFormElement>('[data-role="profile-form"]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushAsync();
+
+    const put = api.calls.find((c) => c.init?.method === 'PUT');
+    expect(JSON.parse((put?.init?.body as string) ?? '{}')).toMatchObject({
+      email: 'new@test.com',
+      currentPassword: 'pw-123456789',
+    });
+    expect(root.querySelector('[data-role="profile-message"]')!.textContent).toBe('Confirmation link sent.');
+    // The shown login email reverts until the link is confirmed.
+    expect((root.querySelector('[data-role="profile-email"]') as HTMLInputElement).value).toBe('alice@test.com');
   });
 
   it('shows an error message when the save fails', async () => {

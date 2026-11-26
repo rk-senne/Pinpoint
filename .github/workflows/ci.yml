@@ -150,7 +150,7 @@ jobs:
       # reads it, it only has to accept connections.
       mailpit:
         image: axllent/mailpit:v1.29.7
-        ports: ['1025:1025']
+        ports: ['1025:1025', '8025:8025']
       # S3-compatible object storage for screenshots (see the "Create S3 bucket"
       # step). Upstream minio/minio images are no longer published, so this
       # uses the frozen Bitnami legacy image; its default entrypoint starts
@@ -213,6 +213,8 @@ jobs:
       AWS_ACCESS_KEY_ID: ci-minio-access
       AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
       FL_S3_ENABLED: '1'
+      # Flow specs read mails from Mailpit's API.
+      FL_MAIL_API: http://127.0.0.1:8025/api/v1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -271,7 +273,7 @@ jobs:
         run: >-
           npx playwright test
           --project=api --project=browser-setup --project=browser
-          --project=browser-firefox --project=browser-webkit
+          --project=browser-firefox --project=browser-webkit --project=flows
           --reporter=github,html
       # MV3 extensions only load in a headed Chromium: run under a virtual display.
       - name: Playwright - extension (headed Chromium under xvfb)

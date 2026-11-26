@@ -19,7 +19,7 @@
  * already performed, so the 5-logins/min auth rate limit is never tripped by
  * fixture setup.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { type APIRequestContext, type Browser, request as requestFactory } from '@playwright/test';
 
@@ -249,4 +249,115 @@ export async function submitGuestFeedback(
 /** Reusable unique suffix so re-runs never collide. */
 export function uniqueSuffix(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Outbound mail (flows/*.spec.ts)
+// ---------------------------------------------------------------------------
+
+const MAIL_LOG =
+  process.env.FL_MAIL_LOG ?? resolve(process.env.HOME ?? '', '.pinpoint-dev/mail.log');
+
+export interface MailMessage {
+  to: string;
+  subject: string;
+  /** Decoded (quoted-printable removed) body. */
+  body: string;
+}
+
+/** Decode a quoted-printable body (soft line breaks + `=XX` escapes). */
+export function decodeQuotedPrintable(input: string): string {
+  return input
+    .replace(/=\r?\n/g, '')
+    .replace(/=([0-9A-F]{2})/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+}
+
+/**
+ * Marker taken BEFORE triggering an email so `waitForMail` only considers
+ * messages that arrived afterwards. Mailpit: the current message count;
+ * log file: the current byte size.
+ */
+export async function mailMarker(): Promise<number> {
+  const api = process.env.FL_MAIL_API;
+  if (api) {
+    const res = await fetch(`${api}/messages?limit=1`);
+    const body = (await res.json()) as { total?: number; messages_count?: number };
+    return body.total ?? body.messages_count ?? 0;
+  }
+  try {
+    return statSync(MAIL_LOG).size;
+  } catch {
+    return 0;
+  }
+}
+
+async function readMessages(since: number): Promise<MailMessage[]> {
+  const api = process.env.FL_MAIL_API;
+  if (api) {
+    const list = (await (await fetch(`${api}/messages?limit=200`)).json()) as {
+      messages: Array<{ ID: string; To: Array<{ Address: string }>; Subject: string }>;
+    };
+    // Mailpit lists newest first; `since` is the count at marker time.
+    const fresh = list.messages.slice(0, Math.max(0, list.messages.length - since));
+    const out: MailMessage[] = [];
+    for (const m of fresh) {
+      const full = (await (await fetch(`${api}/message/${m.ID}`)).json()) as {
+        HTML?: string;
+        Text?: string;
+      };
+      out.push({
+        to: m.To[0]?.Address.toLowerCase() ?? '',
+        subject: m.Subject,
+        body: `${full.HTML ?? ''}\n${full.Text ?? ''}`,
+      });
+    }
+    return out;
+  }
+  const raw = readFileSync(MAIL_LOG).subarray(since).toString('latin1');
+  // The sink appends each DATA payload back-to-back; every message begins
+  // with its own `From:` header line.
+  return raw
+    .split(/^(?=From: )/m)
+    .filter((chunk) => chunk.startsWith('From: '))
+    .map((chunk) => {
+      const [head = '', ...rest] = chunk.split(/\r?\n\r?\n/);
+      const to = /^To: .*?<?([^<>\s]+@[^<>\s]+)>?\s*$/im.exec(head)?.[1] ?? '';
+      const subject = /^Subject: (.*)$/im.exec(head)?.[1] ?? '';
+      const qp = /Content-Transfer-Encoding: quoted-printable/i.test(head);
+      const body = rest.join('\n\n');
+      return { to: to.toLowerCase(), subject, body: qp ? decodeQuotedPrintable(body) : body };
+    });
+}
+
+/**
+ * Poll the mail sink until a message to `to` (optionally with `subject`
+ * matching) arrives after `since` (see `mailMarker`). Returns the newest match.
+ */
+export async function waitForMail(opts: {
+  to: string;
+  since: number;
+  subject?: RegExp;
+  timeoutMs?: number;
+}): Promise<MailMessage> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 20_000);
+  for (;;) {
+    const hits = (await readMessages(opts.since)).filter(
+      (m) => m.to === opts.to.toLowerCase() && (!opts.subject || opts.subject.test(m.subject)),
+    );
+    const newest = hits[hits.length - 1];
+    if (newest) return newest;
+    if (Date.now() > deadline) {
+      throw new Error(`no mail to ${opts.to} (subject ${String(opts.subject)}) within timeout`);
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
+/** First URL in `body` whose path matches `pathRe` (HTML entities decoded). */
+export function extractLink(body: string, pathRe: RegExp): string {
+  const decoded = body.replace(/&amp;/g, '&');
+  const urls = decoded.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
+  const hit = urls.find((u) => pathRe.test(new URL(u).pathname));
+  if (!hit) throw new Error(`no link matching ${String(pathRe)} in mail body`);
+  return hit;
 }

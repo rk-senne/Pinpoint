@@ -123,7 +123,7 @@ export default defineConfig({
       // must NOT pick up the browser-UI specs under `browser/`.
       name: 'api',
       testDir: '.',
-      testIgnore: /browser\//,
+      testIgnore: /(browser|flows)\//,
       use: {
         baseURL: API_BASE_URL,
       },
@@ -153,6 +153,23 @@ export default defineConfig({
       // needs `launchPersistentContext` + `--load-extension`), so it runs in
       // the dedicated `extension` project below, NOT here.
       testIgnore: /extension(-[\w-]+)?\.spec\.ts$/,
+      dependencies: ['browser-setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: APP_BASE_URL,
+        extraHTTPHeaders: {},
+        storageState: BROWSER_STORAGE_STATE,
+        launchOptions: chromiumLaunch,
+      },
+    },
+    {
+      // Multi-step user flows (`flows/*.spec.ts`): password reset, email
+      // change, webhooks, … Each drives the real Dashboard and reads outbound
+      // mail from the SMTP sink (`FL_MAIL_API` = Mailpit, else the dev
+      // stack's mail.log). Reuses the setup project's storageState pattern.
+      name: 'flows',
+      testDir: './flows',
+      testMatch: /.*\.spec\.ts$/,
       dependencies: ['browser-setup'],
       use: {
         ...devices['Desktop Chrome'],

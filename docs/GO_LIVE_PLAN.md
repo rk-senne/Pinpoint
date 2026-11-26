@@ -18,7 +18,7 @@ Safari**; API image runs as non-root; RLS enforced with the `pinpoint_app` role;
 
 | # | Step | Owner | Time | One-off cost | Monthly cost |
 |---|---|---|---|---|---|
-| 1 | Merge PR #2 after GHCR dry-run | Owner | 1–2 h | 0 | 0 |
+| 1 | Merge PR #2 (GHCR dry-run already passed) | Owner | 1–2 h | 0 | 0 |
 | 2 | Domain | Owner | 15 min | ~US$10–15/yr (≈ $1/mo) | ~0–1 |
 | 3 | VM (2 vCPU / 4 GB: OVH VPS-1 or Hetzner CX23) + `install.sh` | Owner | 1–2 h | 0 | ≈ $4.54 (OVH) – €5.99 (Hetzner) |
 | 4 | Backups: on-box `backup.sh` + off-box copy | Owner | 1 h | 0 | 0–1 (free tier of an object store or a second cheap box) |
@@ -38,7 +38,7 @@ Rule of thumb: don't pay for anything in the "upgrade when" column until the tri
 
 ## 1. Merge PR #2 (free, 1–2 h)
 
-1. **Run the GHCR publish dry-run first** (proves the publish pipeline from the branch without touching `latest`):
+1. ✅ **Done on 26 Nov 2026** ([run 45827341445](https://github.com/rk-senne/Pinpoint/actions/runs/45827341445)): every job passed and it pushed `ghcr.io/rk-senne/pinpoint/server:test-bc0c5e2…` and `…/dashboard:test-bc0c5e2…` without touching `latest`. Re-run it after any CI change. **Run the GHCR publish dry-run first** (proves the publish pipeline from the branch without touching `latest`):
    GitHub → Actions → **CI** → *Run workflow* → branch `feat/enhancement-roadmap` → tick **`publish_tag`**. It runs lint/typecheck, unit tests, e2e and then
    publishes only `ghcr.io/rk-senne/pinpoint/{server,dashboard}:test-<sha>` (never `latest`; `packages: write` only on that job).
    Check: all jobs green, both `test-<sha>` packages appear under the repo's Packages, and `docker manifest inspect ghcr.io/rk-senne/pinpoint/server:test-<sha>` works.

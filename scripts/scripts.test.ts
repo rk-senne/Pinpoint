@@ -19,6 +19,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = (over: Partial<DbConfig> = {}): DbConfig => ({ host: '127.0.0.1', port: 5432, database: 'pinpoint_test', user: 'u', password: 'p', ...over });
 
 /** Async (never spawnSync): the in-process API must keep serving while the script runs. */
+// The demo scripts are plain .mts run with Node's built-in type stripping
+// (Node >= 22.18, see README). On older Node the CLI suites can't spawn them,
+// so they are skipped there; CI runs them in a dedicated Node 22 step.
+const [maj, min] = process.versions.node.split('.').map(Number);
+const CAN_RUN_MTS = maj! > 22 || (maj === 22 && min! >= 18);
+
 function runScript(script: string, args: string[], env: Record<string, string>): Promise<{ code: number | null; out: string; err: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, 'scripts', script), ...args], {
@@ -63,7 +69,7 @@ describe('scripts/lib/common.mts — assertLocalDb guard', () => {
   });
 });
 
-describe('script CLIs refuse unsafe targets before connecting', () => {
+describe.skipIf(!CAN_RUN_MTS)('script CLIs refuse unsafe targets before connecting', () => {
   const base = { DB_PORT: '1', DB_USER: 'x', DB_PASSWORD: 'x' };
   for (const script of ['demo-seed.mts', 'demo-clean-test-data.mts']) {
     it(`${script}: remote DB_HOST → exit 1, no connection attempt`, async () => {
@@ -85,7 +91,7 @@ describe('script CLIs refuse unsafe targets before connecting', () => {
   });
 });
 
-describe('demo scripts against the real test database', () => {
+describe.skipIf(!CAN_RUN_MTS)('demo scripts against the real test database', () => {
   let live: LiveApp | null = null;
   let skip: string | null = null;
   let server: Server | null = null;

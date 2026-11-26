@@ -97,19 +97,20 @@ failure and printed at the end. The project the run creates is deleted again.
   Firefox), SPA `pushState` navigation, on-demand injection on a host not in
   `content_scripts`, the clipboard copy-link toast, sign-out.
 
-## CI (not wired)
+## CI
 
-The `e2e` job already installs Playwright's Firefox and has the stack + seed
-session; GitHub's `ubuntu-latest` image ships geckodriver (`$GECKOWEBDRIVER`).
-A step after the Playwright runs would be:
+`.github/workflows/browsers.yml` (job `firefox-e2e`, ubuntu-24.04) runs this
+harness on every PR touching `extension/`, `e2e/firefox/`, `shared/` or
+`server/`, and on pushes to `main`. It starts Postgres + the API (same env as
+the `e2e` job in `ci.yml`, API as the RLS role `pinpoint_app`), seeds with
+`infrastructure/scripts/ci-seed-e2e.sh`, installs `selenium-webdriver@4.53.0`
+into `$FX_TOOLS`, downloads the **official** Firefox 161.0 Linux tarball and
+geckodriver 0.37.1 (both SHA-256 pinned) and runs
+`FX_HEADED=1 xvfb-run node e2e/firefox/run.mjs`. Harness details for CI:
 
-```yaml
-      - name: Firefox extension (real Firefox via WebDriver)
-        env:
-          FX_TOOLS: ${{ runner.temp }}/fxtools
-        run: |
-          npm run build:firefox --workspace extension
-          mkdir -p "$FX_TOOLS"
-          (cd "$FX_TOOLS" && npm init -y >/dev/null && npm i -E --no-audit --no-fund selenium-webdriver@4.53.0)
-          GECKODRIVER_BIN="$GECKOWEBDRIVER/geckodriver" node e2e/firefox/run.mjs
-```
+- On Linux the Firefox binary is found at `$FX_TOOLS/firefox/firefox`.
+- No Playwright global setup runs there, so the bearer session comes from a
+  fresh `POST /auth/login` when `e2e/.auth/seed-session.json` is absent (or its
+  token no longer passes `GET /users/me`).
+- `FX_LOG_DIR=<dir>` writes `firefox.log` to a fixed directory that is never
+  deleted (uploaded as the `firefox-e2e-logs` artifact on failure).

@@ -6,14 +6,14 @@
  *   node e2e/firefox/run.mjs            # from the repo root
  *   FX_STOP_AFTER=overlay node e2e/firefox/run.mjs   # run steps up to the first matching one
  */
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   EXT_UUID, GECKO_ID, findFirefox, findGeckodriver, landingPageHtml, loadSelenium,
-  poll, readSeedSession, sleep, startSite, zipDir,
+  poll, resolveSeedSession, sleep, startSite, zipDir,
 } from './lib.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -187,7 +187,7 @@ async function openTab(url) {
 const sw = (h) => driver.switchTo().window(h);
 
 /* ---------------- API helpers ---------------- */
-const seed = readSeedSession(E2E);
+const seed = await resolveSeedSession(E2E, API, SEED_EMAIL, SEED_PASSWORD);
 const authHdr = { Authorization: `Bearer ${seed?.body.token ?? ''}`, 'content-type': 'application/json' };
 async function api(path, init = {}) {
   let res;
@@ -203,8 +203,9 @@ async function api(path, init = {}) {
 
 /* ---------------- main ---------------- */
 async function main() {
-  if (!seed) throw new Error('e2e/.auth/seed-session.json missing — run the e2e global setup once (see README).');
-  const tmp = mkdtempSync(join(tmpdir(), 'pp-fx-'));
+  // FX_LOG_DIR: fixed, always-kept output dir (CI uploads it as an artifact).
+  const tmp = process.env.FX_LOG_DIR ? resolve(process.env.FX_LOG_DIR) : mkdtempSync(join(tmpdir(), 'pp-fx-'));
+  mkdirSync(tmp, { recursive: true });
   const logPath = join(tmp, 'firefox.log');
   const logFd = openSync(logPath, 'w');
   // The REAL dist-firefox bundle, unmodified. (Unlike the Chrome spec, no
@@ -531,7 +532,7 @@ async function main() {
     await api(`/projects/${projectId}`, { method: 'DELETE', body: JSON.stringify({ confirmationToken: projectName }) }).catch(() => {});
     closeSync(logFd);
     console.log(`log: ${logPath}`);
-    if (process.env.FX_KEEP_TMP !== '1' && results.every((r) => r.ok)) rmSync(tmp, { recursive: true, force: true });
+    if (process.env.FX_KEEP_TMP !== '1' && !process.env.FX_LOG_DIR && results.every((r) => r.ok)) rmSync(tmp, { recursive: true, force: true });
   }
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} steps passed`);

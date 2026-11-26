@@ -31,7 +31,10 @@ export function loadSelenium() {
 /** FIREFOX_BIN, else a Firefox.app under FX_TOOLS, else Playwright's cached Firefox (macOS / Linux). */
 export function findFirefox() {
   if (process.env.FIREFOX_BIN) return process.env.FIREFOX_BIN;
-  const candidates = [join(FX_TOOLS, 'Firefox.app/Contents/MacOS/firefox')];
+  const candidates = [
+    join(FX_TOOLS, 'Firefox.app/Contents/MacOS/firefox'), // macOS release app
+    join(FX_TOOLS, 'firefox/firefox'), // Linux official release tarball extracted into FX_TOOLS (CI)
+  ];
   const caches = [process.env.PLAYWRIGHT_BROWSERS_PATH, join(HOME, 'Library/Caches/ms-playwright'), join(HOME, '.cache/ms-playwright')];
   for (const pw of caches.filter((p) => p && existsSync(p))) {
     for (const d of readdirSync(pw).filter((n) => n.startsWith('firefox-')).sort().reverse()) {
@@ -76,6 +79,30 @@ export function readSeedSession(e2eDir) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Bearer session for API fixtures: the Playwright global-setup file when it is
+ * still valid, otherwise a fresh login (CI never runs the Playwright setup;
+ * locally a stale token is refreshed instead of failing with 401).
+ */
+export async function resolveSeedSession(e2eDir, api, email, password) {
+  const cached = readSeedSession(e2eDir);
+  if (cached) {
+    try {
+      const r = await fetch(`${api}/api/v1/users/me`, { headers: { Authorization: `Bearer ${cached.body.token}` } });
+      if (r.ok) return cached;
+    } catch { /* fall through to login */ }
+  }
+  const res = await fetch(`${api}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(`seed login failed: HTTP ${res.status} ${await res.text()}`);
+  const body = await res.json();
+  if (!body?.token) throw new Error('seed login returned no bearer token');
+  return { body };
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -269,6 +269,18 @@ next/prev pin, realtime, reload and a clean browser console.
 Verified with that runner on Firefox 161.0 (release), 140.9.1 ESR and
 128.14.0 ESR — 20/20 each (the `strict_min_version` floor of 128).
 
+### CI
+
+`.github/workflows/browsers.yml` runs on PRs touching `extension/`,
+`e2e/firefox/`, `shared/` or `server/`, on pushes to `main` and on manual
+dispatch:
+
+| Job | What it proves |
+|---|---|
+| `firefox-e2e` | The Firefox build in the official Firefox 161.0 Linux release (headed under xvfb) via `e2e/firefox/run.mjs` against a real API + Postgres. Logs uploaded on failure. |
+| `firefox-package` | `npm run package:firefox` (web-ext build + source archive) and `web-ext lint` with 0 errors; both zips are uploaded as the `firefox-addon` artifact. |
+| `safari-app` | Store-manifest unit tests, then `npm run build:safari-app` on `macos-15` (unsigned; asserts `** BUILD SUCCEEDED **`) and `scripts/verify-safari-app.mjs`, which checks the `.appex` contains `manifest.json`, `background.js` and `content.js`. |
+
 ### Manual test checklist
 
 Run against the local stack (`http://localhost:5173`, API `:3001`) in Firefox ≥ 128:
@@ -305,7 +317,9 @@ Xcode project lives in `safari/Pinpoint/` (bundle id `dev.pinpoint.safari`);
 its `Pinpoint Extension/Resources/` is a git-ignored copy of `dist-safari/`
 (`npm run safari:sync`). Manual testing, signing and App Store submission:
 [`docs/STORE_SUBMISSION.md`](../docs/STORE_SUBMISSION.md#2-safari--mac-app-store).
-Not yet exercised in a running Safari (safaridriver needs sudo).
+Not yet exercised in a running Safari (safaridriver needs sudo). CI builds the
+app and verifies the `.appex` contents with `scripts/verify-safari-app.mjs`
+(`PINPOINT_SAFARI_DD` selects the derived-data dir).
 
 ## Release Process
 

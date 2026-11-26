@@ -138,6 +138,13 @@ async function pressShortcut(mods, key) {
   await sw(handles.page);
   await driver.setContext('chrome');
   try {
+    // Under xvfb there is no window manager, so the browser window may never
+    // get OS focus and <key> shortcuts would not fire. Focus it explicitly.
+    await driver.executeScript(`
+      const w = Services.wm.getMostRecentWindow('navigator:browser');
+      w.focus();
+      w.gBrowser.selectedBrowser.focus();
+    `);
     let a = driver.actions({ async: true });
     for (const m of mods) a = a.keyDown(Key[m]);
     a = a.sendKeys(key);

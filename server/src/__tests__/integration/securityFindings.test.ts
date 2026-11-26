@@ -155,7 +155,10 @@ describe('Integration: security review — Low findings', () => {
       await live!.db('annotations').where({ id: annotationId }).update({ screenshot_object_key: `annotations/screenshots/${annotationId}.png` });
       const ok = await get(admin, `/api/v1/annotations/${annotationId}/screenshot`);
       expect(ok.status).toBe(200);
-      expect(ok.body.screenshotUrl).toContain(annotationId);
+      expect(ok.body.screenshotObjectKey).toContain(annotationId);
+      // S3 driver: presigned/public URL embeds the key; local driver (default without S3 env):
+      // an opaque HMAC-signed /api/v1/screenshots/<token> URL that does not reveal the key.
+      expect(ok.body.screenshotUrl.includes(annotationId) || /\/api\/v1\/screenshots\/[^/]+$/.test(ok.body.screenshotUrl)).toBe(true);
       expect((await get(outsider, `/api/v1/annotations/${annotationId}/screenshot`)).status).toBe(404);
       // ?redirect=1 (export links): 302 to the same URL for members, still 404 for outsiders.
       const redir = await get(admin, `/api/v1/annotations/${annotationId}/screenshot?redirect=1`);

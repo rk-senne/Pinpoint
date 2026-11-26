@@ -155,18 +155,22 @@ describe('demo scripts against the real test database', () => {
 
   it('demo-clean-test-data dry-run deletes nothing and never lists demo projects; --yes honours the min-age guard', async ({ skip: s }) => {
     if (skip) return s(skip);
-    const before = Number((await live!.db('projects').count('* as c').first())!.c);
+    // Own fixtures only: other test files share pinpoint_test and create/delete
+    // projects concurrently, so a global row count would race.
+    const seeded = await live!.seedOrg(['admin']);
+    const admin = seeded.actors.admin!;
+    await live!.db('users').where({ id: admin.id }).update({ email: `cleanup-${admin.id}@example.test` });
+    const doomed = await live!.seedProject(seeded.orgId, admin.id);
+    await live!.db('projects').where({ id: doomed }).update({ name: `e2e-dry-${doomed.slice(0, 6)}`, created_at: new Date(Date.now() - 3600_000) });
     const dry = await runScript('demo-clean-test-data.mts', [], env);
     expect(dry.code).toBe(0);
     expect(dry.out).toMatch(/DRY RUN/);
     expect(dry.out).toMatch(/Nothing deleted/);
     expect(dry.out).not.toMatch(/Acme Marketing Site|Northwind/);
-    expect(Number((await live!.db('projects').count('* as c').first())!.c)).toBe(before);
+    expect(dry.out).toMatch(/Matched [1-9]\d* of/); // our old e2e-* project is a candidate...
+    expect(await live!.db('projects').where({ id: doomed }).first()).toBeTruthy(); // ...but a dry run keeps it
 
     // A just-created e2e-style project owned by an @example.test user is protected by the 15 min age guard.
-    const seeded = await live!.seedOrg(['admin']);
-    const admin = seeded.actors.admin!;
-    await live!.db('users').where({ id: admin.id }).update({ email: `cleanup-${admin.id}@example.test` });
     const pid = await live!.seedProject(seeded.orgId, admin.id);
     await live!.db('projects').where({ id: pid }).update({ name: `e2e-guard-${pid.slice(0, 6)}` });
     const guarded = await runScript('demo-clean-test-data.mts', ['--yes'], env);

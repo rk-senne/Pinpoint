@@ -192,3 +192,18 @@ harness; it skips when `mcp-server/dist` is not built.
 
 `vitest.config.ts` now includes `scripts/**/*.test.ts`. DB-backed script cases leave the
 `@acmestudio.dev` demo workspace in `pinpoint_test` (idempotent; `npm run demo:reset` removes it).
+
+## User flows (e2e)
+
+Playwright project `flows` (`e2e/flows/*.spec.ts`), run against the live local stack.
+
+| Flow | Spec | Covers |
+|---|---|---|
+| Webhook delivery | `e2e/flows/webhooks.spec.ts` | Registers an `annotation.created` webhook (via API — the dashboard has no webhook UI), creates an annotation, waits ≤30 s for the delivery worker's POST to a local `node:http` receiver and verifies the Standard-Webhooks signature (`v1,` HMAC-SHA256 of `id.timestamp.body`, key = base64 of the `whsec_` secret), tamper rejection, secret shown once, payload contains the annotation id. **Skips** when the SSRF egress guard rejects the receiver (loopback is blocked even in development); set `FL_WEBHOOK_RECEIVER_HOST` to a guard-public, locally reachable address (e.g. a `lo0` alias) to run it. |
+| Workflow rule | `e2e/flows/workflow-rule.spec.ts` | Creates a rule in the Workflows UI (`annotation.created`, severity = critical → set status `in_progress`), creates critical + minor annotations via API, polls until only the critical one is moved, then deletes the rule in the UI. Unit test: `WorkflowsPage.test.ts` ("sends a severity condition only when one is chosen"). |
+| Portal guest | `e2e/flows/portal-guest.spec.ts` | Portal created via API; anonymous context requests a magic link on `/portal/:slug`, reads it from the mail sink, opens it; asserts title, welcome message and feedback render and `?token=` is removed from the URL. |
+
+
+### Webhook delivery (end to end)
+
+`server/src/__tests__/integration/webhookDelivery.test.ts`: annotation created via the API → durable delivery row in real Postgres → `DispatchWebhookDeliveries` POSTs through the real SSRF guard to a local HTTP receiver; the Standard Webhooks signature is verified with the library **and** an independent HMAC; 500 → retry scheduled; no cross-org delivery. The browser spec `e2e/flows/webhooks.spec.ts` skips locally on purpose: the egress guard (correctly) refuses loopback receivers outside `NODE_ENV=test`; set `FL_WEBHOOK_RECEIVER_HOST` to a publicly routable receiver to run it.

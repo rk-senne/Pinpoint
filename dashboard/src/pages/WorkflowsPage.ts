@@ -58,6 +58,7 @@ export function mountWorkflowsPage(
   const ruleName = q<HTMLInputElement>('rule-name');
   const ruleTrigger = q<HTMLSelectElement>('rule-trigger');
   const ruleAction = q<HTMLSelectElement>('rule-action');
+  const ruleSeverity = q<HTMLSelectElement>('rule-severity');
   const ruleParams = q<HTMLTextAreaElement>('rule-params');
   const ruleParamsHint = q('rule-params-hint');
   const ruleNameError = q('rule-name-error');
@@ -346,6 +347,7 @@ export function mountWorkflowsPage(
           triggerEvent: ruleTrigger.value,
           actionType: ruleAction.value,
           actionParams: params.value,
+          ...(ruleSeverity.value ? { conditions: { severity: ruleSeverity.value } } : {}),
         }),
       });
     } catch (err) {

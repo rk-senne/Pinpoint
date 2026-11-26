@@ -211,6 +211,21 @@ describe('WorkflowsPage — rule flows', () => {
     teardown();
   });
 
+  it('sends a severity condition only when one is chosen', async () => {
+    stubApi({ rules: [], sla: [] });
+    const { root, teardown } = mount();
+    await flush();
+    click(q(root, '[data-role="create-rule-btn"]'));
+    q<HTMLInputElement>(root, '[data-role="rule-name"]').value = 'Crit only';
+    q<HTMLSelectElement>(root, '[data-role="rule-severity"]').value = 'critical';
+    q<HTMLTextAreaElement>(root, '[data-role="rule-params"]').value = '{"assigneeId":"u1"}';
+    q<HTMLFormElement>(root, '[data-role="rule-form"]').dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    const post = calls.find((c) => c.method === 'POST')!;
+    expect((post.body as Record<string, unknown>).conditions).toEqual({ severity: 'critical' });
+    teardown();
+  });
+
   it('toggles a rule with PATCH', async () => {
     stubApi({ rules: [RULE], sla: [] });
     const { root, teardown } = mount();

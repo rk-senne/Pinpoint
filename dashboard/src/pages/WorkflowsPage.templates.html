@@ -39,6 +39,16 @@
               </div>
             </div>
             <div class="pp-field">
+              <label for="wf-rule-severity">Only when severity is</label>
+              <select id="wf-rule-severity" data-role="rule-severity">
+                <option value="">Any severity</option>
+                <option value="critical">Critical</option>
+                <option value="major">Major</option>
+                <option value="minor">Minor</option>
+                <option value="informational">Informational</option>
+              </select>
+            </div>
+            <div class="pp-field">
               <label for="wf-rule-params">Action params (JSON)</label>
               <textarea id="wf-rule-params" data-role="rule-params" rows="3" spellcheck="false" class="pp-mono"></textarea>
               <p class="pp-field__hint" data-role="rule-params-hint"></p>

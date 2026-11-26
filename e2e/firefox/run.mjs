@@ -333,10 +333,43 @@ async function main() {
       // `activeTab`, which Firefox's captureVisibleTab requires: in MV3 Firefox
       // only accepts the `<all_urls>` API permission (absent in MV3) or activeTab;
       // a granted `<all_urls>` HOST permission is not enough.
-      await pressShortcut(['ALT', 'SHIFT'], 's');
-      await waitDeep('fl-sidebar-panel .fl-sidebar', { timeout: 5000 });
-      await pressShortcut(['ALT', 'SHIFT'], 's');
+      const toggle = async () => {
+        await pressShortcut(['ALT', 'SHIFT'], 's');
+        return true;
+      };
+      // Some X servers without a window manager (CI xvfb) never deliver the
+      // synthesized chord to <key> handlers. Then fire the extension's own
+      // <key> element: still the real commands path (ExtensionShortcuts ->
+      // onCommand -> activeTab grant -> FL_COMMAND), minus OS key delivery.
+      const fireKeyElement = async () => {
+        await sw(handles.page);
+        await driver.setContext('chrome');
+        try {
+          return await driver.executeScript(`
+            const w = Services.wm.getMostRecentWindow('navigator:browser');
+            const key = [...w.document.querySelectorAll('key')].find((k) =>
+              /toggle-sidebar/.test(k.id) || (k.getAttribute('key') || '').toUpperCase() === 'S' &&
+              /alt/.test(k.getAttribute('modifiers') || '') && /shift/.test(k.getAttribute('modifiers') || ''));
+            if (!key) return false;
+            key.doCommand();
+            return true;
+          `);
+        } finally {
+          await driver.setContext('content');
+        }
+      };
+      await toggle();
+      let viaKeyElement = false;
+      try {
+        await waitDeep('fl-sidebar-panel .fl-sidebar', { timeout: 3000 });
+      } catch {
+        if (!(await fireKeyElement())) throw new Error('extension <key> for toggle-sidebar not found');
+        viaKeyElement = true;
+        await waitDeep('fl-sidebar-panel .fl-sidebar', { timeout: 5000 });
+      }
+      if (viaKeyElement) await fireKeyElement(); else await toggle();
       await waitGone('fl-sidebar-panel .fl-sidebar', { timeout: 5000 });
+      if (viaKeyElement) console.log('    (shortcut delivered via the extension <key> element; synthesized keys did not reach it)');
     });
 
     await step('host diagnostics: console.error + uncaught error on the page', async () => {

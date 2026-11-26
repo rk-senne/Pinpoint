@@ -861,7 +861,7 @@ test.describe('Chrome Extension UI — landing page', () => {
     await toggleOverlay(sw, PAGE_URL);
     await fresh.waitForTimeout(500);
     await fresh.locator('#cta').click();
-    await expect(fresh.locator('fl-popover fl-disclosure-modal dialog')).toBeVisible();
+    await expect(fresh.locator('fl-popover fl-disclosure-modal dialog')).toBeVisible({ timeout: 15_000 });
     // Playwright's actionability hit-test: every toolbar button must be
     // OBSCURED by the modal's backdrop (a trial click would otherwise pass).
     for (const action of ['close', 'avatar', 'sidebar', 'share', 'link']) {

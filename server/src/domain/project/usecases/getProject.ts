@@ -6,7 +6,7 @@
 // without an extra round-trip.
 //
 // Access policy: owner always; team members of the project's team
-// always; everyone else gets `Forbidden`.
+// always; everyone else gets `NotFound` (no existence oracle, PP-24).
 
 import type { Project } from '../Project.js';
 import type { ProjectMember, ProjectRepo } from '../ports/ProjectRepo.js';
@@ -59,7 +59,7 @@ export class GetProject {
       input.userId,
     );
     if (!allowed) {
-      return err(new Forbidden('You do not have access to this project.'));
+      return err(new NotFound('Project not found.'));
     }
 
     const [annotationCount, members] = await Promise.all([

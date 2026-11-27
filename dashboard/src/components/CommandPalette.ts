@@ -105,7 +105,7 @@ export function mountCommandPalette(rootEl: Element): () => void {
 
   // Render the results list
   function renderResults(resultsEl: HTMLElement, items: PaletteItem[]): void {
-    resultsEl.innerHTML = '';
+    resultsEl.replaceChildren();
     currentFiltered = items;
 
     if (items.length === 0) {

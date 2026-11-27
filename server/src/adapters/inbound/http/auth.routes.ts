@@ -12,8 +12,14 @@
 // (task 4.10) constructs the concrete `Login`, `RegisterUser`, … use
 // cases and supplies them here.
 
-import { Router, type Request, type Response } from 'express';
-import { randomBytes } from 'node:crypto';
+import { Router, type Request, type Response , type NextFunction} from 'express';
+import {
+  buildClearCookies,
+  buildCsrfCookie,
+  buildSessionCookie,
+  readSessionCookie,
+  type CsrfBinder,
+} from '../../../middleware/sessionCookies.js';
 import { z } from 'zod';
 
 import type { Login } from '../../../domain/auth/usecases/login.js';
@@ -22,6 +28,7 @@ import type { RefreshToken } from '../../../domain/auth/usecases/refreshToken.js
 import type { VerifyEmail } from '../../../domain/auth/usecases/verifyEmail.js';
 import type { RequestPasswordReset } from '../../../domain/auth/usecases/requestPasswordReset.js';
 import type { CompletePasswordReset } from '../../../domain/auth/usecases/completePasswordReset.js';
+import type { ResendVerification } from '../../../domain/auth/usecases/resendVerification.js';
 import type { Logout } from '../../../domain/auth/usecases/logout.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
 
@@ -32,7 +39,15 @@ export interface AuthRouteDeps {
   verifyEmail: VerifyEmail;
   requestPasswordReset: RequestPasswordReset;
   completePasswordReset: CompletePasswordReset;
+  /** Re-issues the verify_email token + email; omitted → endpoint is a pure no-op. */
+  resendVerification?: ResendVerification;
   logout: Logout;
+  /**
+   * Populates req.user when a valid session/bearer is present (never 401s).
+   * Lets /logout bump the caller's token_version so every outstanding JWT
+   * for that user is revoked, not just the cookie on this browser.
+   */
+  optionalAuth?: (req: Request, res: Response, next: NextFunction) => void;
   /**
    * Whether to omit the `Secure` cookie attribute. The legacy route
    * skipped Secure when `NODE_ENV === 'test'` so the supertest
@@ -40,19 +55,22 @@ export interface AuthRouteDeps {
    * root passes `process.env.NODE_ENV === 'test'` here.
    */
   cookieInsecure?: boolean;
+  /** PP-15: binds the CSRF token to the issued session. Without it a random nonce is used. */
+  csrfBinder?: CsrfBinder;
 }
 
 // --- Zod schemas (re-used by handlers) ------------------------------------
 
 const RegisterBodySchema = z.object({
-  email: z.string().min(1, 'Email is required.'),
-  password: z.string().min(1, 'Password is required.'),
-  name: z.string().min(1, 'Name is required.'),
+  // PP-12: a malformed address would create an unverifiable row + a queued mail.
+  email: z.string().trim().min(1, 'Email is required.').max(254).email('Email address is not valid.'),
+  password: z.string().min(1, 'Password is required.').max(256),
+  name: z.string().trim().min(1, 'Name is required.').max(100),
 });
 
 const LoginBodySchema = z.object({
-  email: z.string().min(1, 'Email is required.'),
-  password: z.string().min(1, 'Password is required.'),
+  email: z.string().min(1, 'Email is required.').max(254),
+  password: z.string().min(1, 'Password is required.').max(256),
 });
 
 const ResetRequestBodySchema = z.object({
@@ -69,27 +87,10 @@ const ResendVerificationBodySchema = z.object({
 
 // --- Cookie helpers --------------------------------------------------------
 
-function buildSessionCookie(token: string, insecure: boolean): string {
-  const parts = [`fl_session=${token}`, 'HttpOnly', 'SameSite=Lax', 'Path=/'];
-  if (!insecure) parts.splice(2, 0, 'Secure');
-  return parts.join('; ');
-}
-
-function buildCsrfCookie(csrf: string): string {
-  return [`fl_csrf=${csrf}`, 'SameSite=Lax', 'Path=/'].join('; ');
-}
-
-function buildClearCookies(): string[] {
-  // Issue both cookies with `Max-Age=0` so the browser deletes them.
-  return [
-    'fl_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0',
-    'fl_csrf=; SameSite=Lax; Path=/; Max-Age=0',
-  ];
-}
-
 // --- Router factory --------------------------------------------------------
 
 export function createAuthRoutes(deps: AuthRouteDeps): Router {
+  const optionalAuth = deps.optionalAuth ?? ((_req: Request, _res: Response, next: NextFunction) => next());
   const {
     login,
     registerUser,
@@ -97,8 +98,10 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
     verifyEmail,
     requestPasswordReset,
     completePasswordReset,
+    resendVerification,
     logout,
     cookieInsecure = false,
+    csrfBinder,
   } = deps;
 
   const router = Router();
@@ -130,10 +133,11 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       sendDomainError(res, result.error);
       return;
     }
-    const { user, token, csrfToken } = result.value;
+    const { user, token } = result.value;
+    const csrfToken = csrfBinder ? csrfBinder.mintForToken(token) : result.value.csrfToken;
     res.setHeader('Set-Cookie', [
       buildSessionCookie(token, cookieInsecure),
-      buildCsrfCookie(csrfToken),
+      buildCsrfCookie(csrfToken, cookieInsecure),
     ]);
     res.status(200).json({ user, token, csrfToken });
   });
@@ -150,20 +154,22 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
   });
 
   // POST /resend-verification --------------------------------------------
-  // No-op semantics: always returns 200 with the generic message so the
-  // endpoint cannot be used to enumerate accounts. Behaviour is identical
-  // to `requestPasswordReset` from the caller's perspective — request a
-  // fresh email if the address is registered, otherwise nothing visible
-  // happens. The legacy implementation also drove the verify-email path
-  // through `RegisterUser`, but the hex use case set is intentionally
-  // narrower for now: this handler validates input and returns the
-  // generic message; reissuing the token will land alongside future
-  // notification work.
+  // For an unverified account this voids older verify tokens, mints a fresh
+  // one and enqueues the email through the durable queue. The response is
+  // IDENTICAL for known, unknown, already-verified and failing inputs so the
+  // endpoint cannot enumerate accounts (F-17).
   router.post('/resend-verification', async (req: Request, res: Response) => {
     const parsed = ResendVerificationBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendZodFailure(res, 'Invalid resend-verification payload.', parsed.error.flatten());
       return;
+    }
+    if (resendVerification) {
+      try {
+        await resendVerification.execute({ email: parsed.data.email });
+      } catch {
+        // Swallow: a failure must look the same as success (no oracle).
+      }
     }
     res.status(200).json({
       message: 'If this email is registered, a verification link has been sent.',
@@ -178,10 +184,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       const value = header.slice(7).trim();
       if (value.length > 0) bearerToken = value;
     }
-    const cookieToken =
-      typeof req.cookies?.fl_session === 'string' && req.cookies.fl_session.length > 0
-        ? (req.cookies.fl_session as string)
-        : null;
+    const cookieToken = readSessionCookie(req.cookies);
     const usedCookie = bearerToken === null && cookieToken !== null;
     const token = bearerToken ?? cookieToken ?? '';
 
@@ -197,10 +200,10 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       // Use a fresh CSRF nonce for the session refresh; the use case's
       // own value is fine but we re-issue here to keep the cookie pair
       // and body in sync without trusting the client's stale token.
-      const csrfToken = randomBytes(32).toString('hex');
+      const csrfToken = csrfBinder ? csrfBinder.mintForToken(fresh) : result.value.csrfToken;
       res.setHeader('Set-Cookie', [
         buildSessionCookie(fresh, cookieInsecure),
-        buildCsrfCookie(csrfToken),
+        buildCsrfCookie(csrfToken, cookieInsecure),
       ]);
       res.status(200).json({ token: fresh, csrfToken });
       return;
@@ -210,14 +213,14 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
   });
 
   // POST /logout ---------------------------------------------------------
-  router.post('/logout', async (req: Request, res: Response) => {
+  router.post('/logout', optionalAuth, async (req: Request, res: Response) => {
     const userId = typeof req.user?.userId === 'string' ? req.user.userId : null;
     const result = await logout.execute({ userId });
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
     }
-    res.setHeader('Set-Cookie', buildClearCookies());
+    res.setHeader('Set-Cookie', buildClearCookies(cookieInsecure));
     res.status(200).json({ success: true });
   });
 

@@ -53,8 +53,11 @@ import {
   __setOverlayEnabledForTests,
   fetchPickerProjects,
   maybeShowProjectPicker,
+  __setPendingInitialResolutionForTests,
+  relayHeartbeatFetch,
   resolveProjectForUrl,
 } from './content';
+import { validateRelayRequest } from './lib/apiRelay';
 import { FlOverlayHost } from './components/OverlayHost';
 
 describe('resolveProjectForUrl — task 30.3 / Req 39.2', () => {
@@ -106,6 +109,38 @@ describe('resolveProjectForUrl — task 30.3 / Req 39.2', () => {
     );
   });
 
+  it('retries a transient by-url failure instead of falling back to the picker', async () => {
+    vi.useFakeTimers();
+    try {
+      lookupProjectMock.mockResolvedValueOnce(null);
+      apiFetchMock
+        .mockRejectedValueOnce(new Error('Could not establish connection. Receiving end does not exist.'))
+        .mockRejectedValueOnce(new Error('Request failed with status 503'))
+        .mockResolvedValueOnce({ projectId: 'p3', pageId: 'page-1' });
+      const pending = resolveProjectForUrl('https://app.acme.test/pricing');
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(pending).resolves.toBe('p3');
+      expect(apiFetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up after the retries on a persistent transient failure', async () => {
+    vi.useFakeTimers();
+    try {
+      lookupProjectMock.mockResolvedValueOnce(null);
+      apiFetchMock.mockRejectedValue(new Error('Failed to fetch'));
+      const pending = resolveProjectForUrl('https://app.acme.test/pricing');
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(pending).resolves.toBeNull();
+      expect(apiFetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+      apiFetchMock.mockReset();
+    }
+  });
+
   it('returns null when the cache misses and the by-url call rejects', async () => {
     lookupProjectMock.mockResolvedValueOnce(null);
     apiFetchMock.mockRejectedValueOnce(new Error('Request failed with status 404'));
@@ -141,8 +176,10 @@ describe('fetchPickerProjects — task 29.4 / Req 38.2', () => {
   });
 
   it('GETs /projects and maps `updatedAt` to the picker`s `lastUsedAt`', async () => {
+    // Real shape: the shared `{ data, pagination }` envelope — NOT
+    // `{ projects }` (ground truth: responses captured from the live API). Single page.
     apiFetchMock.mockResolvedValueOnce({
-      projects: [
+      data: [
         {
           id: 'p1',
           name: 'Alpha',
@@ -162,18 +199,24 @@ describe('fetchPickerProjects — task 29.4 / Req 38.2', () => {
           updatedAt: '2024-04-01T00:00:00Z',
         },
       ],
+      pagination: { page: 1, pageSize: 100, total: 2, totalPages: 1 },
     });
 
     const result = await fetchPickerProjects();
 
-    expect(apiFetchMock).toHaveBeenCalledWith('/projects');
+    // Requests the paginated projects list (max pageSize 100), not a bare
+    // `/projects`.
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    const calledPath = apiFetchMock.mock.calls[0][0] as string;
+    expect(calledPath.split('?')[0]).toBe('/projects');
+    expect(calledPath).toContain('pageSize=100');
     expect(result).toEqual([
       { id: 'p1', name: 'Alpha', lastUsedAt: '2024-06-01T00:00:00Z' },
       { id: 'p2', name: 'Beta', lastUsedAt: '2024-04-01T00:00:00Z' },
     ]);
   });
 
-  it('returns an empty list when the server response has no projects array', async () => {
+  it('returns an empty list when the server response has no data array', async () => {
     apiFetchMock.mockResolvedValueOnce({});
     const result = await fetchPickerProjects();
     expect(result).toEqual([]);
@@ -204,6 +247,17 @@ describe('maybeShowProjectPicker — task 29.4 / Req 38.2', () => {
           }),
         },
       },
+      // F8: the content script asks the service worker (boolean answer)
+      // instead of reading the bearer from storage. Simulate the worker.
+      runtime: {
+        sendMessage: vi.fn((msg: { type: string }, cb: (r: unknown) => void) => {
+          if (msg.type === 'PP_AUTH_STATUS') {
+            cb({ authenticated: typeof chromeStore.pinpoint_auth_token === 'string' });
+          } else {
+            cb(undefined);
+          }
+        }),
+      },
     });
     host = document.createElement('fl-overlay-host') as FlOverlayHost;
     document.body.appendChild(host);
@@ -215,10 +269,35 @@ describe('maybeShowProjectPicker — task 29.4 / Req 38.2', () => {
     __setOverlayEnabledForTests(false);
   });
 
+  it('does not open the picker while the mount-time lookup resolves to a project (toggle race)', async () => {
+    __setOverlayEnabledForTests(true);
+    let settle!: (v: string | null) => void;
+    __setPendingInitialResolutionForTests(new Promise((r) => { settle = r; }));
+    apiFetchMock.mockResolvedValue({ data: [], pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 } });
+    const shown = maybeShowProjectPicker(host);
+    settle('p-registered');
+    await shown;
+    expect(host.pickerVisible).toBe(false);
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    __setPendingInitialResolutionForTests(null);
+  });
+
+  it('still opens the picker when the mount-time lookup finds no project', async () => {
+    __setOverlayEnabledForTests(true);
+    __setPendingInitialResolutionForTests(Promise.resolve(null));
+    apiFetchMock.mockResolvedValueOnce({
+      data: [{ id: 'p1', name: 'Alpha', urls: [], status: 'active', ownerId: 'u1', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-06-01T00:00:00Z' }],
+      pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
+    });
+    await maybeShowProjectPicker(host);
+    expect(host.pickerVisible).toBe(true);
+    __setPendingInitialResolutionForTests(null);
+  });
+
   it('reveals the picker with the fetched projects when overlay is enabled and the user is signed in', async () => {
     __setOverlayEnabledForTests(true);
     apiFetchMock.mockResolvedValueOnce({
-      projects: [
+      data: [
         {
           id: 'p1',
           name: 'Alpha',
@@ -229,16 +308,24 @@ describe('maybeShowProjectPicker — task 29.4 / Req 38.2', () => {
           updatedAt: '2024-06-01T00:00:00Z',
         },
       ],
+      pagination: { page: 1, pageSize: 100, total: 1, totalPages: 1 },
     });
 
     await maybeShowProjectPicker(host);
 
-    expect(apiFetchMock).toHaveBeenCalledWith('/projects');
+    const calledPath = apiFetchMock.mock.calls[0][0] as string;
+    expect(calledPath.split('?')[0]).toBe('/projects');
+    expect(calledPath).toContain('pageSize=100');
     expect(host.pickerVisible).toBe(true);
     const picker = host.shadowRoot!.querySelector('fl-project-picker') as HTMLElement & {
       projects: ReadonlyArray<{ id: string; name: string; lastUsedAt: string }>;
     };
     expect(picker.projects.map((p) => p.id)).toEqual(['p1']);
+    // F8: signed-in state came from the worker, not a storage read of the bearer.
+    const storageGet = (globalThis as unknown as {
+      chrome: { storage: { local: { get: ReturnType<typeof vi.fn> } } };
+    }).chrome.storage.local.get;
+    expect(storageGet).not.toHaveBeenCalledWith('pinpoint_auth_token');
   });
 
   it('does NOT show the picker when the overlay is disabled', async () => {
@@ -263,7 +350,10 @@ describe('maybeShowProjectPicker — task 29.4 / Req 38.2', () => {
   it('does NOT show the picker when the host already has a Project bound', async () => {
     __setOverlayEnabledForTests(true);
     host.projectId = 'project-existing';
-    apiFetchMock.mockResolvedValueOnce({ projects: [] });
+    apiFetchMock.mockResolvedValueOnce({
+      data: [],
+      pagination: { page: 1, pageSize: 100, total: 0, totalPages: 1 },
+    });
 
     await maybeShowProjectPicker(host);
 
@@ -604,5 +694,30 @@ describe('content script bootstrap guard — task 38.3 / Req 46.3', () => {
     const host = shadowHost();
     expect(host).not.toBeNull();
     expect(host!.shadowRoot!.querySelector('fl-overlay-host')).not.toBeNull();
+  });
+});
+
+
+describe('relayHeartbeatFetch', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('relays GET /health — a method the relay allow-list accepts (HEAD is rejected)', async () => {
+    let sent: { method: string; path: string } | undefined;
+    vi.stubGlobal('chrome', {
+      runtime: {
+        lastError: undefined,
+        sendMessage: (msg: { method: string; path: string }, cb: (r: unknown) => void) => {
+          sent = msg;
+          cb({ ok: true, status: 200, statusText: 'OK', headers: {}, bodyText: '{}' });
+        },
+      },
+    });
+    const res = await relayHeartbeatFetch('ignored');
+    expect(res.ok).toBe(true);
+    expect(sent?.method).toBe('GET');
+    expect(sent?.path).toBe('/health');
+    expect(validateRelayRequest(sent!, 'http://localhost:3001', '/api/v1')).toBeNull();
   });
 });

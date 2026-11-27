@@ -25,12 +25,16 @@
 // covered by the layering exception. No other file should mirror its
 // import surface.
 
+import { attachWorkflowEngine } from '../services/workflowEngine.js';
+import { createSlackWiring } from '../services/integrations/slackWiring.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRequire } from 'node:module';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
+import { createMetrics } from '../infrastructure/metrics.js';
+import { installTenantContext, runAsSystem, runWithStore, systemScope } from '../infrastructure/tenantContext.js';
 import rateLimit from 'express-rate-limit';
 import { Server as HttpServer, createServer } from 'http';
 import knex, { type Knex } from 'knex';
@@ -40,6 +44,7 @@ import { Server as SocketIoServer } from 'socket.io';
 // --- extracted composition modules (Mission E2) --------------------------
 import { Config, loadConfigFromEnv } from './config.js';
 import { buildAdapters } from './adapters.js';
+import { createScreenshotTokenRoutes } from '../adapters/inbound/http/screenshots.routes.js';
 import { buildUseCases } from './usecases.js';
 
 // --- domain (billing — inline because feature-flagged) -------------------
@@ -51,15 +56,19 @@ import {
   CheckGracePeriods,
 } from '../domain/billing/usecases/billing.js';
 import { DispatchWebhook } from '../domain/webhook/usecases/webhooks.js';
+import { DEFAULT_GUIDELINES } from '../domain/guideline/DEFAULT_GUIDELINES.js';
 
 // --- outbound adapters (only those still directly used here) -------------
-import { SocketIoEventBus } from '../adapters/outbound/socket/SocketIoEventBus.js';
+import { SocketIoEventBus, SESSION_REVOKED_EVENT } from '../adapters/outbound/socket/SocketIoEventBus.js';
 import { WebhookDispatchingEventBus } from '../adapters/outbound/socket/WebhookDispatchingEventBus.js';
 import { StripeBillingProvider } from '../adapters/outbound/stripe/StripeBillingProvider.js';
+import { PgBillingRepo } from '../adapters/outbound/postgres/PgBillingRepo.js';
 import { PinoLogger, pino, pinoHttp } from '../adapters/outbound/logger/PinoLogger.js';
+import { buildPinoOptions } from '../logger.js';
 
 // --- inbound adapters ----------------------------------------------------
 import { mountInboundHttp, type InboundHttpDeps } from '../adapters/inbound/http/index.js';
+import { createAuthMiddleware } from '../adapters/inbound/http/auth.middleware.js';
 import {
   installCollabGateway,
 } from '../adapters/inbound/websocket/collab.gateway.js';
@@ -75,18 +84,31 @@ import {
   createIntegrationRefreshWorker,
   type IntegrationRefreshWorker,
 } from '../adapters/inbound/workers/integrationRefreshWorker.js';
+import {
+  createWebhookDeliveryWorker,
+  type WebhookDeliveryWorker,
+} from '../adapters/inbound/workers/webhookDeliveryWorker.js';
 
 // --- request-pipeline middleware ----------------------------------------
-import { authRateLimiter } from '../middleware/authRateLimit.js';
-import { csrfMiddleware } from '../middleware/csrf.js';
+import { authRateLimiter, loginRateLimiter } from '../middleware/authRateLimit.js';
+import { createErrorHandler, uuidPathGuard } from './httpGuards.js';
+import { createCsrfMiddleware } from '../middleware/csrf.js';
+import { createAuditTrail } from '../middleware/auditTrail.js';
+import { createCsrfBinder } from '../middleware/sessionCookies.js';
 import { legacyApiCatchAll } from '../middleware/legacyApi.js';
 import { securityHeaders } from '../middleware/securityHeaders.js';
 import { inputSanitizer } from '../middleware/inputSanitizer.js';
 import { requestId } from '../middleware/requestId.js';
 import { compress } from '../middleware/compress.js';
 import { cacheMiddleware } from '../middleware/cache.js';
+import { registerPgTypeParsers } from './pgTypes.js';
 import { createPlanLimitsMiddleware } from '../middleware/planLimits.js';
-import { tenantRateLimit, type RedisRateLimitClient } from '../middleware/tenantRateLimit.js';
+import { tenantRateLimit, orgIdFromVerifiedToken, type RedisRateLimitClient } from '../middleware/tenantRateLimit.js';
+import { createWidgetCors } from '../middleware/widgetCors.js';
+import { createWidgetRoutes } from '../adapters/inbound/http/widget.routes.js';
+import { createProxyRoutes } from '../adapters/inbound/http/proxy.routes.js';
+import { createWidgetAssetRoutes } from '../adapters/inbound/http/widgetAsset.routes.js';
+import { createDeliverRoutes } from '../adapters/inbound/http/deliver.routes.js';
 import { createRedisClients, createRedisRateLimitStore } from '../infrastructure/redis.js';
 import { createAdapter } from '@socket.io/redis-adapter';
 
@@ -119,9 +141,13 @@ export interface Container {
 
 export function buildContainer(config: Config): Container {
   // ---- Infrastructure singletons --------------------------------------
-  const pinoInstance = pino({ level: config.logLevel });
+  // Redacting config (F-04): the same instance feeds pino-http, so request
+  // headers (authorization, cookie, x-csrf-token, x-project-key) and response
+  // set-cookie never reach the log stream.
+  const pinoInstance = pino(buildPinoOptions(config.logLevel));
   const logger = new PinoLogger(pinoInstance);
 
+  registerPgTypeParsers();
   const db: Knex = knex({
     client: 'pg',
     connection: {
@@ -141,6 +167,9 @@ export function buildContainer(config: Config): Container {
     },
     acquireConnectionTimeout: 10000,
   });
+  // PP-08: push the AsyncLocalStorage tenant context into every pooled
+  // connection so PostgreSQL RLS policies see app.current_org_id / app.system.
+  installTenantContext(db);
 
   const s3ClientConfig: ConstructorParameters<typeof S3Client>[0] = {
     region: config.s3.region,
@@ -165,6 +194,9 @@ export function buildContainer(config: Config): Container {
 
   // ---- HTTP / Socket.IO infrastructure (so we can build EventBus) -----
   const app = express();
+  // Behind the ALB every client shares the proxy's IP unless Express is told
+  // how many hops to trust. TRUST_PROXY (default false) → `1` on ECS.
+  app.set('trust proxy', config.trustProxy);
   const httpServer = createServer(app);
   // When corsOrigin is '*', use `true` to reflect the request's Origin header back.
   // A literal '*' with credentials is invalid per the Fetch spec — browsers reject
@@ -186,11 +218,38 @@ export function buildContainer(config: Config): Container {
   const socketEventBus = new SocketIoEventBus(io);
 
   // Wrap the Socket.IO bus with webhook dispatch + activity recording.
-  const dispatchWebhook = new DispatchWebhook({ webhookRepo: adapters.webhookRepo });
+  // DispatchWebhook now only ENQUEUES durable delivery rows (Mission A5b); the
+  // signed HTTP delivery + retry runs in the webhook delivery worker below, so
+  // a crash mid-backoff can't drop a delivery.
+  const dispatchWebhook = new DispatchWebhook({
+    webhookRepo: adapters.webhookRepo,
+  });
   const eventBus = new WebhookDispatchingEventBus(socketEventBus, dispatchWebhook, logger, db);
+  // PP-02: any token_version bump (logout, reset, revoke-sessions, removal) cuts live sockets.
+  const revokeUserSockets = (userId: string): void =>
+    eventBus.emit({ type: SESSION_REVOKED_EVENT, room: `user:${userId}`, payload: {} });
+  adapters.userRepo.onSessionRevoked = revokeUserSockets;
 
   // ---- Build domain use cases (delegated to usecases.ts) --------------
-  const useCases = buildUseCases({ adapters, config, eventBus, logger, db });
+  // Slack: auto-notify on new annotations (durable queue) + the channel deliverer.
+  const slackWiring = createSlackWiring({
+    db,
+    integrationRepo: adapters.integrationRepo,
+    notificationQueue: adapters.notificationQueue,
+    logger,
+    appUrl: config.appUrl,
+    egressOptions: { allowHttp: config.nodeEnv !== 'production' && !config.exposed },
+  });
+  slackWiring.attach(eventBus);
+  attachWorkflowEngine(eventBus, db, logger);
+  const useCases = buildUseCases({
+    adapters,
+    config,
+    eventBus,
+    logger,
+    db,
+    channelDeliverers: slackWiring.channelDeliverers,
+  });
 
   // ---- Helper closures (still needed for inbound deps) ----------------
   const resolvePageUrls = async (
@@ -211,11 +270,12 @@ export function buildContainer(config: Config): Container {
     const Stripe = esmRequire('stripe');
     const stripeInstance = new Stripe(config.stripe.secretKey);
     const billingProvider = new StripeBillingProvider(stripeInstance, config.stripe.webhookSecret);
-    const billingDeps = { db, billingProvider, proPriceId: config.stripe.proPriceId };
+    const billingRepo = new PgBillingRepo(db);
+    const billingDeps = { billingRepo, billingProvider, proPriceId: config.stripe.proPriceId };
     const createCheckoutSessionUc = new CreateCheckoutSession(billingDeps);
     const handleStripeWebhookUc = new HandleStripeWebhook(billingDeps);
     const getBillingPortalUc = new GetBillingPortal(billingDeps);
-    const getUsageSummaryUc = new GetUsageSummary({ db });
+    const getUsageSummaryUc = new GetUsageSummary({ billingRepo });
     billingRouteDeps = {
       authMiddleware: (_req, _res, next) => next(),
       createCheckoutSession: createCheckoutSessionUc,
@@ -229,22 +289,52 @@ export function buildContainer(config: Config): Container {
   // ---- Express middleware --------------------------------------------
   const httpLogger = pinoHttp({ logger: pinoInstance });
   app.use(httpLogger);
+  // Prometheus request metrics; `/metrics` itself is mounted below.
+  const metrics = createMetrics({ token: config.metricsToken, collectDefaults: config.nodeEnv !== 'test' });
+  app.use(metrics.middleware);
   app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   }));
-  app.use(
-    cors({
-      origin: corsOriginResolved,
-      credentials: true,
-    }),
-  );
+  // Dedicated credential-free CORS for the public widget surface (A2).
+  // Mounted AHEAD of the global credentialed CORS so the widget path is
+  // governed only by per-key allowed_origins, never the dashboard policy.
+  app.use('/api/v1/widget', createWidgetCors({ apiKeyRepo: adapters.apiKeyRepo }));
+  const globalCors = cors({
+    origin: corsOriginResolved,
+    credentials: true,
+  });
+  app.use((req, res, next) => {
+    // The widget surface is governed solely by the credential-free widget
+    // CORS above; the global credentialed dashboard policy must not clobber
+    // its per-key Access-Control-Allow-Origin header.
+    if (req.path === '/api/v1/widget' || req.path.startsWith('/api/v1/widget/')) {
+      next();
+      return;
+    }
+    // The public widget bundle (`/widget/*.js`) is loaded via <script> from
+    // arbitrary customer origins: wildcard, credential-free CORS only.
+    if (req.path.startsWith('/widget/')) {
+      next();
+      return;
+    }
+    globalCors(req, res, next);
+  });
   app.use(express.json({
     verify: (req, _res, buf) => {
       (req as express.Request).rawBody = buf;
     },
   }));
   app.use(cookieParser());
+  // PP-08: open the per-request tenant scope AFTER the body parser (stream
+  // callbacks would otherwise drop the AsyncLocalStorage store). The org comes
+  // from the signed session token (pure crypto, no DB); the auth layer and the
+  // pre-tenant lookups refine it (setCurrentOrg / runAsSystem). Starts with no
+  // `system` flag, so anything not explicitly granted fails closed.
+  const resolveTokenOrg = orgIdFromVerifiedToken(adapters.tokenIssuer);
+  app.use((req, _res, next) => {
+    runWithStore({ orgId: resolveTokenOrg(req) ?? null, system: false }, next);
+  });
   app.use(compress(1024));
   app.use(requestId);
   app.use(securityHeaders);
@@ -252,7 +342,11 @@ export function buildContainer(config: Config): Container {
 
   const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    // Per-IP ceiling on /api/*. Default 100/15min; raise via
+    // API_RATE_LIMIT_MAX for load/E2E environments that run many
+    // requests from one IP. The per-tenant limiter and the strict auth
+    // limiter still apply on top.
+    max: config.apiRateLimitMax,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -264,20 +358,39 @@ export function buildContainer(config: Config): Container {
   });
   app.use('/api/', generalLimiter);
 
-  app.use('/api/v1', csrfMiddleware);
+  // PP-15: CSRF tokens are HMAC-bound to the session (user id + session start).
+  const csrfBinder = createCsrfBinder({ secret: config.jwt.secret, tokenIssuer: adapters.tokenIssuer });
+  app.use('/api/v1', createCsrfMiddleware({ tokenIssuer: adapters.tokenIssuer, apiKeyRepo: adapters.apiKeyRepo, binder: csrfBinder }));
+  // Malformed UUID path ids → 400 instead of a Postgres 22P02 → 500 (F-14).
+  app.use('/api/v1', uuidPathGuard);
+  // PP-22: security audit trail (auth events, exports, sharing, integrations, invitations, roles).
+  app.use('/api/v1', createAuditTrail({ db, tokenIssuer: adapters.tokenIssuer }));
 
   const redisRateLimitClient: RedisRateLimitClient | undefined = redisClients
     ? createRedisRateLimitStore(redisClients.primary)
     : undefined;
-  app.use('/api/v1', tenantRateLimit({}, redisRateLimitClient));
+  // Runs before the per-router auth middleware, so the tenant is taken from the
+  // verified session token itself (F-22), not from `req.user`.
+  app.use(
+    '/api/v1',
+    tenantRateLimit(
+      {
+        maxTokens: config.tenantRateLimitMax,
+        refillRate: config.tenantRateLimitMax / (60 * 60 * 1000),
+      },
+      redisRateLimitClient,
+      orgIdFromVerifiedToken(adapters.tokenIssuer),
+    ),
+  );
 
-  // Response caching on hot read-only endpoints (Enhancement 3).
-  app.use('/api/v1/projects/:id/analytics', cacheMiddleware(60_000));
-  app.use('/api/v1/guidelines', cacheMiddleware(300_000));
+  // Response caching is limited to the public, tenant-independent OpenAPI
+  // document. Tenant data (analytics, guidelines, ...) must NEVER be cached
+  // here: this runs before authentication and keys by URL only, so a cached
+  // body would be replayed to other orgs and anonymous callers.
   app.use('/api/v1/docs.json', cacheMiddleware(3_600_000));
 
   // Strict per-IP+email limiter for auth-sensitive endpoints (Req 19.1).
-  app.post('/api/v1/auth/login', authRateLimiter);
+  app.post('/api/v1/auth/login', loginRateLimiter);
   app.post('/api/v1/auth/register', authRateLimiter);
   app.post('/api/v1/auth/reset-password', authRateLimiter);
   app.post('/api/v1/auth/resend-verification', authRateLimiter);
@@ -289,16 +402,18 @@ export function buildContainer(config: Config): Container {
 
   // ---- Mount inbound HTTP adapter ------------------------------------
   const inboundHttpDeps: InboundHttpDeps = {
-    auth: { tokenIssuer: adapters.tokenIssuer },
+    auth: { tokenIssuer: adapters.tokenIssuer, apiKeyRepo: adapters.apiKeyRepo },
     authRoutes: {
       login: useCases.login,
       registerUser: useCases.registerUser,
       refreshToken: useCases.refreshToken,
       verifyEmail: useCases.verifyEmail,
       requestPasswordReset: useCases.requestPasswordReset,
+      resendVerification: useCases.resendVerification,
       completePasswordReset: useCases.completePasswordReset,
       logout: useCases.logout,
       cookieInsecure: config.cookieInsecure,
+      csrfBinder,
     },
     projectsRoutes: {
       createProject: useCases.createProject,
@@ -322,7 +437,9 @@ export function buildContainer(config: Config): Container {
       annotationRepo: adapters.annotationRepo,
       resolvePageUrls,
       buildScreenshotUrl: (key) => adapters.screenshotStore.buildScreenshotUrl(key),
+      presignScreenshotUrl: (key) => adapters.screenshotStore.presignScreenshotUrl(key),
       fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
+      fetchMarkupDocument: (key) => adapters.screenshotStore.fetchMarkupDocument(key),
       applyRedactionBlur: (buffer, rects) => applyRedactionBlurImpl(buffer, rects),
       db,
     },
@@ -342,6 +459,11 @@ export function buildContainer(config: Config): Container {
     sharedLinkRoutes: {
       createSharedLink: useCases.createSharedLink,
       verifyLinkPassword: useCases.verifyLinkPassword,
+      sharedLinkRepo: adapters.sharedLinkRepo,
+      annotationRepo: adapters.annotationRepo,
+      pageRepo: adapters.pageRepo,
+      accessSecret: config.jwt.secret,
+      cookieInsecure: config.cookieInsecure,
     },
     guidelinesRoutes: {
       listGuidelines: useCases.listGuidelines,
@@ -364,12 +486,14 @@ export function buildContainer(config: Config): Container {
       userNotificationRepo: adapters.userNotificationRepo,
     },
     orgRoutes: {
+      cookieInsecure: config.cookieInsecure,
       inviteToOrg: useCases.inviteToOrg,
       acceptInvitation: useCases.acceptInvitation,
       membershipRepo: adapters.membershipRepo,
       orgRepo: adapters.orgRepo,
       userRepo: adapters.userRepo,
       tokenIssuer: adapters.tokenIssuer,
+      revokeUserSockets,
       db,
     },
     apiKeysRoutes: {
@@ -379,15 +503,20 @@ export function buildContainer(config: Config): Container {
     feedbackRoutes: {
       annotationRepo: adapters.annotationRepo,
       db,
+      eventBus,
     },
     heatmapRoutes: {
       db,
     },
     premiumRoutes: {
       db,
+      voterHashSecret: config.jwt.secret,
+      ...(redisRateLimitClient ? { rateLimitRedis: redisRateLimitClient } : {}),
     },
     clientPortalRoutes: {
       db,
+      mailer: adapters.mailer,
+      appUrl: config.appUrl,
     },
     workflowRoutes: {
       db,
@@ -401,6 +530,8 @@ export function buildContainer(config: Config): Container {
       callbackBaseUrl: config.oauth.callbackBaseUrl,
       appUrl: config.appUrl,
       cookieInsecure: config.cookieInsecure,
+      stateSecret: config.oauthStateSecret,
+      csrfBinder,
     } : undefined,
     billingRoutes: billingRouteDeps ? {
       createCheckoutSession: billingRouteDeps.createCheckoutSession,
@@ -411,18 +542,25 @@ export function buildContainer(config: Config): Container {
     } : undefined,
     integrationsRoutes: {
       integrationRepo: adapters.integrationRepo,
-      oauthStateSecret: config.jwt.secret,
+      // Dedicated HMAC key, not the JWT signing key (key separation).
+      oauthStateSecret: config.oauthStateSecret,
+      oauthProviders: config.integrationOAuth,
+      callbackBaseUrl: config.appUrl,
+      cookieInsecure: config.cookieInsecure,
     },
     guestFeedbackRoutes: {
-      annotationRepo: adapters.annotationRepo,
       sharedLinkRepo: adapters.sharedLinkRepo,
-      pageRepo: adapters.pageRepo,
+      createGuestAnnotation: useCases.createGuestAnnotation,
+      accessSecret: config.jwt.secret,
+      ...(redisRateLimitClient ? { rateLimitRedis: redisRateLimitClient } : {}),
     },
     activityRoutes: {
       db,
     },
     bulkRoutes: {
       db,
+      annotationRepo: adapters.annotationRepo,
+      eventBus,
     },
     triageRoutes: {
       db,
@@ -432,6 +570,69 @@ export function buildContainer(config: Config): Container {
     },
   };
   mountInboundHttp(app, inboundHttpDeps);
+  
+    // Public proxy review-link surface (Mission C1). Mounted OUTSIDE
+    // `/api/v1` (no auth) at `GET /review/:linkId`: server-side-fetches the
+    // project's target page via the SSRF egress guard and returns it wrapped
+    // with an injected <base>, strict CSP, and the guest-feedback overlay.
+    app.use('/review', systemScope);
+    app.use(
+      '/review',
+      createProxyRoutes({
+        sharedLinkRepo: adapters.sharedLinkRepo,
+        pageRepo: adapters.pageRepo,
+        egressOptions: { allowHttp: config.nodeEnv !== 'production' && !config.exposed },
+        // The dashboard (possibly a different origin in production) frames it.
+        frameAncestors: config.corsOrigin === '*' ? [] : [config.corsOrigin],
+      }),
+    );
+
+  // Public widget bundle asset (Mission B3). Serves the Vite-built embed SDK
+  // at `GET /widget/pinpoint-widget.js` with a wildcard CORS header (public,
+  // credential-free script) so the Onboarding snippet works from any host
+  // page. Mounted OUTSIDE `/api/v1` so the credentialed dashboard CORS policy
+  // never governs it. Resolves the bundle from WIDGET_DIST_DIR (default
+  // <repo>/widget/dist); 404s cleanly when the bundle has not been built.
+  app.use('/widget', createWidgetAssetRoutes());
+
+  // Public widget feedback surface (A1/A3). Project-bound pk_widget_ keys;
+  // fail-closed per-key Redis rate limit + daily quota. Mounted directly
+  // (outside mountInboundHttp) because its CORS/auth model is bespoke.
+  app.use('/api/v1/widget', systemScope);
+  app.use(
+    '/api/v1/widget',
+    createWidgetRoutes({
+      apiKeyRepo: adapters.apiKeyRepo,
+      createGuestAnnotation: useCases.createGuestAnnotation,
+      ...(redisRateLimitClient ? { rateLimitRedis: redisRateLimitClient } : {}),
+    }),
+  );
+
+  // One-click annotation → task delivery (C4). Mounted directly (outside
+  // mountInboundHttp) so it can own its own TaskProvider registry; the
+  // adapters route every outbound call through the SSRF egress guard
+  // (safeFetch) and operate on the SecretBox-decrypted integration tokens.
+  app.use(
+    '/api/v1/annotations',
+    createDeliverRoutes({
+      authMiddleware: createAuthMiddleware({ tokenIssuer: adapters.tokenIssuer }),
+      integrationRepo: adapters.integrationRepo,
+      db,
+      appUrl: config.appUrl,
+    }),
+  );
+
+  // Local-disk screenshot driver: serves HMAC-signed, expiring screenshot URLs
+  // (GET /api/v1/screenshots/:token). Not mounted for the S3 driver.
+  if (adapters.screenshotTokenVerifier) {
+    app.use(
+      '/api/v1/screenshots',
+      createScreenshotTokenRoutes({
+        verifyToken: adapters.screenshotTokenVerifier,
+        fetchScreenshotBuffer: (key) => adapters.screenshotStore.fetchScreenshot(key),
+      }),
+    );
+  }
 
   // ---- Health endpoints (Mission D2: Enhanced Health & Readiness) ------
 
@@ -514,6 +715,10 @@ export function buildContainer(config: Config): Container {
     });
   });
 
+  app.get('/metrics', (req, res) => {
+    void metrics.handler(req, res);
+  });
+
   app.get('/health', async (_req, res) => {
     const result = await performReadinessCheck();
     res.status(result.httpStatus).json({
@@ -545,21 +750,14 @@ export function buildContainer(config: Config): Container {
   app.use('/api', legacyApiCatchAll);
 
   // ---- Global error handler ------------------------------------------
-  app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    const code = (err as { code?: string }).code ?? 'INTERNAL_ERROR';
-    const message = err.message || 'An unexpected error occurred.';
-    req.log?.error({ err, code, message }, 'Unhandled error');
-    const body: { error: { code: string; message: string; details?: { stack?: string } } } = {
-      error: { code, message },
-    };
-    if (config.nodeEnv !== 'production' && err.stack) {
-      body.error.details = { stack: err.stack };
-    }
-    res.status(500).json(body);
-  });
+  // Generic 5xx body always; stack only in non-exposed development (F-14).
+  app.use(createErrorHandler({ nodeEnv: config.nodeEnv, exposed: config.exposed }));
 
   // ---- Inbound WebSocket gateway --------------------------------------
-  installCollabGateway(io, { tokenIssuer: adapters.tokenIssuer, db });
+  installCollabGateway(io, { tokenIssuer: adapters.tokenIssuer, db,
+    // Cookie-authenticated sockets only from the dashboard origin (CSWSH guard).
+    trustedCookieOrigins: config.corsOrigin === '*' ? [] : config.corsOrigin.split(',').map((o) => o.trim()).filter(Boolean),
+  });
 
   // ---- Notification worker -------------------------------------------
   const worker = createNotificationWorker({
@@ -586,6 +784,17 @@ export function buildContainer(config: Config): Container {
     logger,
   });
 
+  // ---- Webhook delivery worker (Mission A5b) --------------------------
+  // Consumes the durable webhook_deliveries queue: claims pending rows with
+  // FOR UPDATE SKIP LOCKED, signs + POSTs them (standard-webhooks), retries
+  // with backoff, and marks sent/failed. Reclaims pending rows after restart.
+  const webhookDeliveryWorker: WebhookDeliveryWorker = createWebhookDeliveryWorker({
+    dispatchWebhookDeliveries: useCases.dispatchWebhookDeliveries,
+    logger,
+    intervalMs: config.notificationIntervalMs,
+    batchSize: config.notificationBatchSize,
+  });
+
   // ---- Lifecycle ------------------------------------------------------
   let started = false;
   let stopped = false;
@@ -593,6 +802,21 @@ export function buildContainer(config: Config): Container {
   const start = async (): Promise<void> => {
     if (started) return;
     started = true;
+
+    // Seed Nielsen's 10 default guidelines once (GAP 1). Idempotent: skip
+    // when defaults already exist so restarts never duplicate them.
+    try {
+      // Boot-time seeding has no request tenant: run it in the trusted system
+      // context, or RLS rejects the insert on a fresh database (PP-08).
+      await runAsSystem(async () => {
+        if (!(await adapters.guidelineRepo.hasDefaults())) {
+          await adapters.guidelineRepo.insertMany([...DEFAULT_GUIDELINES]);
+          logger.info({ count: DEFAULT_GUIDELINES.length }, 'Seeded default guidelines');
+        }
+      });
+    } catch (err) {
+      logger.error({ err }, 'Failed to seed default guidelines');
+    }
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
         httpServer.removeListener('listening', onListening);
@@ -600,16 +824,21 @@ export function buildContainer(config: Config): Container {
       };
       const onListening = (): void => {
         httpServer.removeListener('error', onError);
-        logger.info({ port: config.port }, 'Pinpoint API server listening');
+        logger.info({ port: config.port, host: config.host }, 'Pinpoint API server listening');
         resolve();
       };
       httpServer.once('error', onError);
       httpServer.once('listening', onListening);
-      httpServer.listen(config.port);
+      httpServer.listen(config.port, config.host);
     });
-    worker.start();
-    digestWorker?.start();
-    integrationRefreshWorker.start();
+    // Background workers are trusted server code that scan across tenants;
+    // timers inherit the async context, so every tick runs as system.
+    runAsSystem(() => {
+      worker.start();
+      digestWorker?.start();
+      integrationRefreshWorker.start();
+      webhookDeliveryWorker.start();
+    });
   };
 
   const stop = async (): Promise<void> => {
@@ -618,12 +847,28 @@ export function buildContainer(config: Config): Container {
     await worker.stop();
     if (digestWorker) await digestWorker.stop();
     await integrationRefreshWorker.stop();
-    await new Promise<void>((resolve) => {
-      io.close(() => resolve());
+    await webhookDeliveryWorker.stop();
+    // Stop accepting new requests and drop idle keep-alive sockets so the
+    // close can complete; in-flight requests get until the deadline below.
+    httpServer.closeIdleConnections?.();
+    // `io.close()` also closes the attached HTTP server, so a separate
+    // `httpServer.close()` would throw ERR_SERVER_NOT_RUNNING (exit 1, DB
+    // pool left open). Wait for the server's own 'close' instead.
+    const serverClosed = new Promise<void>((resolve) => {
+      if (!httpServer.listening) return resolve();
+      httpServer.once('close', () => resolve());
     });
-    await new Promise<void>((resolve, reject) => {
-      httpServer.close((err) => (err ? reject(err) : resolve()));
+    io.close();
+    const deadline = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        httpServer.closeAllConnections?.();
+        resolve();
+      }, 10_000).unref();
     });
+    await Promise.race([serverClosed, deadline]);
+    if (redisClients) {
+      await Promise.allSettled([redisClients.primary.quit(), redisClients.subscriber.quit()]);
+    }
     await db.destroy();
   };
 

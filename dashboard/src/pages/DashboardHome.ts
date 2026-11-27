@@ -85,11 +85,11 @@ export function mountDashboardHome(
   function paintViewToggle(): void {
     if (listBtn) {
       listBtn.style.fontWeight = currentView === 'list' ? '600' : '400';
-      listBtn.style.color = currentView === 'list' ? '#4f46e5' : '#666';
+      listBtn.style.color = currentView === 'list' ? 'var(--pp-accent-text)' : 'var(--pp-text-secondary)';
     }
     if (cardsBtn) {
       cardsBtn.style.fontWeight = currentView === 'cards' ? '600' : '400';
-      cardsBtn.style.color = currentView === 'cards' ? '#4f46e5' : '#666';
+      cardsBtn.style.color = currentView === 'cards' ? 'var(--pp-accent-text)' : 'var(--pp-text-secondary)';
     }
   }
 
@@ -182,6 +182,8 @@ export function mountDashboardHome(
     if (active.length === 0) {
       emptySection.hidden = false;
       // Replace template empty-state content with the rich EmptyState component
+      // The component draws its own dashed frame; drop the template's.
+      emptySection.removeAttribute('style');
       emptySection.replaceChildren(createEmptyState('no-projects'));
       recentSection.hidden = true;
       return;
@@ -221,7 +223,7 @@ export function mountDashboardHome(
     const link = row.querySelector<HTMLAnchorElement>('[data-role="recent-link"]');
     if (link) {
       attr(link, 'href', `/projects/${project.id}`);
-      attr(link, 'aria-label', `Open project ${project.name}`);
+      // Accessible name comes from the visible name + URL (WCAG 2.5.3).
     }
 
     if (!url) {

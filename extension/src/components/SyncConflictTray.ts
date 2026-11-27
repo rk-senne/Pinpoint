@@ -155,6 +155,7 @@ const TRAY_CSS = `
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${TRAY_CSS}</style>
     <section
@@ -175,6 +176,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-conflict-row" role="listitem">
       <div class="fl-conflict-row-head">

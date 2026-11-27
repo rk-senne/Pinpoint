@@ -36,6 +36,7 @@
  */
 import type { Annotation, AnnotationStatus } from '@pinpoint/shared';
 import { adoptStyles } from '../styles/sharedStyleSheet';
+import { upgradeShadowTree } from '../lib/upgradeShadowTree';
 import { withBoundary } from '../lib/withBoundary';
 import './SyncConflictTray';
 
@@ -49,6 +50,26 @@ export interface AnnotationSelectEventDetail {
 }
 
 type SidebarTab = 'active' | 'resolved';
+
+const COLLAPSED_KEY = 'pinpoint:sidebar-collapsed';
+
+/** Per-tab (sessionStorage) persistence; storage can throw on locked-down pages. */
+function readCollapsed(): boolean {
+  try {
+    return window.sessionStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeCollapsed(value: boolean): void {
+  try {
+    if (value) window.sessionStorage.setItem(COLLAPSED_KEY, '1');
+    else window.sessionStorage.removeItem(COLLAPSED_KEY);
+  } catch {
+    /* storage unavailable — state simply isn't remembered */
+  }
+}
 
 /**
  * Active = `status` is `'active'` or `'in_progress'`. Resolved = `'resolved'`.
@@ -76,6 +97,38 @@ const PANEL_CSS = `
   padding: 12px 16px;
 }
 .fl-sidebar-header strong { font-size: 14px; }
+.fl-sidebar-header-actions { display: flex; align-items: center; gap: 2px; }
+.fl-collapse-btn, .fl-rail-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fl-collapse-btn:hover, .fl-rail-btn:hover, .fl-close-btn:hover { background: #f0f0f0; }
+.fl-collapse-btn:focus-visible, .fl-rail-btn:focus-visible, .fl-close-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+.fl-sidebar-rail { display: none; }
+.fl-rail-badge {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 12px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .fl-close-btn {
   background: none;
   border: none;
@@ -84,6 +137,9 @@ const PANEL_CSS = `
   line-height: 1;
   color: inherit;
   padding: 4px;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
 }
 .fl-sidebar-list {
   list-style: none;
@@ -93,7 +149,7 @@ const PANEL_CSS = `
 .fl-sidebar-empty {
   padding: 24px;
   text-align: center;
-  color: #999;
+  color: #6b6b6b;
   font-size: 13px;
 }
 .fl-sidebar-row-head {
@@ -131,17 +187,27 @@ const PANEL_CSS = `
  */
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${PANEL_CSS}</style>
     <div class="fl-sidebar" data-pinpoint="sidebar" part="sidebar">
       <div class="fl-sidebar-header">
         <strong>Annotations</strong>
-        <button
-          type="button"
-          class="fl-close-btn"
-          part="close"
-          aria-label="Close sidebar"
-        >✕</button>
+        <div class="fl-sidebar-header-actions">
+          <button
+            type="button"
+            class="fl-collapse-btn"
+            part="collapse"
+            aria-label="Collapse sidebar"
+            aria-expanded="true"
+          ><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+          <button
+            type="button"
+            class="fl-close-btn"
+            part="close"
+            aria-label="Close sidebar"
+          >✕</button>
+        </div>
       </div>
       <fl-sync-conflict-tray part="conflict-tray"></fl-sync-conflict-tray>
       <div class="fl-sidebar-tabs" role="tablist">
@@ -161,6 +227,16 @@ const TEMPLATE = (() => {
         ></button>
       </div>
       <ol class="fl-sidebar-list" role="listbox" part="list" aria-label="Annotations" tabindex="0"></ol>
+      <div class="fl-sidebar-rail" part="rail">
+        <button
+          type="button"
+          class="fl-rail-btn"
+          part="expand"
+          aria-label="Expand sidebar"
+          aria-expanded="false"
+        ><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"/></svg></button>
+        <span class="fl-rail-badge" part="rail-badge" role="img"></span>
+      </div>
     </div>
   `;
   return t;
@@ -168,6 +244,7 @@ const TEMPLATE = (() => {
 
 const ROW_TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <li class="fl-sidebar-item" role="option" aria-selected="false" tabindex="-1">
       <div class="fl-sidebar-row-head">
@@ -202,6 +279,11 @@ export class FlSidebarPanel extends HTMLElement {
   #resolvedBtn!: HTMLButtonElement;
   #list!: HTMLOListElement;
   #closeBtn!: HTMLButtonElement;
+  #collapseBtn!: HTMLButtonElement;
+  #expandBtn!: HTMLButtonElement;
+  #railBadge!: HTMLElement;
+  #panel!: HTMLElement;
+  #collapsed = readCollapsed();
 
   constructor() {
     super();
@@ -213,14 +295,67 @@ export class FlSidebarPanel extends HTMLElement {
     this.#resolvedBtn = root.querySelector('button.fl-tab-resolved') as HTMLButtonElement;
     this.#list = root.querySelector('ol.fl-sidebar-list') as HTMLOListElement;
     this.#closeBtn = root.querySelector('button.fl-close-btn') as HTMLButtonElement;
+    this.#collapseBtn = root.querySelector('button.fl-collapse-btn') as HTMLButtonElement;
+    this.#expandBtn = root.querySelector('button.fl-rail-btn') as HTMLButtonElement;
+    this.#railBadge = root.querySelector('.fl-rail-badge') as HTMLElement;
+    this.#panel = root.querySelector('.fl-sidebar') as HTMLElement;
+    this.#applyCollapsed();
   }
 
+  /**
+   * Whether the sidebar is collapsed to its slim rail. Remembered per
+   * browser tab (sessionStorage) so it survives overlay toggles and
+   * reloads of the same tab but never leaks to other tabs.
+   */
+  get collapsed(): boolean {
+    return this.#collapsed;
+  }
+
+  set collapsed(next: boolean) {
+    const value = next === true;
+    if (value === this.#collapsed) return;
+    this.#collapsed = value;
+    writeCollapsed(value);
+    this.#applyCollapsed();
+  }
+
+  /**
+   * Viewport rect the visible sidebar (or rail) occupies, or `null` when
+   * it is not shown. The popover uses it to avoid opening underneath.
+   */
+  keepOutRect(): DOMRect | null {
+    if (this.style.display === 'none') return null;
+    const r = this.#panel.getBoundingClientRect();
+    return r.width === 0 || r.height === 0 ? null : r;
+  }
+
+  #applyCollapsed(): void {
+    this.#panel.toggleAttribute('data-collapsed', this.#collapsed);
+    this.#collapseBtn.setAttribute('aria-expanded', String(!this.#collapsed));
+    this.#expandBtn.setAttribute('aria-expanded', String(!this.#collapsed));
+  }
+
+  #onCollapseClick = (): void => {
+    this.collapsed = true;
+    this.#expandBtn.focus();
+  };
+
+  #onExpandClick = (): void => {
+    this.collapsed = false;
+    this.#collapseBtn.focus();
+  };
+
   connectedCallback(): void {
+    // Upgrade child Custom Elements BEFORE assigning their properties
+    // (isolated-world polyfill upgrades late — see upgradeShadowTree.ts).
+    upgradeShadowTree(this.shadowRoot);
     this.#activeBtn.addEventListener('click', this.#onSelectActiveTab);
     this.#resolvedBtn.addEventListener('click', this.#onSelectResolvedTab);
     this.#list.addEventListener('click', this.#onListClick);
     this.#list.addEventListener('keydown', this.#onListKeydown);
     this.#closeBtn.addEventListener('click', this.#onClose);
+    this.#collapseBtn.addEventListener('click', this.#onCollapseClick);
+    this.#expandBtn.addEventListener('click', this.#onExpandClick);
     this.#render();
   }
 
@@ -230,6 +365,8 @@ export class FlSidebarPanel extends HTMLElement {
     this.#list.removeEventListener('click', this.#onListClick);
     this.#list.removeEventListener('keydown', this.#onListKeydown);
     this.#closeBtn.removeEventListener('click', this.#onClose);
+    this.#collapseBtn.removeEventListener('click', this.#onCollapseClick);
+    this.#expandBtn.removeEventListener('click', this.#onExpandClick);
   }
 
   /**
@@ -269,6 +406,8 @@ export class FlSidebarPanel extends HTMLElement {
 
     this.#activeBtn.textContent = `Active (${activeCount})`;
     this.#resolvedBtn.textContent = `Resolved (${resolvedCount})`;
+    this.#railBadge.textContent = String(activeCount);
+    this.#railBadge.setAttribute('aria-label', `${activeCount} active annotations`);
 
     const activeTab = this.#tab === 'active';
     this.#activeBtn.classList.toggle('active', activeTab);

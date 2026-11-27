@@ -1,33 +1,38 @@
 # syntax=docker/dockerfile:1.7
 #
-# Multi-stage Dockerfile for the FeedbackLoop Dashboard.
+# Multi-stage Dockerfile for the Pinpoint Dashboard.
 #
-# Stage 1 (builder): installs the workspace, builds @feedbackloop/shared
-# (the dashboard depends on it) and the dashboard's `vite build` bundle.
-# Stage 2 (runtime): runs `vite preview` against the built bundle on
-# port 4173, exposed to the host per Requirement 29.2.
-#
-# Per design key decision #14: "dashboard — runs the production
-# `vite preview` on the built bundle".
+# Stage 1 (builder): installs the workspace, builds @pinpoint/shared (the
+# dashboard depends on it) and the dashboard's `vite build` bundle.
+# Stage 2 (runtime): runs `vite preview` against the built bundle on port
+# 4173. `vite preview` also proxies /api, /socket.io, /widget and review-link
+# frames to the API (API_PROXY_TARGET), so the dashboard and API share one
+# origin — see dashboard/vite.config.ts.
 
 # ---------- Stage 1: builder ----------
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Every workspace manifest must be present for `npm ci` to resolve the
+# lockfile's workspace graph.
 COPY package.json package-lock.json tsconfig.json ./
 COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY dashboard/package.json ./dashboard/
 COPY extension/package.json ./extension/
+COPY e2e/package.json ./e2e/
+COPY mobile-sdk/package.json ./mobile-sdk/
+COPY mcp-server/package.json ./mcp-server/
+COPY widget/package.json ./widget/
 
-RUN npm ci --workspaces --include-workspace-root
+RUN npm ci --workspace @pinpoint/shared --workspace @pinpoint/dashboard --include-workspace-root
 
 COPY shared ./shared
 COPY dashboard ./dashboard
 
-RUN npm run build --workspace @feedbackloop/shared \
- && npm run build --workspace @feedbackloop/dashboard
+RUN npm run build --workspace @pinpoint/shared \
+ && npm run build --workspace @pinpoint/dashboard
 
 # ---------- Stage 2: runtime ----------
 FROM node:20-alpine AS runtime
@@ -41,10 +46,13 @@ COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY dashboard/package.json ./dashboard/
 COPY extension/package.json ./extension/
+COPY e2e/package.json ./e2e/
+COPY mobile-sdk/package.json ./mobile-sdk/
+COPY mcp-server/package.json ./mcp-server/
+COPY widget/package.json ./widget/
 
-# Vite is a devDependency on the dashboard workspace, but `vite preview`
-# needs it at runtime, so we install with `--include=dev`.
-RUN npm ci --include=dev \
+# Vite is a devDependency, but `vite preview` needs it at runtime.
+RUN npm ci --workspace @pinpoint/shared --workspace @pinpoint/dashboard --include-workspace-root --include=dev \
  && npm cache clean --force
 
 COPY --from=builder /app/shared/dist ./shared/dist
@@ -55,8 +63,6 @@ COPY dashboard/tsconfig.json ./dashboard/tsconfig.json
 
 WORKDIR /app/dashboard
 
-# `vite preview` default port. Bind to 0.0.0.0 so the container is
-# reachable from the host.
 EXPOSE 4173
 
 CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]

@@ -1,0 +1,61 @@
+/* "Console & errors" panel in the annotation detail (DiagnosticsPanel.ts).
+ * The component emitted these classes but no stylesheet defined them, so the
+ * summary rendered as default 16px text with the count glued to the title
+ * ("Console & errors3") and the log list was unformatted. */
+.fl-diagnostics-panel {
+  border-top: 1px solid var(--pp-border-light);
+  padding-top: 10px;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.fl-diag-summary {
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style-position: inside;
+}
+
+.fl-diag-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--pp-severity-critical-bg);
+  color: var(--pp-severity-critical-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.fl-diag-subhead {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pp-text-secondary);
+}
+
+.fl-diag-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--pp-code-bg);
+  border: 1px solid var(--pp-code-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fl-diag-list > li {
+  overflow-wrap: anywhere;
+}
+
+.fl-diag-list > li + li {
+  margin-top: 4px;
+}

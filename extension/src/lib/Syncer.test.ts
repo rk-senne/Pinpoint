@@ -223,6 +223,45 @@ describe('Syncer.triggerSync — successful drain', () => {
 });
 
 describe('Syncer.triggerSync — failure semantics', () => {
+  it('retries a halted drain quickly with backoff instead of waiting for the 30 s tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const a = makeEntry({ localUuid: 'uuid-retry' });
+      queue = [a];
+      apiFetchRawMock.mockRejectedValueOnce(new Error('Failed to fetch'));
+      apiFetchRawMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ annotation: { id: 'srv-r', pinNumber: 2 } }), { status: 201 }),
+      );
+      await triggerSync();
+      expect(apiFetchRawMock).toHaveBeenCalledTimes(1);
+      expect(queue).toEqual([a]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(apiFetchRawMock).toHaveBeenCalledTimes(2);
+      expect(removeMock).toHaveBeenCalledWith('uuid-retry');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a drain while the browser is offline (no request can hang the queue)', async () => {
+    const a = makeEntry({ localUuid: 'uuid-off' });
+    queue = [a];
+    const spy = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      await triggerSync();
+      expect(apiFetchRawMock).not.toHaveBeenCalled();
+      expect(queue).toEqual([a]);
+    } finally {
+      spy.mockRestore();
+    }
+    // Back online → the next trigger replays.
+    apiFetchRawMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ annotation: { id: 'srv-off', pinNumber: 1 } }), { status: 201 }),
+    );
+    await triggerSync();
+    expect(apiFetchRawMock).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves the entry in place when the network call throws', async () => {
     const a = makeEntry({ localUuid: 'uuid-A' });
     queue = [a];

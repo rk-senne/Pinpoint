@@ -1,15 +1,21 @@
+import { systemScope } from '../../../infrastructure/tenantContext.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { CreateCheckoutSession, HandleStripeWebhook, GetBillingPortal, GetUsageSummary } from '../../../domain/billing/usecases/billing.js';
 import type { Knex } from 'knex';
+import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
+import { sendError, sendZodFailure } from './errors.js';
+import { requireOrgAdmin } from './access.js';
 
-/** Helper to emit a standard error envelope from catch blocks. */
-function sendError(res: Response, status: number, code: string, message: string, details?: Record<string, unknown>): Response {
-  const body: { error: { code: string; message: string; details?: Record<string, unknown> } } = {
-    error: { code, message },
-  };
-  if (details && Object.keys(details).length > 0) body.error.details = details;
-  return res.status(status).json(body);
+type LoggedRequest = Request & { log?: { error: (obj: object, msg: string) => void } };
+
+/**
+ * Log the real failure server-side (pino request logger) and answer with a
+ * generic message — Stripe / SDK / SQL error text must never reach clients.
+ */
+function billingFailure(req: Request, res: Response, e: unknown, status = 500, code = 'BILLING_ERROR'): void {
+  (req as LoggedRequest).log?.error({ err: e }, 'Billing request failed');
+  sendError(res, status, code, 'Billing request failed.');
 }
 
 // --- Zod schemas for billing route inputs ---
@@ -40,11 +46,11 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
   const router = Router();
 
   // POST /api/v1/billing/checkout — create Stripe checkout session
-  router.post('/checkout', authMiddleware, async (req: Request, res: Response) => {
+  router.post('/checkout', authMiddleware, requireOrgAdmin, async (req: Request, res: Response) => {
     try {
       const parsed = CheckoutSchema.safeParse(req.body);
       if (!parsed.success) {
-        sendError(res, 400, 'VALIDATION', 'Invalid checkout URLs', { issues: parsed.error.flatten().fieldErrors });
+        sendZodFailure(res, 'Invalid checkout URLs', parsed.error.flatten());
         return;
       }
       const { successUrl, cancelUrl } = parsed.data;
@@ -56,13 +62,13 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
         cancelUrl,
       );
       res.json({ url });
-    } catch (e: any) {
-      sendError(res, 500, 'BILLING_ERROR', e.message);
+    } catch (e: unknown) {
+      billingFailure(req, res, e);
     }
   });
 
   // POST /api/v1/billing/webhook — Stripe webhook (no auth, signature verified)
-  router.post('/webhook', async (req: Request, res: Response) => {
+  router.post('/webhook', systemScope, async (req: Request, res: Response) => {
     try {
       const signature = req.headers['stripe-signature'] as string;
       if (!signature) { sendError(res, 400, 'MISSING_SIGNATURE', 'stripe-signature header is required'); return; }
@@ -78,21 +84,23 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
       const body = rawBody.toString('utf8');
       await handleStripeWebhook.execute(body, signature);
       res.json({ received: true });
-    } catch (e: any) {
-      sendError(res, 400, 'WEBHOOK_ERROR', e.message);
+    } catch (e: unknown) {
+      billingFailure(req, res, e, 400, 'WEBHOOK_ERROR');
     }
   });
 
   // GET /api/v1/billing/portal — billing portal URL
-  router.get('/portal', authMiddleware, async (req: Request, res: Response) => {
+  router.get('/portal', authMiddleware, requireOrgAdmin, async (req: Request, res: Response) => {
     try {
       const returnUrl = (req.query.returnUrl as string) || req.headers.referer || '/';
       const url = await getBillingPortal.execute(req.user!.orgId, returnUrl);
       res.json({ url });
-    } catch (e: any) {
-      const code = e.message === 'NO_STRIPE_CUSTOMER' ? 'NO_SUBSCRIPTION' : 'BILLING_ERROR';
-      const status = e.message === 'NO_STRIPE_CUSTOMER' ? 404 : 500;
-      sendError(res, status, code, e.message);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message === 'NO_STRIPE_CUSTOMER') {
+        sendError(res, 404, 'NO_SUBSCRIPTION', 'No active subscription for this organization.');
+        return;
+      }
+      billingFailure(req, res, e);
     }
   });
 
@@ -101,8 +109,8 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
     try {
       const summary = await getUsageSummary.execute(req.user!.orgId);
       res.json(summary);
-    } catch (e: any) {
-      sendError(res, 500, 'BILLING_ERROR', e.message);
+    } catch (e: unknown) {
+      billingFailure(req, res, e);
     }
   });
 
@@ -116,32 +124,37 @@ export function createBillingRoutes(deps: BillingRouteDeps): Router {
         status: org.plan_status || 'active',
         stripeSubscriptionId: org.stripe_subscription_id || null,
       });
-    } catch (e: any) {
-      sendError(res, 500, 'BILLING_ERROR', e.message);
+    } catch (e: unknown) {
+      billingFailure(req, res, e);
     }
   });
 
   // GET /api/v1/billing/invoices — invoice history (Task 2)
   router.get('/invoices', authMiddleware, async (req: Request, res: Response) => {
     try {
-      const rows = await db('subscription_events')
+      const { page, pageSize } = PaginationParamsSchema.parse(req.query);
+      const base = db('subscription_events')
         .where({ org_id: req.user!.orgId })
-        .where('event_type', 'like', 'invoice.%')
+        .where('event_type', 'like', 'invoice.%');
+      const [{ count: total }] = await base.clone().count('* as count');
+      const rows = await base
+        .clone()
         .orderBy('created_at', 'desc')
-        .limit(50);
-      const invoices = rows.map((r: any) => {
-        const data = typeof r.data === 'string' ? JSON.parse(r.data) : (r.data ?? {});
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+      const data = rows.map((r: any) => {
+        const payload = typeof r.data === 'string' ? JSON.parse(r.data) : (r.data ?? {});
         return {
           id: r.id,
           event_type: r.event_type,
-          amount: data.amount ?? data.amount_paid ?? null,
-          status: data.status ?? r.event_type.replace('invoice.', ''),
+          amount: payload.amount ?? payload.amount_paid ?? null,
+          status: payload.status ?? r.event_type.replace('invoice.', ''),
           created_at: r.created_at,
         };
       });
-      res.json({ invoices });
-    } catch (e: any) {
-      sendError(res, 500, 'BILLING_ERROR', e.message);
+      res.json({ data, pagination: paginationMeta(Number(total), page, pageSize) });
+    } catch (e: unknown) {
+      billingFailure(req, res, e);
     }
   });
 

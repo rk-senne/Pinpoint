@@ -54,9 +54,24 @@ export class FakeAnnotationRepo implements AnnotationRepo {
       annotation.capturedNetwork =
         input.capturedNetwork === null ? null : [...input.capturedNetwork];
     }
+    if (input.consoleLogs !== undefined) {
+      annotation.consoleLogs =
+        input.consoleLogs === null ? null : input.consoleLogs.map((e) => ({ ...e }));
+    }
+    if (input.jsErrors !== undefined) {
+      annotation.jsErrors =
+        input.jsErrors === null ? null : input.jsErrors.map((e) => ({ ...e }));
+    }
+    if (input.sessionReplay !== undefined) {
+      annotation.sessionReplay =
+        input.sessionReplay === null ? null : input.sessionReplay.map((e) => ({ ...e }));
+    }
     if (input.clientRequestId !== undefined) {
       annotation.clientRequestId = input.clientRequestId;
     }
+    if (input.isGuest !== undefined) annotation.isGuest = input.isGuest;
+    if (input.guestName !== undefined) annotation.guestName = input.guestName;
+    if (input.guestEmail !== undefined) annotation.guestEmail = input.guestEmail;
     this.annotations.set(id, annotation);
     return clone(annotation);
   }
@@ -168,6 +183,17 @@ function clone(a: Annotation): Annotation {
   if (a.capturedNetwork !== undefined) {
     copy.capturedNetwork =
       a.capturedNetwork === null ? null : a.capturedNetwork.map((e) => ({ ...e }));
+  }
+  if (a.consoleLogs !== undefined) {
+    copy.consoleLogs =
+      a.consoleLogs === null ? null : a.consoleLogs.map((e) => ({ ...e }));
+  }
+  if (a.jsErrors !== undefined) {
+    copy.jsErrors = a.jsErrors === null ? null : a.jsErrors.map((e) => ({ ...e }));
+  }
+  if (a.sessionReplay !== undefined) {
+    copy.sessionReplay =
+      a.sessionReplay === null ? null : a.sessionReplay.map((e) => ({ ...e }));
   }
   return copy;
 }

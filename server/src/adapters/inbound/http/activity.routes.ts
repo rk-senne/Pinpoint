@@ -6,6 +6,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { Knex } from 'knex';
 import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
+import { registerSessionDb, requireProjectAccess } from './access.js';
 
 export interface ActivityRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -15,18 +16,13 @@ export interface ActivityRouteDeps {
 export function createActivityRoutes(deps: ActivityRouteDeps): Router {
   const { authMiddleware, db } = deps;
   const router = Router({ mergeParams: true });
+  registerSessionDb(db);
 
   // GET /api/v1/projects/:id/activity?page=1&pageSize=25
-  router.get('/', authMiddleware, async (req: Request, res: Response) => {
+  router.get('/', authMiddleware, requireProjectAccess(db), async (req: Request, res: Response) => {
     const projectId = req.params.id;
     const parsed = PaginationParamsSchema.safeParse(req.query);
     const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
-
-    // Verify project belongs to the caller's org (prevent cross-tenant IDOR)
-    const project = await db('projects').where({ id: projectId, org_id: req.user!.orgId }).first();
-    if (!project) {
-      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Project not found.', details: {} } });
-    }
 
     const offset = (page - 1) * pageSize;
 

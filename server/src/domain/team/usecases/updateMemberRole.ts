@@ -89,12 +89,19 @@ export class UpdateMemberRole {
       input.role,
     );
 
+    // A demotion must cut live rooms joined under the old role; clients re-join (PP-02).
+    const rank = { owner: 3, admin: 2, viewer: 1 } as const;
+    if (rank[input.role] < rank[targetMembership.role]) {
+      eventBus.emit({ type: 'session.revoked', room: `user:${input.targetUserId}`, payload: {} });
+    }
+
     const promotedToOwner =
       input.role === 'owner' && targetMembership.role !== 'owner';
 
     if (promotedToOwner) {
       eventBus.emit({
         type: 'team.member_promoted_to_owner',
+        room: `user:${input.targetUserId}`,
         payload: {
           teamId: team.id,
           teamName: team.name,

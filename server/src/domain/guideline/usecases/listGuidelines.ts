@@ -17,8 +17,10 @@ export interface ListGuidelinesDeps {
 export class ListGuidelines {
   constructor(private readonly deps: ListGuidelinesDeps) {}
 
-  async execute(): Promise<Result<Guideline[], DomainError>> {
-    const guidelines = await this.deps.guidelineRepo.list();
+  async execute(input: {
+    orgId: string;
+  }): Promise<Result<Guideline[], DomainError>> {
+    const guidelines = await this.deps.guidelineRepo.list(input.orgId);
     return ok(guidelines);
   }
 }

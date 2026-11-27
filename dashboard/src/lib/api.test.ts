@@ -41,6 +41,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('apiFetch', () => {
+  it('resolves undefined for 204 No Content instead of failing to parse a body', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))));
+    const { apiFetch } = await importApi();
+    await expect(apiFetch('/portals/abc', { method: 'DELETE' })).resolves.toBeUndefined();
+  });
+
   it('prefixes every request with /api/v1', async () => {
     const auth = await importAuth();
     auth.setCsrfToken('csrf-abc');
@@ -187,5 +193,36 @@ describe('apiFetch', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['X-Custom']).toBe('hello');
     expect(headers['X-CSRF-Token']).toBe('csrf-abc');
+  });
+
+  describe('lost session (401)', () => {
+    const err401 = () =>
+      jsonResponse({ error: { code: 'UNAUTHENTICATED', message: 'Authentication required.' } }, 401);
+
+    it('clears auth state and sends the user to /auth', async () => {
+      const auth = await importAuth();
+      auth.setCsrfToken('csrf-abc');
+      history.replaceState(null, '', '/settings');
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(err401())));
+
+      const { apiFetch, ApiError } = await importApi();
+      await expect(apiFetch('/users/me')).rejects.toBeInstanceOf(ApiError);
+
+      expect(window.location.pathname).toBe('/auth');
+      expect(auth.getIsAuthed()).toBe(false);
+    });
+
+    it('does not redirect from public pages or for credential endpoints', async () => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(err401())));
+      const { apiFetch } = await importApi();
+
+      history.replaceState(null, '', '/shared/abc');
+      await expect(apiFetch('/users/me')).rejects.toThrow();
+      expect(window.location.pathname).toBe('/shared/abc');
+
+      history.replaceState(null, '', '/settings');
+      await expect(apiFetch('/auth/login', { method: 'POST' })).rejects.toThrow();
+      expect(window.location.pathname).toBe('/settings');
+    });
   });
 });

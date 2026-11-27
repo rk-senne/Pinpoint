@@ -41,8 +41,8 @@ async function buildSut() {
     expiresAt: new Date(clock.now().getTime() + 60_000).toISOString(),
   });
 
-  const usecase = new Logout({ authTokenRepo });
-  return { usecase, authTokenRepo, user };
+  const usecase = new Logout({ authTokenRepo, userRepo });
+  return { usecase, authTokenRepo, userRepo, user };
 }
 
 describe('logout use case', () => {
@@ -69,5 +69,22 @@ describe('logout use case', () => {
 
     expect(result.ok).toBe(true);
     expect(after).toEqual(before);
+  });
+
+  it('bumps token_version so previously issued JWTs are revoked (F-06)', async () => {
+    const { usecase, userRepo, user } = await buildSut();
+    expect((await userRepo.findByIdWithSecret(user.id))?.tokenVersion).toBe(0);
+
+    await usecase.execute({ userId: user.id });
+    expect((await userRepo.findByIdWithSecret(user.id))?.tokenVersion).toBe(1);
+
+    await usecase.execute({ userId: user.id });
+    expect((await userRepo.findByIdWithSecret(user.id))?.tokenVersion).toBe(2);
+  });
+
+  it('anonymous logout leaves every token_version untouched', async () => {
+    const { usecase, userRepo, user } = await buildSut();
+    await usecase.execute({ userId: null });
+    expect((await userRepo.findByIdWithSecret(user.id))?.tokenVersion).toBe(0);
   });
 });

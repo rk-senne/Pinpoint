@@ -7,6 +7,7 @@
  */
 
 import type { ReplayEvent } from '@pinpoint/shared';
+import { BRAND_COLORS } from '@pinpoint/shared';
 import { cloneTemplate } from '../lib/render';
 
 export function mountReplayPlayer(
@@ -84,7 +85,7 @@ export function mountReplayPlayer(
       ripple.className = 'replay-click-ripple';
       const size = 12 + age * 0.08;
       const opacity = Math.max(0, 1 - age / 400);
-      ripple.style.cssText = `position:absolute;left:${d.x}px;top:${d.y}px;width:${size}px;height:${size}px;border-radius:50%;border:2px solid #4f46e5;opacity:${opacity};transform:translate(-50%,-50%);pointer-events:none;`;
+      ripple.style.cssText = `position:absolute;left:${d.x}px;top:${d.y}px;width:${size}px;height:${size}px;border-radius:50%;border:2px solid ${BRAND_COLORS.primary};opacity:${opacity};transform:translate(-50%,-50%);pointer-events:none;`;
       viewport.appendChild(ripple);
     }
 

@@ -58,6 +58,11 @@ export interface CreateAnnotationInput {
   guidelineId?: string;
   capturedConsole?: NewAnnotation['capturedConsole'];
   capturedNetwork?: NewAnnotation['capturedNetwork'];
+  /** Diagnostics capture (Mission C2). */
+  consoleLogs?: NewAnnotation['consoleLogs'];
+  jsErrors?: NewAnnotation['jsErrors'];
+  /** Session replay (Mission C3). */
+  sessionReplay?: NewAnnotation['sessionReplay'];
   /** UUID for offline-replay idempotency (Req 44.3). */
   clientRequestId?: string;
 }
@@ -87,15 +92,7 @@ export class CreateAnnotation {
   async execute(
     input: CreateAnnotationInput,
   ): Promise<Result<CreateAnnotationOutput, DomainError>> {
-    const {
-      annotationRepo,
-      projectRepo,
-      pageRepo,
-      teamMemberRepo,
-      pinSequence,
-      runInTransaction,
-      eventBus,
-    } = this.deps;
+    const { annotationRepo, projectRepo, pageRepo, teamMemberRepo } = this.deps;
 
     const project = await projectRepo.findById(input.projectId);
     if (!project) {
@@ -133,48 +130,11 @@ export class CreateAnnotation {
     if (!trimmedUrl) {
       return err(new NotFound('Page URL is required.'));
     }
-    const trimmedBody = input.body.trim();
-
-    const created = await runInTransaction(async (tx) => {
-      let page = await pageRepo.findByProjectAndUrl(input.projectId, trimmedUrl);
-      if (!page) {
-        page = await pageRepo.insert({
-          projectId: input.projectId,
-          url: trimmedUrl,
-          title: null,
-        });
-      }
-
-      const pinNumber = await pinSequence.next(input.projectId, tx);
-
-      const inserted = await annotationRepo.insert({
-        projectId: input.projectId,
-        pageId: page.id,
-        type: input.type,
-        severity: input.severity,
-        status: 'active',
-        body: trimmedBody,
-        authorId: input.authorUserId,
-        target: input.target,
-        environment: input.environment,
-        pinNumber,
-        orgId: input.orgId,
-        guidelineId: input.guidelineId,
-        capturedConsole: input.capturedConsole,
-        capturedNetwork: input.capturedNetwork,
-        clientRequestId: input.clientRequestId,
-      });
-
-      return { annotation: inserted, pageUrl: page.url };
-    });
-
-    eventBus.emit({
-      type: 'annotation.created',
-      room: `project:${input.projectId}`,
-      payload: {
-        ...created.annotation,
-        pageUrl: created.pageUrl,
-      },
+    const created = await insertWithPin(this.deps, {
+      ...input,
+      pageUrl: trimmedUrl,
+      authorId: input.authorUserId,
+      guest: null,
     });
 
     return ok({
@@ -183,4 +143,112 @@ export class CreateAnnotation {
       idempotentReplay: false,
     });
   }
+}
+
+/** Guest identity attached to an unauthenticated submission. */
+export interface GuestIdentity {
+  name: string | null;
+  email: string | null;
+}
+
+export interface CreateGuestAnnotationInput
+  extends Omit<CreateAnnotationInput, 'authorUserId' | 'clientRequestId'> {
+  guest: GuestIdentity;
+}
+
+/**
+ * Create an annotation for an UNAUTHENTICATED submitter (embeddable widget
+ * key or a feedback-enabled shared link). The caller (inbound adapter) has
+ * already authorized the request against the project — a project-bound
+ * `pk_widget_` key or a valid link — so there is no team-membership check.
+ *
+ * The row has `author_id = NULL` and `is_guest = true`, and goes through the
+ * same transactional core as authenticated creation: page lookup/create,
+ * atomic per-project pin allocation, insert, and the realtime
+ * `annotation.created` broadcast.
+ */
+export class CreateGuestAnnotation {
+  constructor(private readonly deps: CreateAnnotationDeps) {}
+
+  async execute(
+    input: CreateGuestAnnotationInput,
+  ): Promise<Result<CreateAnnotationOutput, DomainError>> {
+    const project = await this.deps.projectRepo.findById(input.projectId);
+    if (!project) return err(new NotFound('Project not found.'));
+
+    const trimmedUrl = input.pageUrl.trim();
+    if (!trimmedUrl) return err(new NotFound('Page URL is required.'));
+
+    const created = await insertWithPin(this.deps, {
+      ...input,
+      pageUrl: trimmedUrl,
+      authorId: null,
+      guest: input.guest,
+    });
+    return ok({ annotation: created.annotation, pageUrl: created.pageUrl, idempotentReplay: false });
+  }
+}
+
+type InsertWithPinInput = Omit<CreateAnnotationInput, 'authorUserId'> & {
+  authorId: string | null;
+  guest: GuestIdentity | null;
+};
+
+/** Shared transactional core: page lookup/create + atomic pin + insert + broadcast. */
+async function insertWithPin(
+  deps: CreateAnnotationDeps,
+  input: InsertWithPinInput,
+): Promise<{ annotation: Annotation; pageUrl: string }> {
+  const { annotationRepo, pageRepo, pinSequence, runInTransaction, eventBus } = deps;
+  const trimmedBody = input.body.trim();
+
+  const created = await runInTransaction(async (tx) => {
+    let page = await pageRepo.findByProjectAndUrl(input.projectId, input.pageUrl);
+    if (!page) {
+      page = await pageRepo.insert({
+        projectId: input.projectId,
+        url: input.pageUrl,
+        title: null,
+      });
+    }
+
+    const pinNumber = await pinSequence.next(input.projectId, tx);
+
+    const inserted = await annotationRepo.insert({
+      projectId: input.projectId,
+      pageId: page.id,
+      type: input.type,
+      severity: input.severity,
+      status: 'active',
+      body: trimmedBody,
+      authorId: input.authorId,
+      target: input.target,
+      environment: input.environment,
+      pinNumber,
+      orgId: input.orgId,
+      guidelineId: input.guidelineId,
+      capturedConsole: input.capturedConsole,
+      capturedNetwork: input.capturedNetwork,
+      consoleLogs: input.consoleLogs,
+      jsErrors: input.jsErrors,
+      sessionReplay: input.sessionReplay,
+      clientRequestId: input.clientRequestId,
+      ...(input.guest
+        ? { isGuest: true, guestName: input.guest.name, guestEmail: input.guest.email }
+        : {}),
+    });
+
+    return { annotation: inserted, pageUrl: page.url };
+  });
+
+  eventBus.emit({
+    type: 'annotation.created',
+    room: `project:${input.projectId}`,
+    payload: {
+      ...created.annotation,
+      pageUrl: created.pageUrl,
+    },
+  });
+
+  return created;
 }

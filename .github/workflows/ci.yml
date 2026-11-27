@@ -5,6 +5,24 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: >-
+          Also run the GHCR publish job from this ref. Off main it publishes
+          ONLY the tag `test-<sha>` (never `latest`), so the pipeline can be
+          exercised from a branch.
+        type: boolean
+        default: false
+
+# Third-party actions are pinned to full commit SHAs (the trailing comment is
+# the tag they were resolved from); bump deliberately, not via a moving tag.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NODE_VERSION: '20'
@@ -13,14 +31,28 @@ jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+
+  # Unit + property + integration suite against a REAL PostgreSQL (the
+  # pin-numbering, lockout and queue tests need one; DB_* below point at it).
+  standards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # Exact deps, SHA-pinned actions, test hygiene, every route has a test (CONTRIBUTING.md).
+      - run: node scripts/check-standards.mjs
+      # Known vulnerabilities in production dependencies fail the build.
+      - run: npm audit --omit=dev --audit-level=moderate
 
   test:
     runs-on: ubuntu-latest
@@ -37,79 +69,344 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # S3-compatible object storage for screenshots (see the "Create S3 bucket"
+      # step). Upstream minio/minio images are no longer published, so this
+      # uses the frozen Bitnami legacy image; its default entrypoint starts
+      # `minio server` (services cannot pass a command). CI-only, throwaway.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+        env:
+          MINIO_ROOT_USER: ci-minio-access
+          MINIO_ROOT_PASSWORD: ci-minio-secret-not-for-production
+        ports: ['9000:9000']
     env:
       DB_HOST: localhost
       DB_PORT: 5432
       DB_NAME: pinpoint_test
       DB_USER: postgres
       DB_PASSWORD: postgres
+      # PP-08: migration 20261125000101 creates the unprivileged pinpoint_app
+      # role with this password; server/src/__tests__/integration/rls.test.ts
+      # connects as it to prove the RLS policies.
+      DB_APP_PASSWORD: ci-app-password-not-for-production
       JWT_SECRET: ci-test-secret
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm run build --workspace shared
-      - run: npx knex migrate:latest --knexfile server/knexfile.ts
+      - run: npm run migrate --workspace server
+      - name: Create S3 bucket (MinIO)
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_BUCKET: pinpoint
+          AWS_ACCESS_KEY_ID: ci-minio-access
+          AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
+        run: |
+          node --input-type=module -e "
+            import { S3Client, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+            const c = new S3Client({ region: 'us-east-1', endpoint: process.env.S3_ENDPOINT, forcePathStyle: true });
+            let last;
+            for (let i = 0; i < 60; i++) {
+              try {
+                try { await c.send(new HeadBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                catch (e) { if (e.\$metadata?.httpStatusCode !== 404) throw e; await c.send(new CreateBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                console.log('bucket ready:', process.env.S3_BUCKET); process.exit(0);
+              } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1000)); }
+            }
+            console.error('MinIO bucket setup failed:', last); process.exit(1);
+          "
+      # S3_* set only here so screenshotS3.test.ts runs against MinIO.
       - run: npm test -- --coverage
-      - uses: actions/upload-artifact@v4
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_FORCE_PATH_STYLE: 'true'
+          S3_BUCKET: pinpoint
+          S3_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: ci-minio-access
+          AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
+      # Demo/cleanup scripts need Node >= 22.18 (type stripping); the main
+      # suite above runs on Node 20 and skips those CLI tests.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Demo script tests (Node 22)
+        run: node --version && npx vitest --run scripts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: coverage
           path: coverage/
+          if-no-files-found: ignore
 
-  build-docker:
-    runs-on: ubuntu-latest
-    needs: [lint-typecheck, test]
-    if: github.ref == 'refs/heads/main'
+  # Full Playwright suite (api, dashboard in Chromium/Firefox/WebKit, MV3
+  # extension) against a real stack started on the runner: Postgres service
+  # container, API (server/dist), Vite dashboard with the /api proxy.
+  e2e:
+    # Pinned: Playwright 1.60 can't install browsers on ubuntu-26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pinpoint
+          POSTGRES_USER: postgres
+          # `trust` because e2e/browser/demo.ts shells out to psql with a
+          # fixed dummy password (same as the local dev stack).
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      # SMTP sink: the API sends verification/notification mail; nothing
+      # reads it, it only has to accept connections.
+      mailpit:
+        image: axllent/mailpit:v1.29.7
+        ports: ['1025:1025', '8025:8025']
+      # S3-compatible object storage for screenshots (see the "Create S3 bucket"
+      # step). Upstream minio/minio images are no longer published, so this
+      # uses the frozen Bitnami legacy image; its default entrypoint starts
+      # `minio server` (services cannot pass a command). CI-only, throwaway.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+        env:
+          MINIO_ROOT_USER: ci-minio-access
+          MINIO_ROOT_PASSWORD: ci-minio-secret-not-for-production
+        ports: ['9000:9000']
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: pinpoint
+      # PP-08: the API runs as the unprivileged `pinpoint_app` role (RLS is
+      # enforced); migrations run as the owner (DB_MIGRATION_*), which also
+      # creates the role from DB_APP_PASSWORD. psql helpers use PG* (postgres).
+      DB_USER: pinpoint_app
+      DB_PASSWORD: ci-app-password-not-for-production
+      DB_APP_PASSWORD: ci-app-password-not-for-production
+      DB_MIGRATION_USER: postgres
+      DB_MIGRATION_PASSWORD: unused
+      NODE_ENV: development
+      PORT: 3001
+      HOST: 127.0.0.1
+      # Throwaway CI-only values (the stack binds loopback, so the exposed
+      # deployment preflight is not engaged).
+      JWT_SECRET: ci-e2e-jwt-secret-not-for-production-0123456789abcdef
+      OAUTH_STATE_SECRET: ci-e2e-oauth-state-secret-not-for-production-0123456789
+      INTEGRATION_ENCRYPTION_KEY: 2846TWtaPCCFCQOoP1tkenD64GdiCiaffX4LgLadKJA=
+      CORS_ORIGIN: http://localhost:5173
+      APP_URL: http://localhost:5173
+      COOKIE_INSECURE: 'true'
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
+      # One machine runs the whole suite from a single IP.
+      API_RATE_LIMIT_MAX: 5000
+      AUTH_RATE_LIMIT_IP_MAX: 200
+      TENANT_RATE_LIMIT_MAX: 100000
+      API_PROXY_TARGET: http://127.0.0.1:3001
+      # e2e helpers (e2e/browser/demo.ts) shell out to psql with these.
+      PINPOINT_PSQL: psql
+      PINPOINT_PG_PORT: '5432'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: unused
+      FL_API_URL: http://127.0.0.1:3001
+      FL_APP_URL: http://localhost:5173
+      FL_E2E_EMAIL: e2e-seed@example.test
+      FL_E2E_PASSWORD: P@ssw0rd-E2E-1!
+      PLAYWRIGHT_HTML_OPEN: never
+      # S3-compatible storage (MinIO service above) so screenshot upload and
+      # retrieval are exercised for real; FL_S3_ENABLED makes the extension
+      # spec require a stored screenshotObjectKey instead of tolerating 5xx.
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_FORCE_PATH_STYLE: 'true'
+      S3_BUCKET: pinpoint
+      S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ci-minio-access
+      AWS_SECRET_ACCESS_KEY: ci-minio-secret-not-for-production
+      FL_S3_ENABLED: '1'
+      # Flow specs read mails from Mailpit's API.
+      FL_MAIL_API: http://127.0.0.1:8025/api/v1
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Every workspace: shared, server, dashboard, extension (-> extension/dist
+      # for the MV3 project), widget (served by the API), mcp-server, e2e.
+      - run: npm run build
+      - name: Apply migrations
+        run: npm run migrate --workspace server
+      - name: Create S3 bucket (MinIO)
+        run: |
+          node --input-type=module -e "
+            import { S3Client, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+            const c = new S3Client({ region: 'us-east-1', endpoint: process.env.S3_ENDPOINT, forcePathStyle: true });
+            let last;
+            for (let i = 0; i < 60; i++) {
+              try {
+                try { await c.send(new HeadBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                catch (e) { if (e.\$metadata?.httpStatusCode !== 404) throw e; await c.send(new CreateBucketCommand({ Bucket: process.env.S3_BUCKET })); }
+                console.log('bucket ready:', process.env.S3_BUCKET); process.exit(0);
+              } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1000)); }
+            }
+            console.error('MinIO bucket setup failed:', last); process.exit(1);
+          "
+      - name: Start API
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          (cd server && nohup node dist/index.js > "$RUNNER_TEMP/logs/api.log" 2>&1 &)
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:3001/health >/dev/null && exit 0
+            sleep 1
+          done
+          echo "API did not become healthy" >&2
+          cat "$RUNNER_TEMP/logs/api.log" >&2
+          exit 1
+      - name: Start dashboard (Vite dev server, proxies /api to the API)
+        run: |
+          (cd dashboard && nohup npx vite --host localhost --port 5173 --strictPort > "$RUNNER_TEMP/logs/dashboard.log" 2>&1 &)
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5173/ >/dev/null && exit 0
+            sleep 1
+          done
+          echo "Dashboard did not start" >&2
+          cat "$RUNNER_TEMP/logs/dashboard.log" >&2
+          exit 1
+      - name: Seed verified e2e account
+        run: ./infrastructure/scripts/ci-seed-e2e.sh
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Playwright - api + dashboard (Chromium, Firefox, WebKit)
+        working-directory: e2e
+        run: >-
+          npx playwright test
+          --project=api --project=browser-setup --project=browser
+          --project=browser-firefox --project=browser-webkit --project=flows
+          --fail-on-flaky-tests --reporter=github,html
+      # MV3 extensions only load in a headed Chromium: run under a virtual display.
+      - name: Playwright - extension (headed Chromium under xvfb)
+        working-directory: e2e
+        env:
+          PLAYWRIGHT_HTML_REPORT: playwright-report-extension
+        run: xvfb-run --auto-servernum npx playwright test --project=extension --fail-on-flaky-tests --reporter=github,html
+      - name: Upload Playwright reports and traces
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-artifacts
+          path: |
+            e2e/playwright-report/
+            e2e/playwright-report-extension/
+            e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload service logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-service-logs
+          path: ${{ runner.temp }}/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Pull requests: prove both images still build (no push, no registry login,
+  # read-only token).
+  docker-build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, dashboard]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
+          file: ${{ matrix.image }}/Dockerfile
           push: false
-          tags: pinpoint-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: pinpoint-${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
-  deploy-staging:
+  # Static checks for the operator scripts (deploy/*.sh, infrastructure/scripts/*.sh).
+  shell-scripts:
     runs-on: ubuntu-latest
-    needs: [build-docker]
-    if: github.ref == 'refs/heads/main'
-    environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: bash -n
+        run: |
+          set -e
+          for f in deploy/*.sh infrastructure/scripts/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+      - name: shellcheck
+        run: shellcheck --version && shellcheck -x deploy/*.sh infrastructure/scripts/*.sh
+
+  # Push to main: publish both images to GitHub Container Registry as
+  #   ghcr.io/<owner>/<repo>/server  and  ghcr.io/<owner>/<repo>/dashboard
+  # tagged with the commit SHA and `latest`. A manual run (workflow_dispatch
+  # with publish_tag=true) from any other ref publishes ONLY `test-<sha>`; it
+  # never touches `latest` or the plain SHA tag. This is the only job with
+  # `packages: write`; it authenticates with the built-in GITHUB_TOKEN.
+  docker-publish:
+    runs-on: ubuntu-latest
+    needs: [lint-typecheck, standards, test, e2e]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_tag)
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, dashboard]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Registry paths must be lowercase; github.repository may not be.
+      - name: Compute image name
+        id: img
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "name=ghcr.io/${REPO,,}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+      # main (push or manual): <sha> + latest. Any other ref (manual only): test-<sha>.
+      - name: Compute tags
+        id: tags
+        env:
+          IMAGE: ${{ steps.img.outputs.name }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" = "refs/heads/main" ]; then
+            { echo "list<<EOF"; echo "$IMAGE:$SHA"; echo "$IMAGE:latest"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          else
+            { echo "list<<EOF"; echo "$IMAGE:test-$SHA"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
-        id: ecr
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v5
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
+          file: ${{ matrix.image }}/Dockerfile
           push: true
-          tags: ${{ steps.ecr.outputs.registry }}/pinpoint-api:${{ github.sha }},${{ steps.ecr.outputs.registry }}/pinpoint-api:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service \
-            --cluster pinpoint-staging \
-            --service pinpoint-staging-api \
-            --force-new-deployment
-      - name: Wait for deployment
-        run: |
-          aws ecs wait services-stable \
-            --cluster pinpoint-staging \
-            --services pinpoint-staging-api
-      - name: Health check
-        run: |
-          sleep 10
-          curl -f https://staging.pinpoint.app/health || exit 1
+          tags: ${{ steps.tags.outputs.list }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

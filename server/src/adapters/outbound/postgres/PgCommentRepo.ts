@@ -24,7 +24,8 @@ export class PgCommentRepo implements CommentRepo {
       body: input.body,
       mentions: input.mentions,
     };
-    if (input.orgId) row.org_id = input.orgId;
+    // Inherit the annotation's org when the caller did not supply one (RLS, PP-08).
+    row.org_id = input.orgId ?? this.db.raw('(select org_id from annotations where id = ?)', [input.annotationId]);
     if (input.clientRequestId !== undefined) row.client_request_id = input.clientRequestId;
 
     const [created] = await this.db<CommentRow>('comments').insert(row).returning('*');

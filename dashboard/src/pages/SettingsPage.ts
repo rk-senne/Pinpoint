@@ -58,6 +58,27 @@ const NOTIFICATION_ROWS: NotificationRow[] = [
   { key: 'projectDeleted', label: 'Project deleted by owner' },
 ];
 
+
+/**
+ * Fetch every guideline. The endpoint is paginated (max 100 per page), and
+ * a single default-size request silently dropped anything past the first 25,
+ * so newly created custom guidelines never appeared once an org had >25.
+ */
+async function fetchAllGuidelines(
+  apiFetch: typeof defaultApiFetch,
+): Promise<Guideline[]> {
+  const all: Guideline[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const res = await apiFetch<{ data: Guideline[]; pagination?: { totalPages?: number } }>(
+      `/guidelines?page=${page}&pageSize=100`,
+    );
+    all.push(...res.data);
+    const totalPages = res.pagination?.totalPages ?? 1;
+    if (page >= totalPages || res.data.length === 0) break;
+  }
+  return all;
+}
+
 export interface MountSettingsPageOptions {
   /** Fetch shim — defaults to the production `apiFetch`. Tests inject fakes. */
   apiFetch?: typeof defaultApiFetch;
@@ -141,6 +162,12 @@ export function mountSettingsPage(
     contentRoot,
     'profile-avatar',
   ) as HTMLInputElement;
+  // Optional so older templates without the field keep working.
+  const profileCurrentPasswordInput = contentRoot.querySelector<HTMLInputElement>(
+    '[data-role="profile-current-password"]',
+  );
+  /** Email as loaded from the server; a different value needs the current password. */
+  let loadedEmail = '';
   const profileMessage = requireRole(contentRoot, 'profile-message');
   const profileSubmit = requireRole(
     contentRoot,
@@ -167,7 +194,7 @@ export function mountSettingsPage(
   // Replace static "Loading…" text with form-field skeletons.
   guidelinesLoading.textContent = '';
   guidelinesLoading.appendChild(createFormSkeleton(2));
-  const guidelineForm = requireRole(contentRoot, 'guideline-form') as HTMLFormElement;
+  requireRole(contentRoot, 'guideline-form'); // asserts the form exists in the template
   const guidelineNameInput = requireRole(
     contentRoot,
     'guideline-name',
@@ -211,6 +238,9 @@ export function mountSettingsPage(
       tabSections[key].hidden = !isActive;
       paintTabButton(tabButtons[key], isActive);
     }
+    // Keep the active tab in view on narrow screens and refresh the fade edges.
+    tabButtons[tab].scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+    updateTabFades();
     if (tab === 'profile' && !profileLoaded) {
       void loadProfile();
     }
@@ -226,9 +256,20 @@ export function mountSettingsPage(
     }
   }
 
+  const tabsScroller = contentRoot.querySelector<HTMLElement>('[data-role="tabs"]');
+  const tabsWrap = contentRoot.querySelector<HTMLElement>('[data-role="tabs-wrap"]');
+  function updateTabFades(): void {
+    if (!tabsScroller || !tabsWrap) return;
+    const { scrollLeft, scrollWidth, clientWidth } = tabsScroller;
+    tabsWrap.setAttribute('data-fade-start', String(scrollLeft > 2));
+    tabsWrap.setAttribute('data-fade-end', String(scrollLeft + clientWidth < scrollWidth - 2));
+  }
+  tabsScroller?.addEventListener('scroll', updateTabFades, { passive: true });
+  window.addEventListener('resize', updateTabFades);
+
   function paintTabButton(btn: HTMLButtonElement, active: boolean): void {
-    btn.style.borderBottom = active ? '2px solid #4f46e5' : '2px solid transparent';
-    btn.style.color = active ? '#4f46e5' : '#666';
+    btn.style.borderBottom = active ? '2px solid var(--pp-accent)' : '2px solid transparent';
+    btn.style.color = active ? 'var(--pp-accent-text)' : 'var(--pp-text-secondary)';
     btn.style.fontWeight = active ? '600' : '400';
   }
 
@@ -241,6 +282,7 @@ export function mountSettingsPage(
       const user = await fetchUser();
       profileNameInput.value = user.name;
       profileEmailInput.value = user.email;
+      loadedEmail = user.email;
       profileAvatarInput.value = user.avatarUrl ?? '';
       profileLoaded = true;
       profileForm.hidden = false;
@@ -258,15 +300,26 @@ export function mountSettingsPage(
     setProfileMessage('');
     const avatarValue = profileAvatarInput.value.trim();
     try {
-      await apiFetch('/users/me', {
+      const emailChanged =
+        profileEmailInput.value.trim().toLowerCase() !== loadedEmail.trim().toLowerCase();
+      const currentPassword = profileCurrentPasswordInput?.value ?? '';
+      const res = await apiFetch<{ message?: string; emailChangePending?: boolean }>('/users/me', {
         method: 'PUT',
         body: JSON.stringify({
           name: profileNameInput.value,
           email: profileEmailInput.value,
           avatarUrl: avatarValue === '' ? undefined : avatarValue,
+          ...(emailChanged && currentPassword ? { currentPassword } : {}),
         }),
       });
-      setProfileMessage('Profile updated.', 'success');
+      if (profileCurrentPasswordInput) profileCurrentPasswordInput.value = '';
+      if (res?.emailChangePending) {
+        // The login email only changes once the emailed link is confirmed.
+        profileEmailInput.value = loadedEmail;
+        setProfileMessage(res.message ?? 'Check your new address for a confirmation link.', 'success');
+      } else {
+        setProfileMessage('Profile updated.', 'success');
+      }
       showToast({ message: 'Profile updated', variant: 'success' });
     } catch (err) {
       setProfileMessage(
@@ -337,6 +390,12 @@ export function mountSettingsPage(
       '[data-role="notification-toggle"]',
     )!;
     paintToggle(toggle, prefs?.[row.key] === true);
+    // Name the switch after its row label (it has no text of its own).
+    const labelEl = el.querySelector<HTMLElement>('[data-slot="label"]');
+    if (labelEl) {
+      labelEl.id = `pp-notif-label-${String(row.key)}`;
+      toggle.setAttribute('aria-labelledby', labelEl.id);
+    }
 
     const cleanup = bindEvents(el, {
       toggle: (e) => {
@@ -373,7 +432,7 @@ export function mountSettingsPage(
 
   function paintToggle(toggle: HTMLButtonElement, on: boolean): void {
     toggle.setAttribute('aria-checked', on ? 'true' : 'false');
-    toggle.style.background = on ? '#4f46e5' : '#d1d5db';
+    toggle.style.background = on ? 'var(--pp-accent)' : 'var(--pp-toggle-off)';
     const knob = toggle.querySelector<HTMLElement>(
       '[data-role="notification-knob"]',
     );
@@ -393,7 +452,7 @@ export function mountSettingsPage(
     guidelinesContent.hidden = true;
     guidelinesError.hidden = true;
     try {
-      guidelines = await apiFetch<Guideline[]>('/guidelines');
+      guidelines = await fetchAllGuidelines(apiFetch);
       guidelinesLoaded = true;
       renderGuidelines();
       guidelinesContent.hidden = false;
@@ -457,7 +516,7 @@ export function mountSettingsPage(
       guidelineNameInput.value = '';
       guidelineDescInput.value = '';
       // Re-fetch the list to pick up the new row in canonical server order.
-      guidelines = await apiFetch<Guideline[]>('/guidelines');
+      guidelines = await fetchAllGuidelines(apiFetch);
       renderGuidelines();
     } catch (err) {
       showGuidelinesError(
@@ -545,9 +604,12 @@ export function mountSettingsPage(
 
   // Mount inside the layout shell.
   const teardownLayout = mountAppLayout(rootEl, contentRoot);
+  requestAnimationFrame?.(() => updateTabFades());
 
   return () => {
     cleanupEvents();
+    tabsScroller?.removeEventListener('scroll', updateTabFades);
+    window.removeEventListener('resize', updateTabFades);
     for (const cleanup of notificationCleanups) cleanup();
     notificationCleanups = [];
     guidelineNameInput.removeEventListener('input', onGuidelineNameInput);

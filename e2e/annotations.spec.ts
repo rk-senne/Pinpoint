@@ -37,26 +37,32 @@ test.describe('annotations CRUD', () => {
       session,
       { name: `e2e-annotations-${Date.now()}`, urls: ['https://example.com/'] },
       async (project) => {
-        const pageId = project.pages[0].id;
-
         // --- Create annotation ---
         const createRes = await request.post(
           `${API_BASE_URL}/api/v1/projects/${project.id}/annotations`,
           {
             headers: session.mutatingHeaders(),
             data: {
-              pageId,
+              pageUrl: project.pages[0].url,
               body: 'E2E test annotation',
               type: 'note',
               severity: 'minor',
-              selector: 'body',
-              position: { x: 100, y: 200 },
+              target: {
+                cssSelector: 'body',
+                xpath: '/html/body',
+                pageX: 100,
+                pageY: 200,
+                tagName: 'BODY',
+                textSnippet: '',
+              },
               environment: {
                 browserFamily: 'Chrome',
                 browserVersion: '120.0',
                 osFamily: 'macOS',
                 osVersion: '14.0',
                 deviceType: 'desktop',
+                userAgentRaw:
+                  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
               },
             },
           },
@@ -71,7 +77,7 @@ test.describe('annotations CRUD', () => {
           `${API_BASE_URL}/api/v1/projects/${project.id}/annotations`,
         );
         expect(listRes.ok()).toBe(true);
-        const { annotations } = await listRes.json();
+        const { data: annotations } = await listRes.json();
         expect(annotations.some((a: { id: string }) => a.id === annotation.id)).toBe(true);
 
         // --- Resolve annotation ---
@@ -103,7 +109,7 @@ test.describe('annotations CRUD', () => {
           `${API_BASE_URL}/api/v1/annotations/${annotation.id}/comments`,
         );
         expect(commentsRes.ok()).toBe(true);
-        const { comments } = await commentsRes.json();
+        const { data: comments } = await commentsRes.json();
         expect(comments.some((c: { id: string }) => c.id === comment.id)).toBe(true);
 
         // --- Delete annotation ---
@@ -117,7 +123,7 @@ test.describe('annotations CRUD', () => {
         const afterDeleteRes = await request.get(
           `${API_BASE_URL}/api/v1/projects/${project.id}/annotations`,
         );
-        const { annotations: remaining } = await afterDeleteRes.json();
+        const { data: remaining } = await afterDeleteRes.json();
         expect(remaining.some((a: { id: string }) => a.id === annotation.id)).toBe(false);
       },
     );

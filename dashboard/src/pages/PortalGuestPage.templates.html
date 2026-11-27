@@ -1,0 +1,59 @@
+<!-- Loaded on demand with the page module (see lib/lazyTemplates.ts). -->
+    <!--
+      Guest-facing client portal (`/portal/:slug`). The emailed magic link opens
+      this page with `?token=…`; the token is moved out of the address bar and kept
+      in memory only. Wired in `dashboard/src/pages/PortalGuestPage.ts`.
+    -->
+    <template id="tpl-portal-guest">
+      <div data-fl-portal-root style="min-height: 100vh; background: var(--pp-bg-hover); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--pp-text-primary);">
+        <header data-slot="brand-bar" style="background: var(--portal-brand, #4f46e5); color: #fff; padding: 20px 24px; display: flex; align-items: center; gap: 14px;">
+          <img data-slot="logo" hidden alt="" referrerpolicy="no-referrer" style="height: 40px; width: auto; max-width: 160px; object-fit: contain; border-radius: 4px; background: rgba(255,255,255,0.15);" />
+          <h1 data-slot="title" style="margin: 0; font-size: 20px; font-weight: 600;">Client portal</h1>
+        </header>
+
+        <main style="max-width: 880px; margin: 0 auto; padding: 24px 16px 48px;">
+          <p data-slot="welcome" hidden style="margin: 0 0 20px; font-size: 15px; line-height: 1.6; white-space: pre-line;"></p>
+
+          <!-- Loading -->
+          <p data-section="loading" role="status" style="color: var(--pp-text-secondary);">Loading…</p>
+
+          <!-- Not found -->
+          <section data-section="not_found" hidden style="text-align: center; padding: 48px 0;">
+            <h2 style="margin: 0 0 8px; font-size: 18px;">Portal not found</h2>
+            <p style="color: var(--pp-text-secondary); margin: 0;">This portal does not exist or is no longer active.</p>
+          </section>
+
+          <!-- Request an access link -->
+          <section data-section="access" hidden style="background: var(--pp-bg-primary); border: 1px solid var(--pp-border-light); border-radius: 8px; padding: 20px;">
+            <h2 data-slot="access-title" style="margin: 0 0 6px; font-size: 16px;">Get your access link</h2>
+            <p data-slot="access-hint" style="margin: 0 0 14px; color: var(--pp-text-secondary); font-size: 13px;">
+              Enter your email and we will send you a link to view the feedback shared with you.
+            </p>
+            <form data-action="submit:request-access" novalidate style="display: grid; gap: 10px; max-width: 360px;">
+              <label style="font-size: 13px;">Email
+                <input data-slot="email" type="email" autocomplete="email" required style="display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px;" />
+              </label>
+              <label style="font-size: 13px;">Name (optional)
+                <input data-slot="name" type="text" autocomplete="name" maxlength="200" style="display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--pp-border-medium); border-radius: 4px; font-size: 14px;" />
+              </label>
+              <p data-slot="access-error" role="alert" hidden style="margin: 0; color: var(--pp-error); font-size: 13px;"></p>
+              <p data-slot="access-sent" role="status" hidden style="margin: 0; color: var(--pp-text-primary); font-size: 13px;"></p>
+              <button data-slot="access-submit" type="submit" style="padding: 9px 12px; background: var(--portal-brand, #4f46e5); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">Email me a link</button>
+            </form>
+          </section>
+
+          <!-- Feedback list -->
+          <section data-section="feedback" hidden>
+            <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px;">
+              <h2 style="margin: 0; font-size: 16px;">Feedback shared with you</h2>
+              <span data-slot="count" style="font-size: 13px; color: var(--pp-text-secondary);"></span>
+            </div>
+            <p data-slot="empty" hidden style="color: var(--pp-text-secondary);">Nothing has been shared yet.</p>
+            <ul data-slot="list" style="list-style: none; margin: 0; padding: 0; display: grid; gap: 10px;"></ul>
+            <p data-slot="readonly-note" style="margin: 16px 0 0; font-size: 12px; color: var(--pp-text-tertiary);">
+              This view is read-only. To add feedback, reply to the team that invited you.
+            </p>
+          </section>
+        </main>
+      </div>
+    </template>

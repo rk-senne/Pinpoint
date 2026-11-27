@@ -121,3 +121,32 @@ export function _resetRouterForTests(): void {
   window.removeEventListener('popstate', resolve);
   document.removeEventListener('click', onLinkClick);
 }
+
+/**
+ * Wrap a dynamically imported route handler. The page module (and the
+ * templates it registers) load on first visit. If the user navigates away
+ * before the import resolves, the stale mount is skipped so it can't paint
+ * over the newer page; teardown before the load completes is a no-op.
+ */
+let lazyNavigationToken = 0;
+export function lazyRoute(load: () => Promise<RouteHandler>): RouteHandler {
+  return (node, params) => {
+    const token = ++lazyNavigationToken;
+    let teardown: (() => void) | void;
+    let cancelled = false;
+    load()
+      .then((handler) => {
+        if (cancelled || token !== lazyNavigationToken || !node.isConnected) return;
+        teardown = handler(node, params);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('[router] failed to load route', err);
+        node.textContent = 'This page failed to load. Please refresh.';
+      });
+    return () => {
+      cancelled = true;
+      if (typeof teardown === 'function') teardown();
+    };
+  };
+}

@@ -29,12 +29,16 @@ import { PgOrgRepo } from '../adapters/outbound/postgres/PgOrgRepo.js';
 import { PgInvitationRepo } from '../adapters/outbound/postgres/PgInvitationRepo.js';
 import { PgApiKeyRepo } from '../adapters/outbound/postgres/PgApiKeyRepo.js';
 import { PgIntegrationRepo } from '../adapters/outbound/postgres/PgIntegrationRepo.js';
+import type { ScreenshotStore } from '../domain/annotation/ports/ScreenshotStore.js';
+import { SecretBox } from '../services/secretBox.js';
 
 // --- Other outbound adapters -----------------------------------------------
 import {
   S3ScreenshotStore,
   type S3ScreenshotStoreConfig,
 } from '../adapters/outbound/s3/S3ScreenshotStore.js';
+import { LocalFsScreenshotStore } from '../adapters/outbound/localfs/LocalFsScreenshotStore.js';
+import { localStoreAsS3Reader } from '../adapters/outbound/localfs/s3Compat.js';
 import { NodemailerMailer } from '../adapters/outbound/smtp/NodemailerMailer.js';
 import { BcryptPasswordHasher } from '../adapters/outbound/bcrypt/BcryptPasswordHasher.js';
 import { GoogleOAuthProvider } from '../adapters/outbound/oauth/GoogleOAuthProvider.js';
@@ -46,6 +50,11 @@ import { PdfKitReportRenderer } from '../adapters/outbound/report/PdfKitReportRe
 // =======================================================================
 // Adapters return type
 // =======================================================================
+
+/** The screenshot store plus the browser-loadable URL helper both drivers offer. */
+export type AppScreenshotStore = ScreenshotStore & {
+  presignScreenshotUrl(objectKey: string, expiresInSeconds?: number): Promise<string>;
+};
 
 export interface Adapters {
   userRepo: PgUserRepo;
@@ -69,7 +78,9 @@ export interface Adapters {
   apiKeyRepo: PgApiKeyRepo;
   oauthAccountRepo: PgOAuthAccountRepo;
   integrationRepo: PgIntegrationRepo;
-  screenshotStore: S3ScreenshotStore;
+  screenshotStore: AppScreenshotStore;
+  /** Set only for the local driver: verifies signed screenshot URL tokens. */
+  screenshotTokenVerifier?: (token: string) => string | null;
   passwordHasher: BcryptPasswordHasher;
   tokenIssuer: JwtTokenIssuer;
   clock: SystemClock;
@@ -103,26 +114,44 @@ export function buildAdapters(
   const membershipRepo = new PgMembershipRepo(db);
   const notificationQueue = new PgNotificationQueue(db);
   const pinSequence = new PgProjectPinSequence(db);
-  const webhookRepo = new PgWebhookRepo(db);
+  const webhookRepo = new PgWebhookRepo(db, SecretBox.fromRawKey(config.integrationEncryptionKey));
   const userNotificationRepo = new PgUserNotificationRepo(db);
   const orgRepo = new PgOrgRepo(db);
   const invitationRepo = new PgInvitationRepo(db);
   const apiKeyRepo = new PgApiKeyRepo(db);
   const oauthAccountRepo = new PgOAuthAccountRepo(db);
-  const integrationRepo = new PgIntegrationRepo(db);
+  // A4: encrypt integration secrets at rest with the configured key.
+  const integrationSecretBox = SecretBox.fromRawKey(config.integrationEncryptionKey);
+  const integrationRepo = new PgIntegrationRepo(db, integrationSecretBox);
 
-  // ---- S3 Screenshot Store --------------------------------------------
-  const screenshotStoreConfig: S3ScreenshotStoreConfig = {
-    bucket: config.s3.bucket,
-    region: config.s3.region,
-    forcePathStyle: config.s3.forcePathStyle,
-    keyPrefix: config.s3.keyPrefix,
-  };
-  if (config.s3.endpoint) screenshotStoreConfig.endpoint = config.s3.endpoint;
-  if (config.s3.publicBaseUrl) {
-    screenshotStoreConfig.publicBaseUrl = config.s3.publicBaseUrl;
+  // ---- Screenshot store (local disk or S3) ------------------------------
+  let screenshotStore: AppScreenshotStore;
+  let screenshotTokenVerifier: ((token: string) => string | null) | undefined;
+  let reportS3Client: S3Client = s3Client;
+  if (config.storage.driver === 'local') {
+    const local = new LocalFsScreenshotStore({
+      dir: config.storage.localDir,
+      signingSecret: config.jwt.secret,
+      publicBaseUrl: config.appUrl,
+      keyPrefix: config.s3.keyPrefix,
+    });
+    screenshotStore = local;
+    screenshotTokenVerifier = (token) => local.verifyToken(token);
+    // The PDF renderer reads screenshots through an S3-shaped client.
+    reportS3Client = localStoreAsS3Reader(local);
+  } else {
+    const screenshotStoreConfig: S3ScreenshotStoreConfig = {
+      bucket: config.s3.bucket,
+      region: config.s3.region,
+      forcePathStyle: config.s3.forcePathStyle,
+      keyPrefix: config.s3.keyPrefix,
+    };
+    if (config.s3.endpoint) screenshotStoreConfig.endpoint = config.s3.endpoint;
+    if (config.s3.publicBaseUrl) {
+      screenshotStoreConfig.publicBaseUrl = config.s3.publicBaseUrl;
+    }
+    screenshotStore = new S3ScreenshotStore(s3Client, screenshotStoreConfig);
   }
-  const screenshotStore = new S3ScreenshotStore(s3Client, screenshotStoreConfig);
 
   // ---- Other adapters -------------------------------------------------
   const passwordHasher = new BcryptPasswordHasher(config.bcryptSaltRounds);
@@ -136,9 +165,10 @@ export function buildAdapters(
     fromAddress: config.smtp.fromAddress,
   });
 
-  const reportRenderer = new PdfKitReportRenderer(db, s3Client, {
+  const reportRenderer = new PdfKitReportRenderer(db, reportS3Client, {
     bucket: config.s3.bucket,
-    buildScreenshotUrl: (key) => screenshotStore.buildScreenshotUrl(key),
+    buildScreenshotUrl: (annotationId) =>
+      `${config.appUrl.replace(/\/+$/, '')}/api/v1/annotations/${annotationId}/screenshot?redirect=1`,
   });
 
   // ---- OAuth providers ------------------------------------------------
@@ -173,6 +203,7 @@ export function buildAdapters(
     oauthAccountRepo,
     integrationRepo,
     screenshotStore,
+    ...(screenshotTokenVerifier ? { screenshotTokenVerifier } : {}),
     passwordHasher,
     tokenIssuer,
     clock,

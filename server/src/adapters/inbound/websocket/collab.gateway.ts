@@ -20,10 +20,13 @@
 // that imports from `socket.io`; that's intentional and matches the
 // hexagonal layering rules enforced in `.eslintrc.cjs`.
 
+import { runAsOrg } from '../../../infrastructure/tenantContext.js';
 import type { Namespace, Server, Socket } from 'socket.io';
 import type { Knex } from 'knex';
 
-import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
+import type { TokenIssuer, VerifiedToken } from '../../../domain/auth/ports/TokenIssuer.js';
+import { checkSession } from '../http/auth.middleware.js';
+import { canAccessProject, findAccessibleAnnotation } from '../http/access.js';
 
 /**
  * Dependencies the gateway needs from the composition root.
@@ -34,6 +37,28 @@ import type { TokenIssuer } from '../../../domain/auth/ports/TokenIssuer.js';
 export interface CollabGatewayDeps {
   readonly tokenIssuer: TokenIssuer;
   readonly db: Knex;
+  /**
+   * Exact origins (the dashboard) from which the HttpOnly `fl_session`
+   * cookie is accepted as handshake credentials. Empty = cookie auth off.
+   */
+  readonly trustedCookieOrigins?: readonly string[];
+}
+
+/** Value of one cookie from a raw `Cookie` header, or null. */
+function readCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim()) || null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 /** Shape of the user info we attach to each authenticated socket. */
@@ -41,6 +66,10 @@ interface SocketUser {
   readonly userId: string;
   readonly email: string;
   readonly orgId: string;
+  /** Display name shown to peers (cursor relay). Never the email. */
+  readonly name: string;
+  /** Token claims re-validated against the DB on every room join. */
+  readonly token: VerifiedToken;
 }
 
 /**
@@ -70,6 +99,7 @@ export function installCollabGateway(
   deps: CollabGatewayDeps,
 ): void {
   const { tokenIssuer, db } = deps;
+  const trustedCookieOrigins = deps.trustedCookieOrigins ?? [];
 
   const collabNamespace: Namespace = io.of('/collab');
 
@@ -120,24 +150,48 @@ export function installCollabGateway(
   };
 
   // --- Authentication middleware --------------------------------------------
-  // Verifies the JWT supplied via `socket.handshake.auth.token` through
-  // the `TokenIssuer` port. The error messages map to the failure modes
-  // the dashboard's reconnect logic recognises.
-  collabNamespace.use((socket: Socket, next) => {
-    const token = socket.handshake.auth?.token;
+  // Verifies a JWT through the `TokenIssuer` port. Sources, in order:
+  //   1. `socket.handshake.auth.token` — extension + freshly-logged-in tab.
+  //   2. The HttpOnly `fl_session` cookie — a hard-refreshed dashboard tab,
+  //      whose in-memory bearer is gone. ONLY accepted when the handshake
+  //      Origin is the configured dashboard origin: a WebSocket upgrade
+  //      carries cookies but is not covered by CORS, so without this check
+  //      any site could open an authenticated socket as the victim (CSWSH).
+  // The error messages map to the failure modes the dashboard's reconnect
+  // logic recognises.
+  collabNamespace.use(async (socket: Socket, next) => {
+    let token: unknown = socket.handshake.auth?.token;
+    if (!token || typeof token !== 'string') {
+      const origin = socket.handshake.headers.origin;
+      const cookieOk =
+        typeof origin === 'string' && trustedCookieOrigins.length > 0 && trustedCookieOrigins.includes(origin);
+      token = cookieOk ? (readCookie(socket.handshake.headers.cookie, '__Host-fl_session') ??
+          readCookie(socket.handshake.headers.cookie, 'fl_session')) : null;
+    }
     if (!token || typeof token !== 'string') {
       return next(new Error('Authentication required'));
     }
+    let payload: VerifiedToken;
     try {
-      const payload = tokenIssuer.verify(token);
+      payload = tokenIssuer.verify(token);
+    } catch {
+      return next(new Error('Invalid or expired token'));
+    }
+    // A valid signature is not enough: the session must still be current
+    // (token_version not bumped) and the user still a member of the org.
+    try {
+      const session = await runAsOrg(payload.orgId, () => checkSession(db, payload));
+      if (!session.ok) return next(new Error('Invalid or expired token'));
       (socket as AuthenticatedSocket).user = {
         userId: payload.userId,
         email: payload.email,
         orgId: payload.orgId,
+        name: session.name ?? 'Teammate',
+        token: payload,
       };
       next();
     } catch {
-      next(new Error('Invalid or expired token'));
+      next(new Error('Authentication failed'));
     }
   });
 
@@ -154,22 +208,37 @@ export function installCollabGateway(
       return;
     }
 
+    // PP-08: socket events fire outside any HTTP request scope, so bind every
+    // handler to the authenticated user's org for the RLS tenant context.
+    const onEvent = (ev: string, h: (...a: any[]) => unknown): void => {
+      socket.on(ev, (...a: unknown[]) => runAsOrg(user.orgId, () => h(...a)));
+    };
+
     // Auto-join the user's personal room for notification delivery.
     socket.join(`user:${user.userId}`);
+    // Org-wide room (PP-01) for org-scoped events such as invitations.
+    socket.join(`org:${user.orgId}`);
 
     // Track annotations this socket has opened so we can clean them up
     // on disconnect.
     const openAnnotations = new Set<string>();
 
     // --- join event ---
-    socket.on('join', async (data: { projectId: string }) => {
+    onEvent('join', async (data: { projectId: string }) => {
       if (!data?.projectId || typeof data.projectId !== 'string') return;
 
-      // Authorize: verify the user's org owns this project (mirrors HTTP IDOR check).
-      const project = await db('projects')
-        .where({ id: data.projectId, org_id: user.orgId })
-        .first('id');
-      if (!project) {
+      // Authorize with the same rule as the HTTP routes: org match AND
+      // project owner / team member. The session is re-validated too, so a
+      // socket opened before the user was removed from the org can't keep
+      // joining rooms.
+      let allowed = false;
+      try {
+        const session = await checkSession(db, user.token);
+        allowed = session.ok && (await canAccessProject(db, user, data.projectId));
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) {
         socket.emit('error', { code: 'PROJECT_NOT_FOUND', message: 'Not found or access denied' });
         return;
       }
@@ -189,7 +258,7 @@ export function installCollabGateway(
     });
 
     // --- leave event ---
-    socket.on('leave', (data: { projectId: string }) => {
+    onEvent('leave', (data: { projectId: string }) => {
       if (!data?.projectId || typeof data.projectId !== 'string') return;
 
       const room = getRoomId(data.projectId);
@@ -220,14 +289,18 @@ export function installCollabGateway(
     });
 
     // --- annotation:open event (co-viewer presence) ---
-    socket.on('annotation:open', async (data: { id: string }) => {
+    onEvent('annotation:open', async (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
       const annotationId = data.id;
 
-      // Authorize: verify the annotation belongs to the user's org.
-      const annotation = await db('annotations')
-        .where({ id: annotationId, org_id: user.orgId })
-        .first('id');
+      // Authorize: annotation in the user's org AND its project accessible.
+      let annotation: unknown = null;
+      try {
+        const session = await checkSession(db, user.token);
+        annotation = session.ok ? await findAccessibleAnnotation(db, user, annotationId) : null;
+      } catch {
+        annotation = null;
+      }
       if (!annotation) {
         socket.emit('error', { code: 'ANNOTATION_NOT_FOUND', message: 'Not found or access denied' });
         return;
@@ -245,14 +318,14 @@ export function installCollabGateway(
     });
 
     // --- cursor:move event (live cursor relay) ---
-    socket.on('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
+    onEvent('cursor:move', (data: { x: number; y: number; pageUrl: string }) => {
       if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
       // Broadcast to all project rooms this socket is in (excluding sender)
       for (const room of socket.rooms) {
         if (room.startsWith('project:')) {
           socket.to(room).emit('cursor:move', {
             userId: user.userId,
-            email: user.email,
+            name: user.name,
             x: data.x,
             y: data.y,
             pageUrl: data.pageUrl ?? '',
@@ -262,7 +335,7 @@ export function installCollabGateway(
     });
 
     // --- annotation:close event (co-viewer presence) ---
-    socket.on('annotation:close', (data: { id: string }) => {
+    onEvent('annotation:close', (data: { id: string }) => {
       if (!data?.id || typeof data.id !== 'string') return;
       const annotationId = data.id;
 
@@ -285,7 +358,7 @@ export function installCollabGateway(
     });
 
     // --- disconnect event ---
-    socket.on('disconnect', () => {
+    onEvent('disconnect', () => {
       // Broadcast cursor:leave to all project rooms this socket was in.
       for (const room of socket.rooms) {
         if (room.startsWith('project:')) {

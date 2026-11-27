@@ -1,0 +1,13 @@
+# Store packaging output (web-ext zips, source archive)
+artifacts/
+
+# Safari build output copied into the Xcode project by `npm run safari:sync`
+dist-safari/
+safari/Pinpoint/Pinpoint Extension/Resources/
+
+# Xcode per-user / build state
+safari/**/xcuserdata/
+safari/**/*.xcuserstate
+safari/**/DerivedData/
+safari/**/build/
+safari/**/.build/

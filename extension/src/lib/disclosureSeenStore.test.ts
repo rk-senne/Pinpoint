@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   STORAGE_KEY_PREFIX,
   readDisclosureSeen,
+  DISCLOSURE_READ_TIMEOUT_MS,
   resetAllDisclosureSeen,
   writeDisclosureSeen,
 } from './disclosureSeenStore';
@@ -123,6 +124,21 @@ describe('writeDisclosureSeen', () => {
 });
 
 describe('readDisclosureSeen', () => {
+  it('falls back to "not seen" when chrome.storage.sync never answers', async () => {
+    vi.useFakeTimers();
+    const g = globalThis as unknown as { chrome?: { storage?: { sync?: unknown } } };
+    const saved = g.chrome;
+    g.chrome = { ...(saved ?? {}), storage: { ...(saved?.storage ?? {}), sync: { get: () => new Promise(() => {}), set: async () => {} } } };
+    try {
+      const pending = readDisclosureSeen('slow.example.com');
+      await vi.advanceTimersByTimeAsync(DISCLOSURE_READ_TIMEOUT_MS + 1);
+      await expect(pending).resolves.toBe(false);
+    } finally {
+      g.chrome = saved;
+      vi.useRealTimers();
+    }
+  });
+
   it('returns true when the host has a persisted seen flag', async () => {
     chromeStub.storage.sync._data['disclosure-seen-app.example.com'] = true;
     await expect(readDisclosureSeen('app.example.com')).resolves.toBe(true);

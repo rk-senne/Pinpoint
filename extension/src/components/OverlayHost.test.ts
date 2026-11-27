@@ -15,14 +15,14 @@
  *   - Listens for child events (`pin-click`, `submit`, `cancel`, `close`,
  *     `comment-submit`, `status-change`, `annotation-select`) and updates
  *     the store + emits `host-action` events for the content script.
- *   - Mounts a Socket.IO-shaped client; `annotation:created`,
- *     `annotation:updated`, `annotation:status`, `comment:created`,
+ *   - Mounts a Socket.IO-shaped client; `annotation.created`,
+ *     `annotation.updated`, `annotation.status_changed`, `comment.created`,
  *     `annotation:viewers`, and disconnect/reconnect events update the
  *     store.
  *   - `disconnectedCallback` disposes the PinPositioner, disconnects the
  *     socket, and unsubscribes signal listeners.
  */
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import './OverlayHost';
 import {
@@ -684,36 +684,94 @@ describe('<fl-overlay-host>', () => {
       cleanup();
     });
 
-    it('appends an annotation on `annotation:created`', () => {
+    it('appends an annotation on `annotation.created`', () => {
       const { host, socket, cleanup } = mountHost();
       const a = makeAnnotation({ id: 'srv-1' });
-      socket.triggerEvent('annotation:created', a);
+      socket.triggerEvent('annotation.created', a);
       expect(host.store.annotations.get().some((x) => x.id === 'srv-1')).toBe(true);
       cleanup();
     });
 
-    it('replaces an annotation on `annotation:updated`', () => {
+    it('dedupes `annotation.created` by id and by clientRequestId', () => {
+      const { host, socket, cleanup } = mountHost();
+      const a = makeAnnotation({ id: 'srv-1' });
+      socket.triggerEvent('annotation.created', a);
+      socket.triggerEvent('annotation.created', a);
+      expect(host.store.annotations.get().filter((x) => x.id === 'srv-1').length).toBe(1);
+
+      // Optimistic row keyed by the local UUID; the broadcast carries it.
+      host.store.annotations.set([makeAnnotation({ id: 'local-1', body: 'draft' })]);
+      socket.triggerEvent('annotation.created', {
+        ...makeAnnotation({ id: 'srv-2', body: 'final' }),
+        clientRequestId: 'local-1',
+      });
+      const list = host.store.annotations.get();
+      expect(list.length).toBe(1);
+      expect(list[0].id).toBe('srv-2');
+      expect(list[0].body).toBe('final');
+      cleanup();
+    });
+
+    it('replaces an annotation on `annotation.updated`', () => {
       const { host, socket, cleanup } = mountHost();
       host.store.annotations.set([makeAnnotation({ id: 'a1', body: 'old' })]);
-      socket.triggerEvent('annotation:updated', makeAnnotation({ id: 'a1', body: 'new' }));
+      socket.triggerEvent('annotation.updated', makeAnnotation({ id: 'a1', body: 'new' }));
       expect(host.store.annotations.get()[0].body).toBe('new');
       cleanup();
     });
 
-    it('updates status on `annotation:status`', () => {
+    it('updates status on `annotation.status_changed` (full-annotation payload)', () => {
       const { host, socket, cleanup } = mountHost();
-      host.store.annotations.set([makeAnnotation({ id: 'a1', status: 'active' })]);
-      socket.triggerEvent('annotation:status', { id: 'a1', status: 'resolved' });
-      expect(host.store.annotations.get()[0].status).toBe('resolved');
+      host.store.annotations.set([makeAnnotation({ id: 'a1', status: 'active', body: 'keep' })]);
+      socket.triggerEvent('annotation.status_changed', {
+        ...makeAnnotation({ id: 'a1', status: 'resolved', body: 'ignored' }),
+        previousStatus: 'active',
+        changedBy: 'u9',
+      });
+      const a = host.store.annotations.get()[0];
+      expect(a.status).toBe('resolved');
+      expect(a.body).toBe('keep');
       cleanup();
     });
 
-    it('appends a comment on `comment:created` and dedupes duplicates', () => {
+    it('appends a comment from the wrapped `comment.created` payload and dedupes', () => {
       const { host, socket, cleanup } = mountHost();
       const c = makeComment({ id: 'c1' });
-      socket.triggerEvent('comment:created', c);
-      socket.triggerEvent('comment:created', c);
+      const payload = { comment: c, annotationId: c.annotationId, projectId: 'p1' };
+      socket.triggerEvent('comment.created', payload);
+      socket.triggerEvent('comment.created', payload);
       expect(host.store.comments.get().length).toBe(1);
+      cleanup();
+    });
+
+    it('swaps an optimistic comment for its echo via clientRequestId', () => {
+      const { host, socket, cleanup } = mountHost();
+      host.store.comments.set([makeComment({ id: 'local-c' })]);
+      socket.triggerEvent('comment.created', {
+        comment: { ...makeComment({ id: 'srv-c' }), clientRequestId: 'local-c' },
+      });
+      expect(host.store.comments.get().map((c) => c.id)).toEqual(['srv-c']);
+      cleanup();
+    });
+
+    it('does not subscribe to the deprecated colon aliases', () => {
+      const { socket, cleanup } = mountHost();
+      for (const name of [
+        'annotation:created',
+        'annotation:updated',
+        'annotation:status',
+        'comment:created',
+      ]) {
+        expect(socket.handlers.has(name)).toBe(false);
+      }
+      for (const name of [
+        'annotation.created',
+        'annotation.updated',
+        'annotation.status_changed',
+        'comment.created',
+      ]) {
+        expect(socket.handlers.has(name)).toBe(true);
+      }
       cleanup();
     });
 
@@ -747,7 +805,7 @@ describe('<fl-overlay-host>', () => {
     });
 
     it('stops forwarding store changes to children after disconnect', () => {
-      const { host, socket, cleanup } = mountHost();
+      const { host, cleanup } = mountHost();
       host.store.annotations.set([makeAnnotation({ id: 'a1' })]);
       const sidebar = host.shadowRoot!.querySelector('fl-sidebar-panel') as HTMLElement & {
         annotations: readonly Annotation[];
@@ -1003,7 +1061,8 @@ describe('<fl-overlay-host>', () => {
 
       expect(wrapper.hasAttribute('hidden')).toBe(true);
       expect(host.pickerVisible).toBe(false);
-      expect(sidebar.style.display).toBe('');
+      // The sidebar starts closed, so it stays hidden once the picker goes away.
+      expect(sidebar.style.display).toBe('none');
       expect(popover.style.display).toBe('');
       expect(toolbar.style.display).toBe('');
       expect(layer.style.display).toBe('');
@@ -1085,6 +1144,13 @@ describe('<fl-overlay-host>', () => {
   /* ---------------------------------------------------------------- */
 
   describe('sub-frame click relay listener (task 40.3 / 40.4)', () => {
+    /** A real child frame whose `window.parent === window`. */
+    function childFrame(): { source: Window; remove: () => void } {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      return { source: iframe.contentWindow as Window, remove: () => iframe.remove() };
+    }
+
     it('opens the popover at the relayed coordinates when a same-origin `pinpoint:subframe-click` MessageEvent is dispatched (40.3)', () => {
       const { host, cleanup } = mountHost();
       // Ensure no popover is open yet.
@@ -1093,15 +1159,17 @@ describe('<fl-overlay-host>', () => {
       // Synthesize the message the sub-frame relay would post. The
       // relay rect is in the top frame's viewport (sender already
       // added the iframe's offset for same-origin parents).
+      const frame = childFrame();
       const event = new MessageEvent('message', {
         data: {
           type: 'pinpoint:subframe-click',
           rect: { x: 100, y: 200, w: 40, h: 30 },
         },
         origin: window.location.origin,
-        source: window,
+        source: frame.source,
       });
       window.dispatchEvent(event);
+      frame.remove();
 
       const target = host.store.popoverTarget.get();
       expect(target).not.toBeNull();
@@ -1120,13 +1188,14 @@ describe('<fl-overlay-host>', () => {
       const { host, cleanup } = mountHost();
       expect(host.store.popoverTarget.get()).toBeNull();
 
+      const frame = childFrame();
       const event = new MessageEvent('message', {
         data: {
           type: 'pinpoint:subframe-click',
           rect: { x: 100, y: 200, w: 40, h: 30 },
         },
         origin: 'https://evil.example',
-        source: null,
+        source: frame.source,
       });
       window.dispatchEvent(event);
 
@@ -1135,14 +1204,57 @@ describe('<fl-overlay-host>', () => {
       cleanup();
     });
 
+    it('F11: drops forged `pinpoint:subframe-click` from the top window itself, null, or a non-child window', () => {
+      const { host, cleanup } = mountHost();
+      const data = { type: 'pinpoint:subframe-click', rect: { x: 1, y: 2, w: 3, h: 4 } };
+      // Page script doing window.postMessage(...) → source === window.
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin: window.location.origin, source: window }),
+      );
+      // No source at all.
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin: window.location.origin, source: null }),
+      );
+      // A window that is not our child (e.g. an opener / sibling).
+      const fakeSibling = { parent: {} } as unknown as Window;
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin: window.location.origin, source: fakeSibling }),
+      );
+      expect(host.store.popoverTarget.get()).toBeNull();
+      cleanup();
+    });
+
+    it('F11: drops non-finite / absurd relay coordinates from a child frame', () => {
+      const { host, cleanup } = mountHost();
+      const frame = childFrame();
+      for (const rect of [
+        { x: Number.NaN, y: 0, w: 1, h: 1 },
+        { x: 0, y: Number.POSITIVE_INFINITY, w: 1, h: 1 },
+        { x: 1e9, y: 0, w: 1, h: 1 },
+      ]) {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'pinpoint:subframe-click', rect },
+            origin: window.location.origin,
+            source: frame.source,
+          }),
+        );
+      }
+      frame.remove();
+      expect(host.store.popoverTarget.get()).toBeNull();
+      cleanup();
+    });
+
     it('ignores MessageEvents that are not the sub-frame relay envelope', () => {
       const { host, cleanup } = mountHost();
+      const frame = childFrame();
 
       // Wrong type
       window.dispatchEvent(
         new MessageEvent('message', {
           data: { type: 'something-else', rect: { x: 1, y: 2, w: 3, h: 4 } },
           origin: window.location.origin,
+          source: frame.source,
         }),
       );
       // Missing rect
@@ -1150,6 +1262,7 @@ describe('<fl-overlay-host>', () => {
         new MessageEvent('message', {
           data: { type: 'pinpoint:subframe-click' },
           origin: window.location.origin,
+          source: frame.source,
         }),
       );
       // Non-numeric rect fields
@@ -1160,6 +1273,7 @@ describe('<fl-overlay-host>', () => {
             rect: { x: 'a', y: 'b', w: 'c', h: 'd' },
           },
           origin: window.location.origin,
+          source: frame.source,
         }),
       );
       // Plain string payload
@@ -1167,9 +1281,11 @@ describe('<fl-overlay-host>', () => {
         new MessageEvent('message', {
           data: 'hello',
           origin: window.location.origin,
+          source: frame.source,
         }),
       );
 
+      frame.remove();
       expect(host.store.popoverTarget.get()).toBeNull();
       cleanup();
     });
@@ -1181,6 +1297,7 @@ describe('<fl-overlay-host>', () => {
       // Now that the host is detached, a same-origin relay event must
       // not mutate the (still-reachable) store.
       const before = host.store.popoverTarget.get();
+      const frame = childFrame();
       window.dispatchEvent(
         new MessageEvent('message', {
           data: {
@@ -1188,10 +1305,217 @@ describe('<fl-overlay-host>', () => {
             rect: { x: 1, y: 2, w: 3, h: 4 },
           },
           origin: window.location.origin,
-          source: window,
+          source: frame.source,
         }),
       );
+      frame.remove();
       expect(host.store.popoverTarget.get()).toBe(before);
     });
+  });
+});
+
+describe('<fl-overlay-host> click-to-annotate, sidebar and shortcuts', () => {
+  const annotation = (id: string, pinNumber: number) =>
+    ({
+      id,
+      projectId: 'project-1',
+      pinNumber,
+      type: 'note',
+      severity: 'major',
+      status: 'active',
+      body: `body ${id}`,
+      target: { cssSelector: 'body', xpath: '/html/body', pageX: 5, pageY: 5, tagName: 'BODY', textSnippet: '' },
+    }) as unknown as import('@pinpoint/shared').Annotation;
+
+  beforeAll(() => {
+    // jsdom lacks CSS.escape, which DOMTargetResolver uses for #id selectors.
+    if (typeof CSS === 'undefined' || typeof CSS.escape !== 'function') {
+      (globalThis as unknown as { CSS: { escape: (v: string) => string } }).CSS = {
+        escape: (v: string) => v,
+      };
+    }
+  });
+
+  it('opens the popover anchored to a clicked page element and swallows the click', () => {
+    const { host, cleanup } = mountHost();
+    const btn = document.createElement('button');
+    btn.id = 'buy';
+    document.body.appendChild(btn);
+    const onPage = vi.fn();
+    btn.addEventListener('click', onPage);
+
+    btn.click();
+
+    const target = host.store.popoverTarget.get();
+    expect(target?.domTarget?.cssSelector).toBe('#buy');
+    expect(target?.domTarget?.tagName).toBe('BUTTON');
+    expect(onPage).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it('ignores page clicks while the overlay is hidden or has no project', () => {
+    const { host, cleanup } = mountHost();
+    host.projectId = null;
+    const btn = document.createElement('button');
+    document.body.appendChild(btn);
+    btn.click();
+    expect(host.store.popoverTarget.get()).toBeNull();
+    cleanup();
+  });
+
+  it('starts with the sidebar closed and toggles it via the toggle-sidebar command', () => {
+    const { host, cleanup } = mountHost();
+    const sidebar = host.shadowRoot!.querySelector('fl-sidebar-panel') as HTMLElement;
+    expect(host.sidebarOpen).toBe(false);
+    expect(sidebar.style.display).toBe('none');
+    window.dispatchEvent(new CustomEvent('pinpoint:command', { detail: { command: 'toggle-sidebar' } }));
+    expect(host.sidebarOpen).toBe(true);
+    expect(sidebar.style.display).toBe('');
+    window.dispatchEvent(new CustomEvent('pinpoint:command', { detail: { command: 'toggle-sidebar' } }));
+    expect(host.sidebarOpen).toBe(false);
+    cleanup();
+  });
+
+  it('next-pin / prev-pin cycle through annotations by pin number and wrap', () => {
+    const { host, cleanup } = mountHost();
+    host.store.annotations.set([annotation('b', 2), annotation('a', 1), annotation('c', 3)]);
+    const fire = (command: string) =>
+      window.dispatchEvent(new CustomEvent('pinpoint:command', { detail: { command } }));
+    fire('next-pin');
+    expect(host.store.selectedAnnotationId.get()).toBe('a');
+    fire('next-pin');
+    expect(host.store.selectedAnnotationId.get()).toBe('b');
+    fire('prev-pin');
+    expect(host.store.selectedAnnotationId.get()).toBe('a');
+    fire('prev-pin');
+    expect(host.store.selectedAnnotationId.get()).toBe('c');
+    cleanup();
+  });
+});
+
+describe('<fl-overlay-host> toolbar feedback', () => {
+  it('shows a toolbar status message when the popover reports a screenshot error', () => {
+    const { host, cleanup } = mountHost();
+    const popover = host.shadowRoot!.querySelector('fl-popover') as HTMLElement;
+    popover.dispatchEvent(
+      new CustomEvent('screenshot-error', {
+        detail: { annotationId: 'a', code: 'upload-failed', message: 'Could not upload screenshot: HTTP 500' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    const toast = host
+      .shadowRoot!.querySelector('fl-floating-toolbar')!
+      .shadowRoot!.querySelector('.fl-toolbar-toast') as HTMLElement;
+    expect(toast.hidden).toBe(false);
+    expect(toast.textContent).toContain('HTTP 500');
+    cleanup();
+  });
+
+  it('toolbar sidebar button toggles the sidebar and reflects aria-pressed', () => {
+    const { host, cleanup } = mountHost();
+    const toolbar = host.shadowRoot!.querySelector('fl-floating-toolbar')!;
+    const btn = toolbar.shadowRoot!.querySelector('button[data-action="sidebar"]') as HTMLButtonElement;
+    btn.click();
+    expect(host.sidebarOpen).toBe(true);
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    btn.click();
+    expect(host.sidebarOpen).toBe(false);
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    cleanup();
+  });
+});
+
+describe('<fl-overlay-host> pending-sync state', () => {
+  const submitDetail = (id: string) => ({
+    annotation: {
+      id,
+      projectId: '',
+      pageId: '',
+      pinNumber: 1,
+      type: 'note',
+      severity: 'minor',
+      status: 'active',
+      body: 'offline note',
+      authorId: '',
+      createdAt: '',
+      updatedAt: '',
+      target: { cssSelector: 'body', xpath: '/html/body', pageX: 1, pageY: 1, tagName: 'BODY', textSnippet: '' },
+      environment: {},
+    },
+  });
+
+  it('marks an optimistic pin as pending until it is remapped to the server id', () => {
+    const { host, cleanup } = mountHost();
+    const popover = host.shadowRoot!.querySelector('fl-popover') as HTMLElement;
+    popover.dispatchEvent(new CustomEvent('submit', { detail: submitDetail('local-1') }));
+    const pin = host.shadowRoot!.querySelector('fl-annotation-pin') as HTMLElement;
+    expect(pin.getAttribute('data-pending')).toBe('true');
+    expect(pin.getAttribute('aria-label')).toContain('not synced');
+    expect(host.isPendingSync('local-1')).toBe(true);
+
+    // Syncer remap: the local row's id becomes the server id.
+    host.store.annotations.set(
+      host.store.annotations.get().map((a) => (a.id === 'local-1' ? { ...a, id: 'srv-1', pinNumber: 7 } : a)),
+    );
+    const synced = host.shadowRoot!.querySelector('fl-annotation-pin') as HTMLElement;
+    expect(synced.hasAttribute('data-pending')).toBe(false);
+    expect(host.isPendingSync('local-1')).toBe(false);
+    cleanup();
+  });
+
+  it('reconciles a socket broadcast of our own create via clientRequestId (no duplicate row)', () => {
+    const { host, socket, cleanup } = mountHost();
+    const popover = host.shadowRoot!.querySelector('fl-popover') as HTMLElement;
+    popover.dispatchEvent(new CustomEvent('submit', { detail: submitDetail('local-2') }));
+    socket.triggerEvent('annotation.created', {
+      ...submitDetail('srv-2').annotation,
+      pinNumber: 4,
+      clientRequestId: 'local-2',
+    });
+    const rows = host.store.annotations.get();
+    expect(rows.map((a) => a.id)).toEqual(['srv-2']);
+    expect(rows[0].pinNumber).toBe(4);
+    cleanup();
+  });
+});
+
+describe('<fl-overlay-host> server event names', () => {
+  const ann = (id: string, pinNumber: number) =>
+    ({
+      id,
+      projectId: 'project-1',
+      pinNumber,
+      type: 'note',
+      severity: 'minor',
+      status: 'active',
+      body: id,
+      target: { cssSelector: 'body', xpath: '/html/body', pageX: 1, pageY: 1, tagName: 'BODY', textSnippet: '' },
+    }) as unknown as import('@pinpoint/shared').Annotation;
+
+  it('adds a teammate annotation broadcast as `annotation.created` (server bus name)', () => {
+    const { host, socket, cleanup } = mountHost();
+    socket.triggerEvent('annotation.created', { ...ann('srv-9', 9), pageUrl: 'http://x/' });
+    expect(host.store.annotations.get().map((a) => a.id)).toEqual(['srv-9']);
+    cleanup();
+  });
+
+  it('unwraps `comment.created` `{ comment }` payloads and de-dupes', () => {
+    const { host, socket, cleanup } = mountHost();
+    const comment = { id: 'c1', annotationId: 'a1', authorId: 'u1', body: 'hi', mentions: [], createdAt: '' };
+    socket.triggerEvent('comment.created', { comment, annotationId: 'a1', projectId: 'project-1' });
+    socket.triggerEvent('comment.created', { comment, annotationId: 'a1', projectId: 'project-1' });
+    expect(host.store.comments.get()).toEqual([comment]);
+    cleanup();
+  });
+
+  it('asks the content script to load existing comments when an annotation opens', () => {
+    const { host, cleanup } = mountHost();
+    host.store.annotations.set([ann('a1', 1)]);
+    const seen: OverlayHostAction[] = [];
+    host.addEventListener('host-action', (e) => seen.push((e as CustomEvent<OverlayHostAction>).detail));
+    host.store.selectedAnnotationId.set('a1');
+    expect(seen).toContainEqual({ kind: 'load-comments', annotationId: 'a1' });
+    cleanup();
   });
 });

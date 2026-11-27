@@ -43,7 +43,7 @@ describe('listProjectMembers use case', () => {
     expect(result.value.members.map((m) => m.userId)).toContain(owner.id);
   });
 
-  it('returns Forbidden for a stranger', async () => {
+  it('returns NotFound (not Forbidden) for a stranger (PP-24)', async () => {
     const { usecase, project } = await buildSut();
 
     const result = await usecase.execute({
@@ -53,7 +53,7 @@ describe('listProjectMembers use case', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.kind).toBe('Forbidden');
+    expect(result.error.kind).toBe('NotFound');
   });
 
   it('returns NotFound when the project is missing', async () => {

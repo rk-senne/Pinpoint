@@ -52,7 +52,8 @@ export interface CreateCommentOutput {
    * through the result instead of dispatched here so the use case stays
    * free of the notification port.
    */
-  annotationAuthorId: string;
+  /** NULL when the annotation was submitted by a guest/widget. */
+  annotationAuthorId: string | null;
 }
 
 export interface CreateCommentDeps {
@@ -60,6 +61,11 @@ export interface CreateCommentDeps {
   annotationRepo: AnnotationRepo;
   eventBus: EventBus;
   notificationTriggers?: NotificationTriggers;
+  /**
+   * PP-09: when wired, mentions are intersected with the org's members, so a
+   * foreign / invented user id can never receive a notification.
+   */
+  isOrgMember?: (orgId: string, userId: string) => Promise<boolean>;
 }
 
 export class CreateComment {
@@ -71,7 +77,9 @@ export class CreateComment {
     const { commentRepo, annotationRepo, eventBus } = this.deps;
 
     const annotation = await annotationRepo.findById(input.annotationId);
-    if (!annotation) {
+    // Tenancy: an annotation in another org is indistinguishable from a
+    // missing one.
+    if (!annotation || (input.orgId && annotation.orgId && annotation.orgId !== input.orgId)) {
       return err(new NotFound('Annotation not found.'));
     }
 
@@ -103,7 +111,13 @@ export class CreateComment {
 
     const fromBody = extractMentions(trimmed);
     const explicit = input.mentions ?? [];
-    const allMentions = Array.from(new Set([...fromBody, ...explicit]));
+    let allMentions = Array.from(new Set([...fromBody, ...explicit])).filter((m) => UUID_VALIDATOR_RE.test(m));
+    if (input.orgId && this.deps.isOrgMember) {
+      const isMember = this.deps.isOrgMember;
+      const orgId = input.orgId;
+      const checks = await Promise.all(allMentions.map((m) => isMember(orgId, m)));
+      allMentions = allMentions.filter((_, i) => checks[i]);
+    }
 
     const newComment: NewComment = {
       annotationId: input.annotationId,

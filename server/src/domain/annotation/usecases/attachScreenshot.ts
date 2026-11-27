@@ -13,12 +13,13 @@
 // already been parsed and validated against the shared Zod schema.
 
 import type { AnnotationRepo } from '../ports/AnnotationRepo.js';
-import type { ScreenshotStore } from '../ports/ScreenshotStore.js';
+import { StorageUnavailableError, type ScreenshotStore } from '../ports/ScreenshotStore.js';
 import type { ProjectRepo } from '../../project/ports/ProjectRepo.js';
 import type { TeamMemberRepo } from '../../team/ports/TeamMemberRepo.js';
 import { hasProjectAccess } from '../../shared/projectAccess.js';
 import {
   Forbidden,
+  Unavailable,
   NotFound,
   type DomainError,
   type Result,
@@ -81,19 +82,30 @@ export class AttachScreenshot {
       );
     }
 
-    const upload = await screenshotStore.uploadScreenshot({
-      annotationId: input.annotationId,
-      body: input.body,
-      contentType: input.contentType,
-    });
-
+    let upload: { objectKey: string; url: string };
     let markupResult: { objectKey: string; url: string } | undefined;
-    if (input.markupDocument !== undefined) {
-      const r = await screenshotStore.uploadMarkupDocument({
-        screenshotKey: upload.objectKey,
-        markupDocument: input.markupDocument,
+    try {
+      upload = await screenshotStore.uploadScreenshot({
+        annotationId: input.annotationId,
+        body: input.body,
+        contentType: input.contentType,
       });
-      markupResult = { objectKey: r.objectKey, url: r.url };
+      if (input.markupDocument !== undefined) {
+        const r = await screenshotStore.uploadMarkupDocument({
+          screenshotKey: upload.objectKey,
+          markupDocument: input.markupDocument,
+        });
+        markupResult = { objectKey: r.objectKey, url: r.url };
+      }
+    } catch (e) {
+      if (e instanceof StorageUnavailableError) {
+        return err(
+          new Unavailable(
+            'Screenshot storage is not configured or is currently unreachable. The annotation was saved without a screenshot; try again later or contact your administrator.',
+          ),
+        );
+      }
+      throw e;
     }
 
     await annotationRepo.setScreenshotKey(input.annotationId, upload.objectKey);

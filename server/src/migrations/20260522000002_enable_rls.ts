@@ -1,11 +1,14 @@
 import type { Knex } from 'knex';
 
 /**
- * Enable Row-Level Security on tenant-scoped tables.
- * RLS ensures data isolation at the database level — even if application
- * code has a bug, cross-tenant data access is impossible.
+ * Enable Row-Level Security on the first tenant tables.
  *
- * The application sets `app.current_org_id` at the start of each transaction.
+ * SUPERSEDED (PP-08, docs/SECURITY_REVIEW.md): these original policies were
+ * never effective on their own (nothing set `app.current_org_id`, and the app
+ * ran as a BYPASSRLS superuser). Migration 20261125000101_row_level_security
+ * drops them and installs the real, enforced policy set for every tenant table;
+ * the API now connects as the unprivileged `pinpoint_app` role and pushes the
+ * tenant context into each connection (infrastructure/tenantContext.ts).
  */
 export async function up(knex: Knex): Promise<void> {
   // Enable RLS on tenant tables

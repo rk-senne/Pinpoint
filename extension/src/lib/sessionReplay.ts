@@ -6,7 +6,16 @@
  * Records: mouse moves (throttled), clicks, scrolls, input changes,
  * and DOM mutations (via MutationObserver). Circular buffer keeps
  * memory bounded.
+ *
+ * Redaction (Mission C3): captured `input` values are redaction-applied
+ * BEFORE they land in the buffer — sensitive fields (`type=password`,
+ * `cc-*` autofill, elements under `data-fl-redact` / inside a
+ * `data-fl-no-redact` subtree) are masked, and the remaining text is run
+ * through `scrubSecrets` to drop Bearer tokens / JWTs / sensitive query
+ * params. Nothing sensitive is ever persisted or uploaded.
  */
+
+import { scrubSecrets } from './consoleCapture';
 
 export interface ReplayEvent {
   type: 'mousemove' | 'click' | 'scroll' | 'input' | 'mutation' | 'resize';
@@ -52,7 +61,11 @@ export class SessionReplayRecorder {
 
     const onInput = (e: Event) => {
       const target = e.target as HTMLInputElement;
-      push({ type: 'input', timestamp: 0, data: { selector: cssPath(target), value: target.value?.slice(0, 100) } });
+      push({
+        type: 'input',
+        timestamp: 0,
+        data: { selector: cssPath(target), value: redactInputValue(target) },
+      });
     };
 
     const onResize = () => {
@@ -114,3 +127,30 @@ function cssPath(el: Element | null): string {
     : '';
   return `${tag}${id}${cls}`;
 }
+
+/** Mask for fully-redacted fields. */
+const INPUT_MASK = '[REDACTED]';
+
+/**
+ * Redaction for a captured `input` value (Mission C3). Returns a masked
+ * marker for sensitive fields; otherwise returns the value truncated to 100
+ * chars and run through `scrubSecrets`. Pure + null-safe so a detached or
+ * non-input target never throws.
+ */
+export function redactInputValue(target: HTMLInputElement | null): string {
+  if (!target) return '';
+  // Fully mask password + credit-card fields, explicit opt-in, and anything
+  // inside a `data-fl-no-redact` subtree (same hooks as screenshot redaction).
+  const type = (target.getAttribute?.('type') ?? '').toLowerCase();
+  const autocomplete = (target.getAttribute?.('autocomplete') ?? '').toLowerCase();
+  const hasRedactAttr =
+    typeof target.closest === 'function' &&
+    (target.closest('[data-fl-redact]') !== null ||
+      target.closest('[data-fl-no-redact]') !== null);
+  if (type === 'password' || autocomplete.startsWith('cc-') || hasRedactAttr) {
+    return INPUT_MASK;
+  }
+  const raw = typeof target.value === 'string' ? target.value.slice(0, 100) : '';
+  return scrubSecrets(raw);
+}
+

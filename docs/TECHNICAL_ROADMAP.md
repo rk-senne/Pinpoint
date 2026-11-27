@@ -1,5 +1,8 @@
 # Pinpoint — Technical Roadmap
 
+> **Superseded (Nov 2026):** AWS is no longer used. Deployment is the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); AWS/Terraform/ECS mentions below are historical.
+
+
 **Version:** 1.0 | **Date:** 22 May 2026 | **Status:** Draft
 
 ---
@@ -12,11 +15,10 @@
 
 ---
 
-## Multi-Tenancy: Shared DB + Row-Level Security
+## Multi-Tenancy: Shared DB, application-layer isolation + enforced PostgreSQL RLS
 
 - `org_id` column on all tenant tables
-- PostgreSQL RLS policies enforce isolation at DB level
-- Knex transaction wrapper sets `SET LOCAL app.current_org_id` per request
+- Tenant isolation is enforced in the application layer (org_id predicates + access checks) and, as a second line, by PostgreSQL RLS: the API runs as the unprivileged `pinpoint_app` role and every connection carries `app.current_org_id` / `app.system` from an AsyncLocalStorage tenant context (docs/SECURITY_REVIEW.md PP-08, migration `20261125000101_row_level_security.ts`)
 - JWT extended with `org_id` + `role` claims
 
 ---

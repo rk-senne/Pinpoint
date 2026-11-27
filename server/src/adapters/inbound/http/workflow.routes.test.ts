@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createWorkflowRoutes, type WorkflowRouteDeps } from './workflow.routes.js';
 
@@ -10,9 +10,9 @@ import { createWorkflowRoutes, type WorkflowRouteDeps } from './workflow.routes.
  * req.user.orgId when provided.
  */
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
-const PROJECT_ID = 'b0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-4000-8000-000000000002';
+const PROJECT_ID = 'b0000000-0000-4000-8000-000000000001';
 
 function fakeAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
   (req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
@@ -87,7 +87,7 @@ describe('workflow.routes — POST /api/v1/workflow/rules (IDOR fix #5)', () => 
   });
 
   it('allows creation when projectId belongs to caller org', async () => {
-    const ownedProject = { id: PROJECT_ID, org_id: ORG_ID };
+    const ownedProject = { id: PROJECT_ID, org_id: ORG_ID, owner_id: 'u1' };
     const insertedRule = { id: 'rule-new', org_id: ORG_ID, project_id: PROJECT_ID, name: 'Auto-assign critical' };
     const db: any = vi.fn((table: string) => {
       if (table === 'projects') return chainableBuilder(ownedProject);
@@ -155,5 +155,79 @@ describe('workflow.routes — POST /api/v1/workflow/rules (IDOR fix #5)', () => 
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
+  });
+});
+
+// =============================================================================
+// GAP 3 — GET-collection endpoints return the shared { data, pagination }
+// envelope (page, pageSize, total, totalPages) and honour page/pageSize.
+// =============================================================================
+
+/**
+ * Build a Knex-ish mock whose query builder resolves `rows` for the list
+ * query and `total` for the `count()` query. `clone()` returns the same
+ * builder so the route's `base.clone()` calls stay on one recording seam.
+ */
+function paginatedTableMock(rows: any[], total: number) {
+  const builder: any = {};
+  const chain = () => builder;
+  builder.where = vi.fn(chain);
+  builder.join = vi.fn(chain);
+  builder.select = vi.fn(chain);
+  builder.orderBy = vi.fn(chain);
+  builder.clone = vi.fn(chain);
+  builder.limit = vi.fn(chain);
+  // `offset` is the terminal call for the list query — resolve the rows.
+  builder.offset = vi.fn(() => Promise.resolve(rows));
+  // `count` is the terminal call for the total query.
+  builder.count = vi.fn(() => Promise.resolve([{ count: total }]));
+  return builder;
+}
+
+describe('workflow.routes — GET collections return { data, pagination } (GAP 3)', () => {
+  it('GET /rules returns the shared envelope and honours page/pageSize', async () => {
+    const rows = [{ id: 'r1', name: 'Rule 1' }];
+    const builder = paginatedTableMock(rows, 7);
+    const db: any = vi.fn(() => builder);
+    const app = makeApp({ authMiddleware: fakeAuth, db });
+
+    const res = await request(app).get('/api/v1/workflow/rules?page=2&pageSize=3');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual(rows);
+    expect(res.body.pagination).toEqual({ page: 2, pageSize: 3, total: 7, totalPages: 3 });
+    // page 2 of size 3 → offset 3
+    expect(builder.limit).toHaveBeenCalledWith(3);
+    expect(builder.offset).toHaveBeenCalledWith(3);
+    // No bare `rules` key.
+    expect(res.body.rules).toBeUndefined();
+  });
+
+  it('GET /sla returns the shared envelope', async () => {
+    const rows = [{ id: 's1', name: 'SLA 1' }];
+    const builder = paginatedTableMock(rows, 1);
+    const db: any = vi.fn(() => builder);
+    const app = makeApp({ authMiddleware: fakeAuth, db });
+
+    const res = await request(app).get('/api/v1/workflow/sla');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual(rows);
+    expect(res.body.pagination).toEqual({ page: 1, pageSize: 25, total: 1, totalPages: 1 });
+    expect(res.body.policies).toBeUndefined();
+  });
+
+  it('GET /sla/breaches returns the shared envelope', async () => {
+    const rows = [{ id: 'b1', body: 'oops' }];
+    const builder = paginatedTableMock(rows, 2);
+    const db: any = vi.fn(() => builder);
+    const app = makeApp({ authMiddleware: fakeAuth, db });
+
+    const res = await request(app).get('/api/v1/workflow/sla/breaches');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual(rows);
+    expect(res.body.pagination).toEqual({ page: 1, pageSize: 25, total: 2, totalPages: 1 });
+    expect(res.body.breaches).toBeUndefined();
   });
 });

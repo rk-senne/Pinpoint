@@ -1,12 +1,43 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { crx } from '@crxjs/vite-plugin';
 import manifest from './manifest.json' with { type: 'json' };
 
 // Wires the Manifest V3 manifest.json through @crxjs/vite-plugin so Vite
 // emits a Chrome Web Store-loadable dist/. Tasks 23.2-23.5 swap the build
 // script, add icons, narrow permissions, and verify the produced bundle.
+//
+// `__PINPOINT_API_ORIGIN__` is the compile-time API origin. It is sourced
+// from the `VITE_PINPOINT_API_ORIGIN` env var at build time (default
+// `http://localhost:3001`) and consumed by `src/lib/serverOrigin.ts` as the
+// build-time fallback below a user-configured Server URL. Define-replacing a
+// bare identifier requires the value to be JSON-stringified so Vite inlines
+// a string literal.
+const apiOrigin =
+  process.env.VITE_PINPOINT_API_ORIGIN || 'http://localhost:3001';
+
+/**
+ * engine.io-client ends its global-object lookup with
+ * `Function("return this")()` — dead code in every extension context (`self`
+ * always exists) but an `eval`-class call that AMO's linter flags
+ * (DANGEROUS_EVAL) and that a strict CSP would forbid. `globalThis` is the
+ * semantically identical, eval-free spelling.
+ */
+function noFunctionConstructor(): Plugin {
+  return {
+    name: 'pinpoint:no-function-constructor',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!/engine\.io-client[\\/].*globals\.js$/.test(id)) return null;
+      return code.replace(/Function\((["'])return this\1\)\(\)/g, 'globalThis');
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [crx({ manifest })],
+  define: {
+    __PINPOINT_API_ORIGIN__: JSON.stringify(apiOrigin),
+  },
+  plugins: [noFunctionConstructor(), crx({ manifest })],
   optimizeDeps: {
     // Pre-bundle the workspace shared package so its CommonJS output is
     // converted to ESM up-front. The shared workspace compiles with

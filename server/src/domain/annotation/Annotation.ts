@@ -32,8 +32,42 @@ export interface CapturedNetworkEntry {
   responseStatus?: number;
 }
 
+// Diagnostics capture (Mission C2) — bounded, PII-scrubbed console + uncaught
+// error snapshots attached to an annotation. Mirrors `@pinpoint/shared`.
+export type ConsoleLogLevel = 'log' | 'warn' | 'error';
+
+export interface ConsoleLogEntry {
+  level: ConsoleLogLevel;
+  message: string;
+  timestamp: string; // ISO 8601
+  stack?: string;
+}
+
+export type JsErrorKind = 'error' | 'unhandledrejection';
+
+export interface JsErrorEntry {
+  kind: JsErrorKind;
+  message: string;
+  timestamp: string; // ISO 8601
+  stack?: string;
+  source?: string;
+  lineno?: number;
+  colno?: number;
+}
+
+// Session replay (Mission C3) — redaction-applied event list recorded by the
+// extension and replayed in the dashboard.
+export interface ReplayEvent {
+  type: 'mousemove' | 'click' | 'scroll' | 'input' | 'mutation' | 'resize';
+  timestamp: number;
+  /** Optional in the wire schema (ReplayEventSchema); some events carry no payload. */
+  data?: unknown;
+}
+
 export interface Annotation {
   id: string;
+  /** Owning organisation; used by use cases to scope lookups to the caller's tenant. */
+  orgId?: string;
   projectId: string;
   pageId: string;       // FK to Page (Req 23). Replaces legacy pageUrl.
   pageUrl?: string;     // Derived for client convenience; not stored on the entity.
@@ -41,7 +75,8 @@ export interface Annotation {
   severity: Severity;
   status: AnnotationStatus;
   body: string;
-  authorId: string;
+  /** NULL for guest/widget submissions (see `isGuest`). */
+  authorId: string | null;
   createdAt: string;
   updatedAt: string;
   target: DOMTarget;
@@ -53,6 +88,12 @@ export interface Annotation {
   screenshotObjectKey?: string;
   capturedConsole?: CapturedConsoleEntry[] | null;
   capturedNetwork?: CapturedNetworkEntry[] | null;
+  /** Diagnostics capture (Mission C2) — bounded, scrubbed console snapshot. */
+  consoleLogs?: ConsoleLogEntry[] | null;
+  /** Diagnostics capture (Mission C2) — bounded, scrubbed uncaught errors. */
+  jsErrors?: JsErrorEntry[] | null;
+  /** Session replay (Mission C3) — redaction-applied event list. */
+  sessionReplay?: ReplayEvent[] | null;
   /** Client-supplied UUID for offline-replay idempotency (Req 44.3). */
   clientRequestId?: string;
   /** Whether this annotation was submitted by a guest (no account). */
@@ -80,7 +121,8 @@ export interface NewAnnotation {
   severity: Severity;
   status: AnnotationStatus;
   body: string;
-  authorId: string;
+  /** NULL for guest/widget submissions (see `isGuest`). */
+  authorId: string | null;
   target: DOMTarget;
   environment: EnvironmentMetadata;
   pinNumber: number;
@@ -90,6 +132,9 @@ export interface NewAnnotation {
   dueDate?: string;
   capturedConsole?: CapturedConsoleEntry[] | null;
   capturedNetwork?: CapturedNetworkEntry[] | null;
+  consoleLogs?: ConsoleLogEntry[] | null;
+  jsErrors?: JsErrorEntry[] | null;
+  sessionReplay?: ReplayEvent[] | null;
   clientRequestId?: string;
   /** Whether this annotation was submitted by a guest (no account). */
   isGuest?: boolean;

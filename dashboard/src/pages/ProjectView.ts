@@ -18,8 +18,8 @@
  *     assignee dropdown + due date (Reqs 8.3, 8.4, 17.3, 17.4, 22.6).
  *   - Co-viewer indicator with avatars/initials, tooltips and +N overflow
  *     (Reqs 6.6, 6.7).
- *   - Real-time updates via `onSocketEvent` for `annotation:created`,
- *     `annotation:updated`, `annotation:status`, `annotation:viewers`.
+ *   - Real-time updates via `onSocketEvent` for `annotation.created`,
+ *     `annotation.updated`, `annotation.status_changed`, `annotation:viewers`.
  *   - `emitAnnotationOpen` / `emitAnnotationClose` on annotation selection
  *     (Reqs 6.6, 6.7).
  *
@@ -37,17 +37,28 @@ import type {
   CapturedNetworkEntry,
   EnvironmentMetadata,
   MarkupDocument,
+  PaginatedResponse,
   User,
 } from '@pinpoint/shared';
 import { SEVERITY_COLORS, SEVERITY_SHAPES, STATUS_LABELS, renderMarkupSvg } from '@pinpoint/shared';
+import { el, setText } from '@pinpoint/shared';
 
 import { mountAppLayout } from '../components/AppLayout';
 import { mountReplayPlayer } from '../components/ReplayPlayer';
 import { mountHeatmapOverlay } from '../components/HeatmapOverlay';
+import { createEmptyState } from '../components/EmptyState';
+import { summarizeAnalytics } from '../lib/analyticsSummary';
 import { createListSkeleton } from '../components/Skeleton';
 import { showToast } from '../components/Toast';
+import { mountSendToMenu } from '../components/SendToMenu';
+import { mountDiagnosticsPanel } from '../components/DiagnosticsPanel';
 import { apiFetch as defaultApiFetch, getAnnotationSuggestions } from '../lib/api';
 import { buildSuggestionsPanel } from '../lib/suggestionsFormat';
+import { severityTextColor } from '../lib/severity';
+
+const SEVERITY_TEXT_COLORS: Record<string, string> = Object.fromEntries(
+  ['critical', 'major', 'minor', 'informational'].map((s) => [s, severityTextColor(s)]),
+);
 import {
   attr,
   bindEvents,
@@ -101,8 +112,6 @@ interface Analytics {
 }
 
 type ViewMode = 'list' | 'kanban';
-
-const KANBAN_COLUMNS: AnnotationStatus[] = ['active', 'in_progress', 'resolved'];
 
 const MAX_COVIEWER_AVATARS = 4;
 
@@ -221,6 +230,9 @@ export function mountProjectView(
   )!;
   const listSection = requireSection(contentRoot, 'list');
   const listEmpty = contentRoot.querySelector<HTMLElement>('[data-role="list-empty"]')!;
+  listEmpty.replaceChildren(createEmptyState('no-annotations', {
+    description: 'Open the extension, widget or a review link on your site and leave the first pin.',
+  }));
   const listTable = contentRoot.querySelector<HTMLElement>('[data-role="list-table"]')!;
   const listBody = contentRoot.querySelector<HTMLElement>('[data-role="list-body"]')!;
   const kanbanSection = requireSection(contentRoot, 'kanban');
@@ -230,19 +242,30 @@ export function mountProjectView(
   const selectAllCheckbox = contentRoot.querySelector<HTMLInputElement>('[data-role="select-all"]')!;
 
   // Filter bar DOM refs (Mission B3).
-  const filterBar = contentRoot.querySelector<HTMLElement>('[data-role="filter-bar"]')!;
   const filterSearchInput = contentRoot.querySelector<HTMLInputElement>('[data-role="filter-search"]')!;
   const filterSeveritySelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-severity"]')!;
   const filterStatusSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-status"]')!;
   const filterSortSelect = contentRoot.querySelector<HTMLSelectElement>('[data-role="filter-sort"]')!;
   const clearFiltersBtn = contentRoot.querySelector<HTMLElement>('[data-role="clear-filters-btn"]')!;
   const filterEmptyEl = contentRoot.querySelector<HTMLElement>('[data-role="filter-empty"]')!;
+  filterEmptyEl.removeAttribute('style');
+  filterEmptyEl.replaceChildren(
+    createEmptyState('no-search-results', {
+      title: 'No annotations match the current filters',
+      ctaLabel: 'Clear filters',
+      onCta: () => filterState.set({ ...DEFAULT_FILTER }),
+    }),
+  );
 
   // Per-render row listener cleanups. Cleared on every rerender so detached
   // rows can be GC'd; otherwise the closures capturing each row would keep
   // the detached DOM alive for the page's lifetime.
   let rowCleanups: Array<() => void> = [];
   let replayTeardown: (() => void) | null = null;
+  // Must be declared before the selection subscriptions below: they call
+  // renderDetail synchronously during mount, and a later `let` would be in
+  // its temporal dead zone (ReferenceError → Send-to menu never mounted).
+  let sendToTeardown: (() => void) | null = null;
 
   // --- Page-level event wiring ------------------------------------------
   const cleanupEvents = bindEvents(contentRoot, {
@@ -289,6 +312,13 @@ export function mountProjectView(
     'bulk-delete': () => void executeBulkAction('delete'),
     'bulk-clear': () => {
       selectedIds.set(new Set());
+    },
+    'toggle-analytics': () => {
+      const expanded = analyticsRoot.getAttribute('data-expanded') !== 'true';
+      analyticsRoot.setAttribute('data-expanded', String(expanded));
+      const btn = analyticsRoot.querySelector<HTMLElement>('[data-role="analytics-toggle"]');
+      btn?.setAttribute('aria-expanded', String(expanded));
+      if (btn) btn.textContent = expanded ? 'Hide ▴' : 'Details ▾';
     },
     'clear-filters': () => {
       filterState.set({ ...DEFAULT_FILTER });
@@ -343,10 +373,9 @@ export function mountProjectView(
     }),
   );
 
-  // Project title — the route only carries the id; the React component
-  // showed `Project: <id>` and that is preserved here pending a richer
-  // project lookup.
-  text(projectTitleEl, projectId ? `Project: ${projectId}` : 'Project');
+  // Project title — the route only carries the id, so show a neutral
+  // placeholder until `GET /projects/:id` resolves with the real name.
+  text(projectTitleEl, 'Project');
 
   // View-toggle button styling.
   unsubs.push(
@@ -385,6 +414,7 @@ export function mountProjectView(
         envExpanded.set(false);
         envUaExpanded.set(false);
         emitAnnotationOpen(id);
+        void loadComments(id);
       } else {
         toggleHidden(detailSection, true);
         toggleHidden(analyticsRoot, analytics.get() === null);
@@ -395,6 +425,97 @@ export function mountProjectView(
       renderDetail();
     }),
   );
+
+
+  // ---- Comment thread ---------------------------------------------------
+  const commentList = detailSection.querySelector<HTMLElement>('[data-role="comment-list"]');
+  const commentEmpty = detailSection.querySelector<HTMLElement>('[data-role="comment-empty"]');
+  const commentCount = detailSection.querySelector<HTMLElement>('[data-slot="comment-count"]');
+  const commentForm = detailSection.querySelector<HTMLFormElement>('[data-role="comment-form"]');
+  const commentInput = detailSection.querySelector<HTMLTextAreaElement>('[data-role="comment-input"]');
+  const commentSubmit = detailSection.querySelector<HTMLButtonElement>('[data-role="comment-submit"]');
+
+  interface CommentRow {
+    id: string;
+    authorId: string;
+    body: string;
+    createdAt: string;
+  }
+
+  function memberName(userId: string): string {
+    return membersStore.list.get().find((m) => m.userId === userId)?.name ?? 'Team member';
+  }
+
+  /** Resolve `@Name` tokens in `body` to member ids (longest names first). */
+  function extractMentions(body: string): string[] {
+    const ids = new Set<string>();
+    const lower = body.toLowerCase();
+    const members = [...membersStore.list.get()].sort((a, b) => b.name.length - a.name.length);
+    for (const m of members) {
+      if (m.name && lower.includes(`@${m.name.toLowerCase()}`)) ids.add(m.userId);
+    }
+    return [...ids];
+  }
+
+  function paintComments(rows: CommentRow[]): void {
+    if (!commentList) return;
+    commentList.replaceChildren();
+    for (const c of rows) {
+      const li = document.createElement('li');
+      li.dataset.role = 'comment';
+      li.style.cssText = 'padding: 8px 0; border-bottom: 1px solid var(--pp-border-light); font-size: 13px;';
+      const head = document.createElement('div');
+      head.style.cssText = 'display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px;';
+      const who = document.createElement('strong');
+      who.textContent = memberName(c.authorId);
+      const when = document.createElement('time');
+      when.dateTime = c.createdAt;
+      when.style.cssText = 'font-size: 11px; color: var(--pp-text-secondary);';
+      const d = new Date(c.createdAt);
+      when.textContent = Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+      head.append(who, when);
+      const body = document.createElement('div');
+      body.style.cssText = 'white-space: pre-wrap; overflow-wrap: anywhere;';
+      body.textContent = c.body;
+      li.append(head, body);
+      commentList.appendChild(li);
+    }
+    if (commentEmpty) toggleHidden(commentEmpty, rows.length > 0);
+    if (commentCount) text(commentCount, rows.length > 0 ? `(${rows.length})` : '');
+  }
+
+  async function loadComments(annotationId: string): Promise<void> {
+    paintComments([]);
+    try {
+      const res = await apiFetch<{ data?: CommentRow[] }>(`/annotations/${annotationId}/comments`);
+      if (selectedAnnotationId.get() !== annotationId) return; // user moved on
+      paintComments(res.data ?? []);
+    } catch {
+      /* apiFetch already surfaced a toast */
+    }
+  }
+
+  commentForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = selectedAnnotationId.get();
+    const body = commentInput?.value.trim() ?? '';
+    if (!id || !body || !commentInput) return;
+    if (commentSubmit) commentSubmit.disabled = true;
+    void (async () => {
+      try {
+        await apiFetch(`/annotations/${id}/comments`, {
+          method: 'POST',
+          body: JSON.stringify({ body, mentions: extractMentions(body) }),
+        });
+        commentInput.value = '';
+        await loadComments(id);
+      } catch {
+        /* toast shown by apiFetch; keep the draft */
+      } finally {
+        if (commentSubmit) commentSubmit.disabled = false;
+      }
+    })();
+  });
 
   // Analytics panel — re-render when analytics or members change.
   unsubs.push(
@@ -564,7 +685,7 @@ export function mountProjectView(
     }
 
     socketUnsubs.push(
-      onSocketEvent('annotation:created', (annotation) => {
+      onSocketEvent('annotation.created', (annotation) => {
         const list = currentAnnotationsStore.list.get();
         if (list.some((a) => a.id === annotation.id)) return;
         setAnnotations([...list, annotation]);
@@ -573,14 +694,14 @@ export function mountProjectView(
     );
 
     socketUnsubs.push(
-      onSocketEvent('annotation:updated', (annotation) => {
+      onSocketEvent('annotation.updated', (annotation) => {
         const list = currentAnnotationsStore.list.get();
         setAnnotations(list.map((a) => (a.id === annotation.id ? annotation : a)));
       }),
     );
 
     socketUnsubs.push(
-      onSocketEvent('annotation:status', (data) => {
+      onSocketEvent('annotation.status_changed', (data) => {
         const list = currentAnnotationsStore.list.get();
         setAnnotations(
           list.map((a) =>
@@ -649,13 +770,19 @@ export function mountProjectView(
       return;
     }
     try {
-      const [annRes, anaRes, memRes, meRes] = await Promise.all([
-        apiFetch<{ annotations: Annotation[] }>(`/projects/${projectId}/annotations`),
+      const [annotations, anaRes, memRes, meRes, projectRes] = await Promise.all([
+        fetchAllAnnotations(projectId),
         apiFetch<{ analytics: Analytics }>(`/projects/${projectId}/analytics`),
         apiFetch<{ members: ProjectMember[] }>(`/projects/${projectId}/members`),
         apiFetch<User | { user: User }>(`/users/me`).catch(() => null),
+        apiFetch<{ project?: { name?: string } }>(`/projects/${projectId}`).catch(() => null),
       ]);
-      setAnnotations(annRes.annotations);
+      const projectName = projectRes?.project?.name;
+      if (typeof projectName === 'string' && projectName.length > 0) {
+        text(projectTitleEl, projectName);
+        document.title = `${projectName} · Pinpoint`;
+      }
+      setAnnotations(annotations);
       analytics.set(anaRes.analytics);
       setMembers(memRes.members);
       if (meRes) {
@@ -669,6 +796,31 @@ export function mountProjectView(
     } finally {
       loading.set(false);
     }
+  }
+
+  async function fetchAllAnnotations(pid: string): Promise<Annotation[]> {
+    // `GET /api/v1/projects/:id/annotations` returns the shared
+    // `{ data, pagination }` envelope — NOT `{ annotations }`. The server
+    // caps `pageSize` at 100 (`PaginationParamsSchema` in
+    // `@pinpoint/shared`), so request the max page size and walk the pages
+    // until we've pulled every row. The previous code read a non-existent
+    // `annotations` key (always `undefined`) AND fetched only the first
+    // page, so the list/kanban/analytics silently dropped everything beyond
+    // the server's default 25-row window.
+    const pageSize = 100;
+    let page = 1;
+    const all: Annotation[] = [];
+    for (;;) {
+      const res = await apiFetch<PaginatedResponse<Annotation>>(
+        `/projects/${pid}/annotations?page=${page}&pageSize=${pageSize}`,
+      );
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      all.push(...rows);
+      const totalPages = res?.pagination?.totalPages ?? 1;
+      if (rows.length === 0 || page >= totalPages) break;
+      page += 1;
+    }
+    return all;
   }
 
   async function refetchAnalytics(): Promise<void> {
@@ -821,7 +973,9 @@ export function mountProjectView(
     toggleHidden(filterEmptyEl, !noFilterResults);
 
     if (annotations.length === 0) {
-      toggleHidden(listEmpty, !noFilterResults); // show generic empty only if no filter active
+      // Generic empty state only when the project has no annotations at all;
+      // filtered-out lists use the filter-empty state instead.
+      toggleHidden(listEmpty, allAnnotations.length > 0);
       toggleHidden(listTable, true);
       return;
     }
@@ -846,12 +1000,31 @@ export function mountProjectView(
         attr(
           sevSpan,
           'style',
-          `font-weight: 500; color: ${SEVERITY_COLORS[a.severity as SeverityKey] ?? '#333'};`,
+          `font-weight: 500; color: ${severityTextColor(a.severity)};`,
         );
       }
+      // Mission A7.4: flag guest-authored rows with an "Unverified guest"
+      // badge. Built via `el`/`setText` so an untrusted guestName/guestEmail
+      // can never inject markup into the list.
+      if (a.isGuest === true) {
+        const bodyCell = row.querySelector<HTMLElement>('[data-slot="body"]');
+        if (bodyCell) {
+          const badge = el('span', {
+            'data-role': 'guest-badge',
+            class: 'fl-guest-badge',
+            title: 'Submitted by an unauthenticated guest',
+            'aria-label': 'Unverified guest',
+          });
+          setText(badge, 'Unverified guest');
+          badge.style.cssText =
+            'display:inline-block;margin-left:8px;padding:1px 6px;border-radius:9999px;' +
+            'background:#fef3c7;color:#92400e;font-size:10px;font-weight:600;' +
+            'border:1px solid #fde68a;vertical-align:middle;';
+          bodyCell.appendChild(badge);
+        }
+      }
       // Wire row checkbox for bulk selection
-      const rowCheckbox = row.querySelector<HTMLInputElement>('[data-role="row-checkbox"]');
-      if (rowCheckbox) {
+      const rowCheckbox = row.querySelector<HTMLInputElement>('[data-role="row-checkbox"]');      if (rowCheckbox) {
         rowCheckbox.setAttribute('data-annotation-id', a.id);
         rowCheckbox.checked = selectedIds.get().has(a.id);
         const onCheck = (e: Event): void => {
@@ -921,7 +1094,7 @@ export function mountProjectView(
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
       column.style.background = '#ebf8ff';
-      column.style.border = '2px dashed #3182ce';
+      column.style.border = '2px dashed var(--pp-link)';
     };
     const dragLeave = (): void => {
       column.style.background = '#f7f7f7';
@@ -956,9 +1129,7 @@ export function mountProjectView(
       attr(
         sevSpan,
         'style',
-        `font-size: 11px; font-weight: 500; color: ${
-          SEVERITY_COLORS[annotation.severity as SeverityKey] ?? '#333'
-        };`,
+        `font-size: 11px; font-weight: 500; color: ${severityTextColor(annotation.severity)};`,
       );
     }
     const onDragStart = (e: DragEvent): void => {
@@ -978,10 +1149,20 @@ export function mountProjectView(
   }
 
   function renderAnalytics(value: Analytics): void {
+    const chipList = analyticsRoot.querySelector<HTMLElement>('[data-role="analytics-chips"]');
+    if (chipList) {
+      chipList.replaceChildren(
+        ...summarizeAnalytics(value).map((chip) => {
+          const li = el('li', {}, chip.label);
+          if (chip.tone) li.setAttribute('data-tone', chip.tone);
+          return li;
+        }),
+      );
+    }
     paintAnalyticsCard(
       'bySeverity',
       value.bySeverity as Record<string, number>,
-      SEVERITY_COLORS as Record<string, string>,
+      SEVERITY_TEXT_COLORS,
     );
     paintAnalyticsCard('byType', value.byType as Record<string, number>);
     paintAnalyticsCard(
@@ -990,7 +1171,9 @@ export function mountProjectView(
       undefined,
       STATUS_LABELS as Record<string, string>,
     );
-    paintAnalyticsCard('byBrowser', value.byBrowser as Record<string, number>);
+    paintAnalyticsCard('byBrowser', value.byBrowser as Record<string, number>, undefined, {
+      unknown: 'Unknown',
+    });
   }
 
   function paintAnalyticsCard(
@@ -1007,6 +1190,9 @@ export function mountProjectView(
     if (!rows) return;
     rows.replaceChildren();
     for (const [key, count] of Object.entries(data)) {
+      // The browser breakdown carries every enum member (Edge 0, Opera 0, …);
+      // listing the empty ones is noise, so only show families that occur.
+      if (dim === 'byBrowser' && count === 0) continue;
       const row = document.createElement('div');
       row.style.cssText =
         'display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;';
@@ -1044,8 +1230,10 @@ export function mountProjectView(
     );
     if (severityEl) {
       text(severityEl, annotation.severity);
-      severityEl.style.color = SEVERITY_COLORS[annotation.severity as SeverityKey] ?? '#333';
+      severityEl.style.color = severityTextColor(annotation.severity);
     }
+
+    renderGuestBadge(annotation);
 
     const isBug = isBugReport(annotation);
     const bugBadge = detailSection.querySelector<HTMLElement>('[data-role="bug-badge"]');
@@ -1096,10 +1284,98 @@ export function mountProjectView(
     }
 
     renderCaptureBuffers(annotation);
+    mountDiagnosticsPanel(detailExtrasHost(), annotation); // Mission C2 — Console & errors
     renderScreenshot(annotation);
     renderReplayButton(annotation);
     renderCoViewers();
     void renderSuggestions(annotation.id);
+    renderSendToMenu(annotation.id);
+  }
+
+  /**
+   * Mount (or re-mount) the C4 "Send to…" task-delivery menu into the detail
+   * section. The menu is recreated per selection so it binds to the current
+   * annotation id; the previous instance is torn down first to avoid leaking
+   * document-level listeners. Lives in a `[data-role="send-to-container"]`
+   * host created once next to the AI-suggestions panel.
+   */
+  /** In-card host for diagnostics + Send to…; falls back to the section. */
+  function detailExtrasHost(): HTMLElement {
+    return detailSection.querySelector<HTMLElement>('[data-role="detail-extras"]') ?? detailSection;
+  }
+
+  function renderSendToMenu(annotationId: string): void {
+    let host = detailSection.querySelector<HTMLElement>('[data-role="send-to-container"]');
+    if (!host) {
+      host = document.createElement('div');
+      host.dataset.role = 'send-to-container';
+      host.style.marginTop = '12px';
+      detailExtrasHost().appendChild(host);
+    }
+    if (sendToTeardown) {
+      sendToTeardown();
+      sendToTeardown = null;
+    }
+    host.replaceChildren();
+    sendToTeardown = mountSendToMenu(host, { annotationId });
+  }
+
+  /**
+   * Render an "Unverified guest" badge in the detail header whenever the
+   * annotation was submitted by a guest (Mission A7.4). The badge sits next
+   * to the guest's self-reported name/email, which are themselves written
+   * as text nodes via `setText`/`el` from `@pinpoint/shared/safeText` so an
+   * untrusted `guestName`/`guestEmail` can never inject markup.
+   *
+   * The badge lives in a `[data-role="guest-badge"]` container that we
+   * create once next to the severity slot and reuse across selections;
+   * non-guest annotations hide it.
+   */
+  function renderGuestBadge(annotation: Annotation): void {
+    const severityEl = detailSection.querySelector<HTMLElement>(
+      '[data-slot="detail-severity"]',
+    );
+    let container = detailSection.querySelector<HTMLElement>(
+      '[data-role="guest-badge"]',
+    );
+    if (!container) {
+      container = el('span', { 'data-role': 'guest-badge' });
+      if (severityEl && severityEl.parentElement) {
+        severityEl.parentElement.insertBefore(container, severityEl.nextSibling);
+      } else {
+        detailSection.appendChild(container);
+      }
+    }
+
+    const isGuest = annotation.isGuest === true;
+    if (!isGuest) {
+      container.replaceChildren();
+      toggleHidden(container, true);
+      return;
+    }
+
+    toggleHidden(container, false);
+    const identity = annotation.guestName || annotation.guestEmail || '';
+    const badge = el('span', {
+      'data-role': 'guest-badge-label',
+      class: 'fl-guest-badge',
+      title: 'This feedback was submitted by an unauthenticated guest',
+      'aria-label': 'Unverified guest',
+    });
+    setText(badge, 'Unverified guest');
+    badge.style.cssText =
+      'display:inline-block;margin-left:8px;padding:1px 8px;border-radius:9999px;' +
+      'background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;' +
+      'border:1px solid #fde68a;vertical-align:middle;';
+
+    const children: Node[] = [badge];
+    if (identity) {
+      const who = el('span', { 'data-role': 'guest-identity' });
+      who.style.cssText = 'margin-left:6px;font-size:12px;color:#555;';
+      setText(who, identity);
+      children.push(who);
+    }
+    container.replaceChildren(...children);
   }
 
   /**
@@ -1286,6 +1562,7 @@ export function mountProjectView(
             'load',
             () => {
               if (selectedAnnotationId.get() !== annotationId) return;
+              // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
               overlay.innerHTML = renderMarkupSvg(
                 doc,
                 img.naturalWidth || img.clientWidth || 0,
@@ -1296,6 +1573,7 @@ export function mountProjectView(
           );
           return;
         }
+        // eslint-disable-next-line no-restricted-syntax -- SVG from shared renderMarkupSvg (colours escaped; numeric fields validated server-side by MarkupDocumentSchema)
         overlay.innerHTML = renderMarkupSvg(doc, w, h);
       })
       .catch(() => {
@@ -1316,7 +1594,7 @@ export function mountProjectView(
     const btn = document.createElement('button');
     btn.setAttribute('data-role', 'replay-btn');
     btn.textContent = '▶ View Replay';
-    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:#4f46e5;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
+    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:var(--pp-accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;';
     const replayContainer = document.createElement('div');
     replayContainer.setAttribute('data-role', 'replay-container');
 
@@ -1472,7 +1750,7 @@ function buildConsoleRow(entry: CapturedConsoleEntry): HTMLLIElement {
   level.textContent = entry.level;
 
   const time = document.createElement('span');
-  time.style.cssText = 'color: #888; margin-right: 6px;';
+  time.style.cssText = 'color: var(--pp-text-tertiary); margin-right: 6px;';
   time.textContent = entry.timestamp;
 
   const message = document.createElement('span');
@@ -1558,7 +1836,7 @@ function buildNetworkRow(entry: CapturedNetworkEntry): HTMLLIElement {
 function renderAvatar(label: string, avatarUrl: string | null): HTMLElement {
   const initials = computeInitials(label);
   const common =
-    'display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 600; color: #fff; background: #3182ce; overflow: hidden;';
+    'display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 600; color: #fff; background: var(--pp-accent); overflow: hidden;';
   if (avatarUrl) {
     const img = document.createElement('img');
     img.src = avatarUrl;
@@ -1586,17 +1864,18 @@ function computeInitials(label: string): string {
 
 function paintToggle(button: HTMLButtonElement, active: boolean, side: 'left' | 'right'): void {
   const radius = side === 'left' ? '4px 0 0 4px' : '0 4px 4px 0';
-  const borderLeft = side === 'right' ? 'none' : '1px solid #ccc';
+  const borderLeft = side === 'right' ? 'none' : '1px solid var(--pp-input-border)';
   button.style.cssText = [
     'padding: 6px 14px',
-    'border: 1px solid #ccc',
+    'border: 1px solid var(--pp-input-border)',
     `border-left: ${borderLeft}`,
     'cursor: pointer',
     'font-size: 13px',
     `border-radius: ${radius}`,
-    `background: ${active ? '#3182ce' : '#fff'}`,
-    `color: ${active ? '#fff' : '#333'}`,
+    `background: ${active ? 'var(--pp-accent)' : 'var(--pp-bg-primary)'}`,
+    `color: ${active ? '#fff' : 'var(--pp-text-primary)'}`,
   ].join('; ');
+  button.setAttribute('aria-pressed', String(active));
 }
 
 function toggleHidden(el: HTMLElement, hidden: boolean): void {

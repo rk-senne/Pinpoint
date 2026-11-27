@@ -8,8 +8,8 @@
  * - Stores the returned bearer in `chrome.storage.local` under
  *   `pinpoint_auth_token` (matching `content.ts` / `lib/api.ts`).
  * - Sends `chrome.runtime.sendMessage({ type: 'login-complete' })` and
- *   reloads the active tab so its content script re-mounts against the
- *   freshly-stored token.
+ *   asks the service worker to open the overlay on the active tab via
+ *   `{ type: 'PP_REQUEST_TOGGLE', tabId }` (on-demand injection path).
  * - Surfaces server-error envelopes inline.
  * - Validation prevents empty submissions and never reaches `fetch`.
  */
@@ -103,7 +103,7 @@ async function flush(): Promise<void> {
 }
 
 describe('initPopup', () => {
-  it('POSTs credentials to /api/v1/auth/login, stores the bearer, broadcasts login-complete, and reloads the active tab', async () => {
+  it('POSTs credentials to /api/v1/auth/login, stores the bearer, broadcasts login-complete, and requests overlay toggle on the active tab', async () => {
     // Prevent the popup's `window.close()` call from tearing down jsdom.
     vi.spyOn(window, 'close').mockImplementation(() => {});
 
@@ -161,7 +161,10 @@ describe('initPopup', () => {
       active: true,
       currentWindow: true,
     });
-    expect(chromeStub.tabs.reload).toHaveBeenCalledWith(42);
+    expect(chromeStub.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'PP_REQUEST_TOGGLE',
+      tabId: 42,
+    });
   });
 
   it('shows the server error envelope inline and does not store a token', async () => {
@@ -191,7 +194,6 @@ describe('initPopup', () => {
     expect(error.textContent).toBe('Invalid email or password.');
     expect(chromeStub.storage.local.set).not.toHaveBeenCalled();
     expect(chromeStub.runtime.sendMessage).not.toHaveBeenCalled();
-    expect(chromeStub.tabs.reload).not.toHaveBeenCalled();
   });
 
   it('blocks submission when fields are empty and never calls fetch', async () => {
@@ -261,5 +263,66 @@ describe('initPopup', () => {
 
     expect(submit.disabled).toBe(false);
     expect(submit.textContent).toBe('Sign in');
+  });
+});
+
+describe('initPopup signed-in view', () => {
+  const SIGNED_IN_HTML = `
+    <section id="popup-signed-in" hidden>
+      <span id="popup-avatar"></span>
+      <div id="popup-user-name"></div><div id="popup-user-email"></div>
+      <button id="popup-open-overlay" type="button"></button>
+      <button id="popup-open-options" type="button"></button>
+      <button id="popup-signout" type="button"></button>
+    </section>
+    <h1 id="popup-signin-title">Sign in</h1>
+  `;
+
+  beforeEach(() => {
+    document.body.innerHTML = SIGNED_IN_HTML + POPUP_HTML;
+  });
+
+  it('shows the sign-in form when no token is stored', async () => {
+    await initPopup(document);
+    expect(document.getElementById('popup-signed-in')!.hidden).toBe(true);
+    expect((document.getElementById('popup-login-form') as HTMLFormElement).hidden).toBe(false);
+  });
+
+  it('shows who is signed in instead of the form, and signs out', async () => {
+    chromeStub.storage.local._data[STORAGE_KEY_TOKEN] = 'jwt';
+    (chromeStub.storage.local as unknown as { remove: unknown }).remove = vi.fn(async (k: string) => {
+      delete chromeStub.storage.local._data[k];
+    });
+    const fetchSpy = vi.fn(async (url: string) =>
+      String(url).endsWith('/users/me')
+        ? jsonResponse({ user: { name: 'Ada Lovelace', email: 'ada@example.test' } })
+        : jsonResponse({}),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await initPopup(document);
+    await flush();
+    expect(document.getElementById('popup-signed-in')!.hidden).toBe(false);
+    expect((document.getElementById('popup-login-form') as HTMLFormElement).hidden).toBe(true);
+    expect(document.getElementById('popup-user-name')!.textContent).toBe('Ada Lovelace');
+    expect(document.getElementById('popup-user-email')!.textContent).toBe('ada@example.test');
+    expect(document.getElementById('popup-avatar')!.textContent).toBe('A');
+
+    document.getElementById('popup-signout')!.click();
+    await flush();
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).endsWith('/auth/logout'))).toBe(true);
+    expect(chromeStub.storage.local._data[STORAGE_KEY_TOKEN]).toBeUndefined();
+    expect(document.getElementById('popup-signed-in')!.hidden).toBe(true);
+    expect((document.getElementById('popup-login-form') as HTMLFormElement).hidden).toBe(false);
+  });
+
+  it('"Annotate this page" asks the service worker to toggle the active tab', async () => {
+    vi.spyOn(window, 'close').mockImplementation(() => {});
+    chromeStub.storage.local._data[STORAGE_KEY_TOKEN] = 'jwt';
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ user: { name: 'A', email: 'a@x.test' } })));
+    await initPopup(document);
+    document.getElementById('popup-open-overlay')!.click();
+    await flush();
+    expect(chromeStub.runtime.sendMessage).toHaveBeenCalledWith({ type: 'PP_REQUEST_TOGGLE', tabId: 42 });
   });
 });

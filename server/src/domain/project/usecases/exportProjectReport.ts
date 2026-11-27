@@ -70,7 +70,7 @@ export class ExportProjectReport {
       isTeamMember = membership != null;
     }
     if (!isOwner && !isTeamMember) {
-      return err(new Forbidden('You do not have access to this project.'));
+      return err(new NotFound('Project not found.'));
     }
 
     const rendered = await reportRenderer.render({

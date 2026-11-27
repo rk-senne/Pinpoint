@@ -28,6 +28,12 @@ export type DomainErrorKind =
 
 export abstract class DomainError extends Error {
   abstract readonly kind: DomainErrorKind;
+  /**
+   * Optional stable machine code overriding the kind's default wire code
+   * (e.g. `EMAIL_NOT_VERIFIED` instead of `UNAUTHORIZED`), so clients can
+   * branch on a specific condition without parsing the message.
+   */
+  code?: string;
 
   constructor(message: string) {
     super(message);
@@ -74,8 +80,9 @@ export class Validation extends DomainError {
 export class Unauthorized extends DomainError {
   readonly kind = 'Unauthorized' as const;
 
-  constructor(message = 'Authentication required.') {
+  constructor(message = 'Authentication required.', code?: string) {
     super(message);
+    if (code) this.code = code;
   }
 }
 

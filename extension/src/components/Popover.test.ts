@@ -23,6 +23,7 @@
  *      `close`. Both bubble out of the Shadow Root.
  */
 import { describe, it, expect, beforeEach, beforeAll, afterEach, vi } from 'vitest';
+import { resolveCanonicalAnnotationId } from '../lib/canonicalAnnotationId';
 import './Popover';
 import './MarkupEditor';
 import {
@@ -31,6 +32,7 @@ import {
   type PopoverSubmitDetail,
   type PopoverTarget,
   type PopoverTriageRequestDetail,
+  anchorOffset,
 } from './Popover';
 import type {
   Annotation,
@@ -277,6 +279,17 @@ describe('<fl-popover>', () => {
     ta.selectionStart = ta.value.length;
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     expect(mention.hidden).toBe(true);
+  });
+
+  it('keeps the mention dropdown hidden when members load while no @mention is being typed', () => {
+    const el = mount();
+    el.target = makeTarget();
+    const mention = el.shadowRoot!.querySelector('fl-mention-autocomplete') as HTMLElement;
+    // Roster arrives asynchronously after the popover opened (seedProjectData).
+    el.members = [{ userId: 'u1', name: 'Alice', email: 'alice@example.com' }];
+    expect(mention.hidden).toBe(true);
+    const ta = el.shadowRoot!.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
+    expect(ta.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('substitutes the chosen mention into the textarea on `select`', () => {
@@ -689,6 +702,8 @@ describe('<fl-popover>', () => {
   it('re-emits the inner <fl-comment-thread> submit as `comment-submit` tagged with annotationId', () => {
     const el = mount();
     el.annotation = makeAnnotation({ id: 'ann-1' });
+    // Members flow through to the thread so `@bob` resolves to Bob's id.
+    el.members = [{ userId: 'u-bob', name: 'Bob', email: 'bob@example.test' }];
 
     let commentDetail: { annotationId: string; body: string; mentions: string[] } | undefined;
     document.addEventListener('comment-submit', (e) => {
@@ -710,7 +725,7 @@ describe('<fl-popover>', () => {
     expect(commentDetail).toEqual({
       annotationId: 'ann-1',
       body: 'reply with @bob',
-      mentions: ['bob'],
+      mentions: ['u-bob'],
     });
     // The popover absorbs the inner `submit` and only re-emits
     // `comment-submit`, so listeners for the popover's own annotation
@@ -1541,7 +1556,11 @@ describe('<fl-popover>', () => {
     });
 
     /** Click Submit on a freshly mounted popover with a non-empty body. */
-    async function submitNote(el: FlPopover, body = 'a screenshot note'): Promise<Annotation> {
+    async function submitNote(
+      el: FlPopover,
+      body = 'a screenshot note',
+      opts: { sync?: boolean } = {},
+    ): Promise<Annotation> {
       el.target = makeTarget();
       const ta = el.shadowRoot!.querySelector('textarea.fl-textarea') as HTMLTextAreaElement;
       ta.value = body;
@@ -1549,6 +1568,8 @@ describe('<fl-popover>', () => {
       let received: Annotation | undefined;
       el.addEventListener('submit', (e: Event) => {
         received = (e as CustomEvent<PopoverSubmitDetail>).detail.annotation;
+        // Model the Syncer reconciling the optimistic row with the server.
+        if (opts.sync !== false) resolveCanonicalAnnotationId(received.id, `srv-${received.id}`);
       });
       (el.shadowRoot!.querySelector('button[data-action="submit"]') as HTMLButtonElement).click();
       // Several microtask turns settle the chained promises:
@@ -1584,7 +1605,8 @@ describe('<fl-popover>', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const [calledUrl, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
       expect(calledUrl).toMatch(
-        new RegExp(`/api/v1/annotations/${annotation.id}/screenshot$`),
+        // Canonical (server) id — never the optimistic local UUID.
+        new RegExp(`/api/v1/annotations/srv-${annotation.id}/screenshot$`),
       );
       expect(init.method).toBe('POST');
       // The popover MUST NOT set Content-Type itself — the multipart
@@ -1598,6 +1620,19 @@ describe('<fl-popover>', () => {
       const image = form.get('image');
       expect(image).toBeInstanceOf(Blob);
       expect((image as Blob).type).toBe('image/png');
+    });
+
+    it('waits for the annotation to sync before uploading (no upload to the local UUID)', async () => {
+      chromeStub.runtime.sendMessage.mockResolvedValueOnce({ dataUrl: TINY_PNG_DATA_URL });
+      const el = mount();
+      await flushMicrotasks();
+      const annotation = await submitNote(el, 'offline note', { sync: false });
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      resolveCanonicalAnnotationId(annotation.id, 'server-late');
+      for (let i = 0; i < 6; i++) await flushMicrotasks();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect((fetchSpy.mock.calls[0] as [string])[0]).toMatch(/\/annotations\/server-late\/screenshot$/);
     });
 
     it('appends user-painted blur rects from a mounted <fl-markup-editor> to redactionRects (Req 45.3, task 37.4)', async () => {
@@ -3368,5 +3403,40 @@ describe('FlPopover — AI triage integration', () => {
     el.showTriageSuggestions(null);
     expect(hintEl.hidden).toBe(true);
     expect(hintEl.textContent).toBe('');
+  });
+});
+
+describe('anchorOffset', () => {
+  it('opens below the anchor element when its height is known, else the legacy +30', () => {
+    expect(anchorOffset({ anchorHeight: 48 })).toBe(56);
+    expect(anchorOffset({})).toBe(30);
+    expect(anchorOffset({ anchorHeight: 0 })).toBe(30);
+    expect(anchorOffset({ anchorHeight: Number.NaN })).toBe(30);
+  });
+});
+
+describe('<fl-popover> view → create transition', () => {
+  it('re-enables the type tabs and resets type/severity after viewing an annotation', () => {
+    const el = document.createElement('fl-popover') as FlPopover;
+    document.body.appendChild(el);
+    el.members = [{ userId: 'u1', name: 'Alice', email: 'alice@example.com' }];
+    el.annotation = {
+      id: 'a1', projectId: 'p', pageId: 'pg', type: 'guideline', severity: 'minor', status: 'active',
+      body: 'viewed', authorId: 'u1', createdAt: '', updatedAt: '', pinNumber: 3,
+      target: { cssSelector: 'body', xpath: '/html/body', pageX: 0, pageY: 0, tagName: 'BODY', textSnippet: '' },
+      environment: { browserFamily: 'Chrome', browserVersion: '1', osFamily: 'macOS', osVersion: '1', deviceType: 'desktop', userAgentRaw: 'ua' },
+    } as unknown as Annotation;
+    const tabs = Array.from(el.shadowRoot!.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.every((t) => t.disabled)).toBe(true);
+    expect((el.shadowRoot!.querySelector('[role="tablist"]') as HTMLElement).hidden).toBe(true);
+
+    el.annotation = null;
+    expect(tabs.every((t) => !t.disabled)).toBe(true);
+    expect((el.shadowRoot!.querySelector('[role="tablist"]') as HTMLElement).hidden).toBe(false);
+    expect(el.shadowRoot!.querySelector('[role="tab"][data-tab="note"]')!.getAttribute('aria-selected')).toBe('true');
+    expect(el.shadowRoot!.querySelector('[data-severity="informational"]')!.getAttribute('aria-checked')).toBe('true');
+    // …and no stray member dropdown in the fresh create form.
+    expect((el.shadowRoot!.querySelector('fl-mention-autocomplete') as HTMLElement).hidden).toBe(true);
+    el.remove();
   });
 });

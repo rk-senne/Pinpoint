@@ -16,6 +16,8 @@ interface BaseUserRow {
 interface UserRow extends BaseUserRow {
   password_hash: string;
   verified: boolean;
+  token_version?: number | null;
+  pending_email?: string | null;
 }
 
 const BASE_COLUMNS = [
@@ -35,6 +37,8 @@ const SECRET_COLUMNS = [
   'password_hash',
   'notification_preferences',
   'verified',
+  'token_version',
+  'pending_email',
   'created_at',
 ] as const;
 
@@ -114,12 +118,28 @@ export class PgUserRepo implements UserRepo {
     return this.mapRow(updated);
   }
 
+  async setPendingEmail(id: string, email: string | null): Promise<void> {
+    await this.db('users').where({ id }).update({ pending_email: email ? email.toLowerCase() : null });
+  }
+
   async markVerified(id: string): Promise<void> {
     await this.db('users').where({ id }).update({ verified: true });
   }
 
+  /**
+   * Set by the composition root: called after every token_version bump
+   * (logout, password reset, revoke-sessions, member removal …) so live
+   * realtime sockets of that user are cut immediately (PP-02).
+   */
+  onSessionRevoked?: (userId: string) => void;
+
   async incrementTokenVersion(id: string): Promise<void> {
     await this.db('users').where({ id }).increment('token_version', 1);
+    try {
+      this.onSessionRevoked?.(id);
+    } catch {
+      /* realtime cut-off is best effort; the token is already invalid */
+    }
   }
 
   private mapRow(row: BaseUserRow): User {
@@ -144,6 +164,10 @@ export class PgUserRepo implements UserRepo {
       ...this.mapRow(row),
       passwordHash: row.password_hash,
       verified: row.verified,
+      // Must reach the JWT at login; otherwise every token is minted with
+      // version 0 and session revocation cannot work.
+      tokenVersion: Number(row.token_version ?? 0),
+      pendingEmail: row.pending_email ?? null,
     };
   }
 }

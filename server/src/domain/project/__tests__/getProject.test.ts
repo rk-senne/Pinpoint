@@ -58,7 +58,7 @@ describe('getProject use case', () => {
     expect(result.error.kind).toBe('NotFound');
   });
 
-  it('returns Forbidden for a user with no access', async () => {
+  it('returns NotFound (not Forbidden) for a user with no access (PP-24)', async () => {
     const { usecase, project } = await buildSut();
 
     const result = await usecase.execute({
@@ -68,6 +68,6 @@ describe('getProject use case', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.kind).toBe('Forbidden');
+    expect(result.error.kind).toBe('NotFound');
   });
 });

@@ -3,9 +3,9 @@
  * CommandPalette.test.ts — unit tests for the global command palette.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mountCommandPalette } from './CommandPalette';
-import { projectsStore, loadProjects } from '../lib/stores';
+import { loadProjects } from '../lib/stores';
 
 // ---------------------------------------------------------------------------
 // Helpers

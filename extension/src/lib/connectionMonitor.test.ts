@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createConnectionMonitor } from './connectionMonitor';
 
 function makeFetchSpy(seq: Array<'ok' | 'fail' | 'status5xx'>): {
-  spy: ReturnType<typeof vi.fn>;
+  spy: ReturnType<typeof vi.fn> & typeof fetch;
 } {
   let i = 0;
   const spy = vi.fn(async () => {
@@ -34,7 +34,7 @@ function makeFetchSpy(seq: Array<'ok' | 'fail' | 'status5xx'>): {
     if (verdict === 'status5xx') return new Response('', { status: 503 });
     return new Response('', { status: 200 });
   });
-  return { spy };
+  return { spy: spy as unknown as ReturnType<typeof vi.fn> & typeof fetch };
 }
 
 /** Drain the microtask queue several times so chained `.then`s settle. */
@@ -115,6 +115,27 @@ describe('createConnectionMonitor', () => {
     window.dispatchEvent(new Event('online'));
     await flush();
     expect(monitor.isOffline.get()).toBe(false);
+    monitor.dispose();
+  });
+
+  it('re-probes quickly after `online` when the first heartbeat fails (no 30 s wait)', async () => {
+    const { spy } = makeFetchSpy(['ok', 'fail', 'ok']);
+    const monitor = createConnectionMonitor({
+      url: 'http://test/api/v1/health',
+      fetchImpl: spy,
+      intervalMs: 60_000,
+      enableHeartbeat: true,
+    });
+    await flush();
+    spy.mockClear();
+    window.dispatchEvent(new Event('offline'));
+    window.dispatchEvent(new Event('online'));
+    await flush();
+    expect(monitor.isOffline.get()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flush();
+    expect(monitor.isOffline.get()).toBe(false);
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
     monitor.dispose();
   });
 

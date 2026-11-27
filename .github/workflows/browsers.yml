@@ -1,0 +1,228 @@
+name: Browsers
+
+# Non-Chromium browser builds of the extension, kept out of ci.yml so the main
+# pipeline stays fast and these only run when they can be affected:
+#   firefox-e2e      real Firefox (official release) + WebDriver harness (e2e/firefox)
+#   firefox-package  AMO zip (`package:firefox`) + web-ext lint, zip uploaded
+#   safari-app       unsigned xcodebuild of the Safari app + store-manifest tests
+#
+# Third-party actions are pinned to the same commit SHAs as ci.yml (the
+# trailing comment is the tag they were resolved from).
+
+on:
+  # No path filter: these are required checks on main, and a filtered-out
+  # required check would never report and block the PR.
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browsers-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '20'
+  # Pinned tool versions (see e2e/firefox/README.md). Firefox and geckodriver
+  # are official upstream release artifacts, verified against a pinned SHA-256.
+  SELENIUM_VERSION: 4.53.0
+  FIREFOX_VERSION: '161.0'
+  FIREFOX_SHA256: 3e9b1e5132d7b53b1ad968c7300281e90e6a0ef57d0656b1516202d686d25733
+  GECKODRIVER_VERSION: 0.37.1
+  GECKODRIVER_SHA256: e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e
+
+jobs:
+  # Real Firefox driven over WebDriver against a real API (same stack wiring as
+  # the ci.yml `e2e` job: Postgres `trust`, API as the RLS role pinpoint_app).
+  firefox-e2e:
+    # Pinned like ci.yml: Playwright can't install browser deps on ubuntu-26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pinpoint
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      # SMTP sink: the API sends mail; nothing reads it.
+      mailpit:
+        image: axllent/mailpit:v1.29.7
+        ports: ['1025:1025']
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_NAME: pinpoint
+      DB_USER: pinpoint_app
+      DB_PASSWORD: ci-app-password-not-for-production
+      DB_APP_PASSWORD: ci-app-password-not-for-production
+      DB_MIGRATION_USER: postgres
+      DB_MIGRATION_PASSWORD: unused
+      NODE_ENV: development
+      PORT: 3001
+      HOST: 127.0.0.1
+      JWT_SECRET: ci-e2e-jwt-secret-not-for-production-0123456789abcdef
+      OAUTH_STATE_SECRET: ci-e2e-oauth-state-secret-not-for-production-0123456789
+      INTEGRATION_ENCRYPTION_KEY: 2846TWtaPCCFCQOoP1tkenD64GdiCiaffX4LgLadKJA=
+      CORS_ORIGIN: http://localhost:5173
+      APP_URL: http://localhost:5173
+      COOKIE_INSECURE: 'true'
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1025
+      API_RATE_LIMIT_MAX: 5000
+      AUTH_RATE_LIMIT_IP_MAX: 200
+      TENANT_RATE_LIMIT_MAX: 100000
+      # Screenshots go to the local storage driver (no S3 configured); the
+      # harness accepts a stored screenshot or a server-side rejection.
+      PINPOINT_PSQL: psql
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: unused
+      FL_API_URL: http://127.0.0.1:3001
+      FL_APP_URL: http://localhost:5173
+      FL_E2E_EMAIL: e2e-seed@example.test
+      FL_E2E_PASSWORD: P@ssw0rd-E2E-1!
+      FX_TOOLS: ${{ github.workspace }}/../fxtools
+      FX_LOG_DIR: ${{ github.workspace }}/fx-logs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build shared + server
+        run: |
+          npm run build --workspace shared
+          npm run build --workspace server
+      - name: Build the Firefox extension
+        run: npm run build:firefox --workspace extension
+      - name: Apply migrations
+        run: npm run migrate --workspace server
+      - name: Start API
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          (cd server && nohup node dist/index.js > "$RUNNER_TEMP/logs/api.log" 2>&1 &)
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:3001/health >/dev/null && exit 0
+            sleep 1
+          done
+          echo "API did not become healthy" >&2
+          cat "$RUNNER_TEMP/logs/api.log" >&2
+          exit 1
+      - name: Seed verified e2e account
+        run: ./infrastructure/scripts/ci-seed-e2e.sh
+      # System libraries (GTK, dbus-glib, fonts, xvfb) for the official Firefox
+      # build; the Playwright-managed browser itself is not used.
+      - name: Install Firefox system dependencies
+        working-directory: e2e
+        run: npx playwright install-deps firefox
+      - name: Install selenium-webdriver, geckodriver and Firefox (pinned, checksummed)
+        run: |
+          set -euo pipefail
+          mkdir -p "$FX_TOOLS/bin" "$FX_LOG_DIR"
+          (cd "$FX_TOOLS" && npm init -y >/dev/null && npm i -E --no-audit --no-fund "selenium-webdriver@${SELENIUM_VERSION}")
+          dl="$RUNNER_TEMP/dl"; mkdir -p "$dl"
+          curl -fsSL --retry 3 -o "$dl/geckodriver.tar.gz" \
+            "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz"
+          echo "${GECKODRIVER_SHA256}  $dl/geckodriver.tar.gz" | sha256sum -c -
+          tar -xzf "$dl/geckodriver.tar.gz" -C "$FX_TOOLS/bin"
+          mv "$FX_TOOLS/bin/geckodriver" "$FX_TOOLS/bin/geckodriver-${GECKODRIVER_VERSION}"
+          curl -fsSL --retry 3 -o "$dl/firefox.tar.xz" \
+            "https://archive.mozilla.org/pub/firefox/releases/${FIREFOX_VERSION}/linux-x86_64/en-US/firefox-${FIREFOX_VERSION}.tar.xz"
+          echo "${FIREFOX_SHA256}  $dl/firefox.tar.xz" | sha256sum -c -
+          tar -xJf "$dl/firefox.tar.xz" -C "$FX_TOOLS"
+          "$FX_TOOLS/firefox/firefox" --version
+          "$FX_TOOLS/bin/geckodriver-${GECKODRIVER_VERSION}" --version | head -1
+      - name: Firefox extension harness (real Firefox via WebDriver, headed under xvfb)
+        env:
+          FX_HEADED: '1'
+        run: xvfb-run --auto-servernum node e2e/firefox/run.mjs
+      - name: Upload Firefox + service logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firefox-e2e-logs
+          path: |
+            fx-logs/
+            ${{ runner.temp }}/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # AMO package: web-ext build (via package:firefox) + web-ext lint, 0 errors.
+  firefox-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace shared
+      - name: Package (build:firefox + web-ext build + source archive)
+        run: npm run package:firefox --workspace extension
+      # Same pinned web-ext as scripts/package.mjs (WEB_EXT_VERSION). A non-zero
+      # exit means lint ERRORS; warnings are reported but allowed.
+      - name: web-ext lint (0 errors required)
+        run: npx --yes web-ext@10.8.0 lint --source-dir extension/dist-firefox
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firefox-addon
+          path: |
+            extension/artifacts/pinpoint-firefox-*.zip
+            extension/artifacts/pinpoint-source-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # Unsigned Safari app build. GitHub macOS runners are throwaway, so selecting
+  # Xcode globally is fine here (locally the script only sets DEVELOPER_DIR).
+  safari-app:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      PINPOINT_SAFARI_DD: ${{ github.workspace }}/safari-dd
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace shared
+      - name: Store-manifest unit tests
+        working-directory: extension
+        run: npx vitest --run storeManifests firefoxManifest manifestCommands
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+      - name: Build the Safari app (unsigned)
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/logs"
+          npm run build:safari-app --workspace extension 2>&1 | tee "$RUNNER_TEMP/logs/safari-build.log"
+          grep -F '** BUILD SUCCEEDED **' "$RUNNER_TEMP/logs/safari-build.log"
+      - name: Verify the .appex contents
+        run: node extension/scripts/verify-safari-app.mjs "$PINPOINT_SAFARI_DD"
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: safari-build-log
+          path: ${{ runner.temp }}/logs/
+          if-no-files-found: ignore
+          retention-days: 14

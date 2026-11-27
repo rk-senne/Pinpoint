@@ -1,201 +1,66 @@
 # Contributing to Pinpoint
 
-Thank you for contributing to Pinpoint! This guide covers the conventions,
-workflow, and architecture rules that keep the codebase coherent.
+This is the engineering standard. Everything in **Enforced** blocks a merge:
+`main` is protected and requires every check below to pass on an up-to-date
+branch. Everything in **Expected** is checked in review using the PR template.
 
----
+## Workflow
 
-## Getting Started
+1. Branch from `main`, open a pull request. Direct pushes to `main` and
+   force-pushes are blocked for everyone, admins included.
 
-### Prerequisites
+`main` branch protection (applied 27 Nov 2026): pull request required; all 13
+checks below required; branch must be up to date (`strict`); conversations
+resolved; force-push and deletion blocked; enforced for admins. Required
+approvals are **0** while there is a single maintainer (GitHub does not let an
+author approve their own PR). **Raise it to 1** when a second maintainer joins:
+Settings → Branches → `main` → *Require approvals*.
+2. All required checks must be green, and the branch must be up to date with
+   `main`.
+3. Merge. A push to `main` publishes the Docker images to GHCR (`<sha>` and
+   `latest`).
 
-- **Docker** 24+ (Docker Desktop on macOS/Windows, or the engine on Linux)
-- **Docker Compose** v2 (bundled with modern Docker Desktop)
-- **Node.js** 20+ and **npm** 9+ (for host-side lint, typecheck, and extension build)
-- **PostgreSQL** 14+ (only if running outside Docker)
+## Enforced (CI, required checks)
 
-### Setup
+| Check | Workflow / job | Requirement |
+|---|---|---|
+| Typecheck + lint | `ci` / `lint-typecheck` | `tsc --build` 0 errors; ESLint 0 warnings in server and client code; `innerHTML`/`outerHTML`/`insertAdjacentHTML` banned in client code unless an allow-list comment explains why |
+| Standards | `ci` / `standards` | `node scripts/check-standards.mjs`: exact dependency versions, actions pinned to commit SHAs, no `.only`/`fixme`/unexplained skips, **every mounted HTTP route has a test**; `npm audit --omit=dev` finds no vulnerabilities of moderate severity or higher |
+| Unit + integration | `ci` / `test` | All tests pass against real Postgres + MinIO; coverage ≥ the ratchet in `vitest.config.ts` (only ever raised); demo-script tests on Node 22 |
+| Browser e2e | `ci` / `e2e` | Playwright on Chromium, Firefox and WebKit (API, dashboard, user flows, real Chrome extension); a test that only passes on retry (**flaky**) fails the build |
+| Shell scripts | `ci` / `shell-scripts` | `shellcheck` clean for `deploy/*.sh` and `infrastructure/scripts/*.sh` |
+| Docker images | `ci` / `docker-build (server)`, `docker-build (dashboard)` | Both images build |
+| Compose stacks | `compose-smoke (dev)`, `compose-smoke (prod)` | Dev and production stacks boot; HTTPS, strict preflight, `__Host-` cookies, RLS seeding, signed screenshot URLs |
+| Install path | `install-e2e` | Fresh Ubuntu: `install.sh` ×2, app smoke, `backup.sh`, wipe + `restore.sh`, `upgrade.sh` |
+| Other browsers | `firefox-e2e`, `firefox-package`, `safari-app` | Real Firefox harness 20/20; AMO package lints with 0 errors; Safari app builds and contains the extension |
+
+Run the fast checks locally before pushing:
 
 ```bash
-git clone <repo-url> && cd pinpoint
-npm install              # install all workspace dependencies
-docker compose up        # start Postgres, run migrations, boot API + Dashboard
+npx tsc --build tsconfig.json && npm run lint && node scripts/check-standards.mjs
+DB_HOST=127.0.0.1 DB_PORT=5544 DB_USER=postgres DB_PASSWORD=unused DB_NAME=pinpoint_test npx vitest --run
 ```
 
-When the stack is healthy:
+## Expected (review, PR template)
 
-- Dashboard → http://localhost:4173
-- API → http://localhost:3001 (health at http://localhost:3001/health)
+- **Bug fixes come with a regression test** that fails without the fix.
+- **New behaviour is tested at the right level**: unit for logic, integration
+  (real Postgres) for data access and routes, Playwright for user-visible
+  flows. Update `docs/TEST_MATRIX.md` when you add a route, page, worker or flow.
+- **New tests pass twice** locally before review. Skips need a reason: use
+  `describe.skipIf(cond)` / `test.skip(cond, 'reason')`, or a
+  `// skip-reason:` comment on the line above an unconditional skip.
+- **Security-relevant changes** (auth, access control, tenant isolation, input
+  handling, outbound HTTP, secrets) get an entry in `docs/SECURITY_REVIEW.md`.
+  Outbound HTTP goes through `safeFetch`; new tenant tables get RLS policies.
+- **Dependencies**: exact versions only, well-known packages, and say why in
+  the PR. Lockfile changes are reviewed.
+- **Docs**: user-facing or operator-facing changes update README /
+  `docs/DEPLOYMENT.md` / `docs/INTEGRATIONS_SETUP.md` as relevant.
 
-### Useful Commands
+## Exemptions
 
-```bash
-npm run build            # build every workspace (shared → server → dashboard → extension)
-npm test                 # vitest suite (unit + property-based + integration)
-npm run typecheck        # tsc --noEmit across the monorepo
-npm run lint             # ESLint (includes hexagonal boundary rules)
-docker compose down      # stop containers, keep DB volume
-docker compose down -v   # stop containers AND wipe DB volume
-```
-
----
-
-## Commit Message Format
-
-We follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
-
-```
-<type>(<optional scope>): <description>
-
-[optional body]
-
-[optional footer(s)]
-```
-
-### Types
-
-| Type       | When to use                                  |
-|------------|----------------------------------------------|
-| `feat`     | A new feature                                |
-| `fix`      | A bug fix                                    |
-| `docs`     | Documentation only changes                   |
-| `refactor` | Code change that neither fixes nor adds      |
-| `test`     | Adding or updating tests                     |
-| `chore`    | Tooling, CI, deps, configs                   |
-
-### Examples
-
-```
-feat(extension): add offline outbox for annotations
-fix(server): prevent duplicate pin numbers under contention
-docs: add ADR for hexagonal architecture
-refactor(dashboard): extract template helpers into lib/dom.ts
-test(shared): add fast-check round-trip for EnvironmentMetadata
-chore: bump vitest to 2.1
-```
-
----
-
-## Branching Strategy
-
-| Branch pattern | Purpose                  |
-|----------------|--------------------------|
-| `main`         | Production-ready code    |
-| `feat/*`       | New features             |
-| `fix/*`        | Bug fixes                |
-| `chore/*`      | Maintenance & tooling    |
-
-All branches are created from `main` and merged back via Pull Request.
-
----
-
-## PR Process
-
-1. **Branch from `main`** — `git checkout -b feat/my-feature main`
-2. **Implement** — make your changes, following the code style below.
-3. **Verify locally:**
-   ```bash
-   npm run typecheck   # tsc --noEmit must pass
-   npm test            # vitest must pass
-   npm run lint        # eslint must pass
-   ```
-4. **Push and open a PR** — target `main`. Include:
-   - A clear title (conventional-commit style, e.g. `feat(server): add team invites`)
-   - A description explaining *what* changed and *why*
-   - Reference any related issues
-5. **Address review feedback** — push fixup commits, squash on merge.
-
----
-
-## Code Style
-
-### No React
-
-Both client packages (dashboard, extension) are **React-free**. Do not introduce
-React, Preact, Solid, or any virtual-DOM library. The UI layer is:
-
-- **Dashboard** — clone `<template>` blocks from `dashboard/index.html`, bind
-  them with `signal<T>()` subscriptions from `@pinpoint/shared`, route with the
-  History API (`dashboard/src/lib/router.ts`).
-- **Extension** — Web Components (Custom Elements in Shadow DOM) sharing one
-  constructable stylesheet from `@pinpoint/shared/theme`.
-- **Reactivity** — the ~30-LOC `signal<T>()` primitive in
-  `shared/src/signal.ts`. No external state libraries.
-
-### Server: Hexagonal Architecture
-
-```
-server/src/
-├── domain/         # Pure business logic, types, errors
-├── ports/          # Interfaces (inbound + outbound)
-├── adapters/       # Implementations (HTTP routes, DB repos, email, etc.)
-└── composition/    # Wires domain ↔ ports ↔ adapters at startup
-```
-
-- `domain/` **cannot** import from `adapters/`.
-- `adapters/` depend on `ports/` interfaces, never on each other.
-- Only `composition/` knows about both domain and adapters — it wires the
-  dependency graph at startup.
-
-### Extension: Web Components in Shadow DOM
-
-Each UI piece is a Custom Element (`<fl-*>`) attached to a Shadow Root:
-`<fl-overlay-host>`, `<fl-popover>`, `<fl-floating-toolbar>`,
-`<fl-sidebar-panel>`, `<fl-annotation-pin>`, `<fl-mention-autocomplete>`,
-`<fl-comment-thread>`.
-
-All elements adopt the shared constructable stylesheet. Keep component logic
-self-contained; communicate via DOM events and shared signals.
-
-### Dashboard: cloneTemplate + signal subscriptions
-
-Pages live under `dashboard/src/pages/`. Each page module:
-
-1. Calls `cloneTemplate('template-id')` to get a DOM fragment.
-2. Queries elements within the fragment.
-3. Subscribes to signals to reactively update the DOM.
-4. Returns the fragment for the router to mount.
-
----
-
-## Testing
-
-| Layer           | Tool                     | Location                           |
-|-----------------|--------------------------|------------------------------------|
-| Unit            | Vitest                   | `*.test.ts` co-located with source |
-| Property-based  | Vitest + fast-check      | Serialization round-trips, invariants |
-| Integration     | Vitest                   | Socket.IO flows, DB queries        |
-| End-to-end      | Playwright               | `e2e/` workspace                   |
-
-### Guidelines
-
-- Every new feature needs at least unit tests.
-- Serialization code (Zod schemas, environment metadata) should have
-  **fast-check property tests** proving round-trip fidelity.
-- Integration tests that need Postgres use the Compose `db` service.
-- Run `npm test` before pushing — CI will reject failing suites.
-
----
-
-## Architecture Rules
-
-These rules are enforced by ESLint boundary rules and are non-negotiable:
-
-1. **`domain/` cannot import `adapters/`** — domain logic must remain pure and
-   infrastructure-agnostic.
-2. **Only `composition/` wires both** — it is the only layer that imports from
-   both `domain/` and `adapters/`.
-3. **Shared types go in `@pinpoint/shared`** — never duplicate types between
-   workspaces.
-4. **No `localStorage` for auth in the Dashboard** — cookies only (HttpOnly
-   `fl_session` + readable `fl_csrf`).
-5. **Extension uses Bearer JWT** — stored in `chrome.storage.local`, sent as
-   `Authorization: Bearer <token>`.
-
----
-
-## Need Help?
-
-- Check `docs/ENHANCEMENTS.md` for the current work plan.
-- Read the ADRs in `docs/adr/` for architectural context.
-- Open a Draft PR early if you want feedback before finishing.
+- A route the scanner cannot match textually goes into `ROUTE_EXEMPT` in
+  `scripts/check-standards.mjs` with the test that covers it.
+- Lowering a coverage threshold, adding an innerHTML allow-list entry, or
+  skipping a required check needs a written justification in the PR.

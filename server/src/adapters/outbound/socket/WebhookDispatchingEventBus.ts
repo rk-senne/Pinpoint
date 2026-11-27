@@ -3,8 +3,13 @@
 //
 // This adapter wraps the primary EventBus and, for events that match a
 // webhook event type, fires the DispatchWebhook use case asynchronously.
-// Webhook dispatch failures are logged but never propagate back to the
-// caller (fire-and-forget semantics per the EventBus port contract).
+// Since Mission A5b, DispatchWebhook ENQUEUES a durable `webhook_deliveries`
+// row (status=pending, scheduled_at=now) instead of performing the HTTP call
+// inline; the webhook delivery worker then claims and delivers it with
+// retries. The EventBus emit stays fire-and-forget (per the port contract):
+// enqueue failures are logged but never propagate back to the caller, and a
+// crash after enqueue can't drop the delivery because the pending row
+// survives and is reclaimed on restart.
 //
 // Additionally, for activity-relevant events, it records an entry into
 // the `activity_events` table for the project timeline feed.

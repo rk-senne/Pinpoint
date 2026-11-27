@@ -17,6 +17,9 @@ Initial public preview of the Pinpoint extension. Delivered through Phases 14–
 
 ### Added
 
+- Firefox AMO packaging (`npm run package:firefox`: web-ext zip + reproducible source archive with `SOURCE_BUILD.md`), `data_collection_permissions` covering every category sent, and a build-time rewrite of socket.io's `Function("return this")` to `globalThis` (no `eval`-class code in the bundle).
+- Safari Web Extension: `npm run build:safari`, a manifest transform, and a committed Xcode project (`extension/safari/`, bundle id `dev.pinpoint.safari`) that builds unsigned with `xcodebuild`.
+- Store submission guide: `docs/STORE_SUBMISSION.md` (AMO and Safari/App Store).
 - Manifest V3 build pipeline using `@crxjs/vite-plugin` and Vite, producing a packaged `extension/dist` artifact.
 - Popup login flow that authenticates against the Pinpoint server and persists session state.
 - Options page for managing the per-user allow list and block list of origins where the overlay may run.
@@ -30,10 +33,14 @@ Initial public preview of the Pinpoint extension. Delivered through Phases 14–
 - Project picker fallback shown when the active URL does not match any configured project origin.
 - Keyboard shortcuts for toggling the overlay, creating pins, and submitting comments.
 - Outbox-based offline mode (in progress) that queues mutations locally and replays them when connectivity returns.
+- Content-script → service-worker API relay (`lib/apiRelay.ts`): all overlay API calls (including `FormData` screenshot uploads and the connection-monitor heartbeat) are relayed to the service worker, which performs the fetch under the extension's host permissions. This lets the overlay reach the Pinpoint API from any website without the host page's CORS policy blocking it.
+- Configurable **Server URL** on the options page (stored in `chrome.storage.local`), plus a build-time default via `VITE_PINPOINT_API_ORIGIN`, so a single installed build can point at a self-hosted or production deployment.
+- On-demand content-script injection: on sites not covered by the static (localhost-only) `content_scripts`, clicking the toolbar action grants `activeTab` and the service worker injects the overlay via `chrome.scripting.executeScript`, enabling annotation of any site the user chooses without a blanket install-time host grant.
 
 ### Changed
 
-- _None._
+- Socket.IO collaboration client now connects WebSocket-only (`transports: ['websocket']`, `upgrade: false`) so real-time sync works from any host-page origin; the server's polling CORS is pinned to the dashboard origin and would otherwise reject the handshake.
+- API-origin resolution moved to `lib/serverOrigin.ts` with precedence user-setting → build-time → `http://localhost:3001` default.
 
 ### Deprecated
 
@@ -49,4 +56,5 @@ Initial public preview of the Pinpoint extension. Delivered through Phases 14–
 
 ### Security
 
-- Overlay runs only on origins explicitly allow-listed by the user via the options page.
+- Install-time `host_permissions` are scoped to local development origins only; access to any other site is requested at runtime (`optional_host_permissions` + `activeTab` on action click, or a durable grant for the configured Server URL via `chrome.permissions.request`). The new `scripting` permission is used only with that access to inject the overlay on demand.
+- The overlay auto-runs only on origins allow-listed by the user via the options page; elsewhere it runs only after the user invokes it.

@@ -2,7 +2,13 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { FakeClock, FakeUserRepo } from '../../../__tests__/fakes/index.js';
+import {
+  FakeAuthTokenRepo,
+  FakeClock,
+  FakeMailer,
+  FakePasswordHasher,
+  FakeUserRepo,
+} from '../../../__tests__/fakes/index.js';
 import { UpdateProfile } from '../usecases/updateProfile.js';
 
 async function buildSut() {
@@ -11,11 +17,20 @@ async function buildSut() {
   const user = await userRepo.insert({
     email: 'alice@example.com',
     name: 'Alice',
-    passwordHash: 'hash',
+    passwordHash: 'hashed:correct-horse-1',
     verified: true,
   });
-  const usecase = new UpdateProfile({ userRepo });
-  return { usecase, userRepo, user };
+  const authTokenRepo = new FakeAuthTokenRepo(clock);
+  const mailer = new FakeMailer();
+  const usecase = new UpdateProfile({
+    userRepo,
+    passwordHasher: new FakePasswordHasher(),
+    authTokenRepo,
+    mailer,
+    clock,
+    buildConfirmLink: (t) => `https://app.test/verify-email/${t}`,
+  });
+  return { usecase, userRepo, user, authTokenRepo, mailer };
 }
 
 describe('updateProfile use case', () => {
@@ -33,17 +48,82 @@ describe('updateProfile use case', () => {
     expect(result.value.user.email).toBe('alice@example.com');
   });
 
-  it('lowercases and trims a new email', async () => {
-    const { usecase, user } = await buildSut();
-
-    const result = await usecase.execute({
-      userId: user.id,
-      email: '  Alice2@Example.com ',
+  describe('e-mail change (PP-06)', () => {
+    it('requires the current password', async () => {
+      const { usecase, user, userRepo } = await buildSut();
+      const r = await usecase.execute({ userId: user.id, email: 'new@example.com' });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.kind).toBe('Validation');
+      expect((await userRepo.findById(user.id))!.email).toBe('alice@example.com');
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.user.email).toBe('alice2@example.com');
+    it('rejects a wrong password without touching anything', async () => {
+      const { usecase, user, userRepo, mailer } = await buildSut();
+      const r = await usecase.execute({ userId: user.id, email: 'new@example.com', currentPassword: 'nope' });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.kind).toBe('Forbidden');
+      expect((await userRepo.findByIdWithSecret(user.id))!.pendingEmail ?? null).toBeNull();
+      expect(mailer.sent).toHaveLength(0);
+    });
+
+    it('keeps the login e-mail, stores pending_email and mails both addresses', async () => {
+      const { usecase, user, userRepo, mailer, authTokenRepo } = await buildSut();
+      const r = await usecase.execute({ userId: user.id, email: '  New@Example.com ', currentPassword: 'correct-horse-1' });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value.user.email).toBe('alice@example.com');
+      expect(r.value.emailChange).toEqual({ pendingEmail: 'new@example.com' });
+      expect((await userRepo.findByIdWithSecret(user.id))!.pendingEmail).toBe('new@example.com');
+      expect(mailer.sent.map((m) => m.to).sort()).toEqual(['alice@example.com', 'new@example.com']);
+      expect(mailer.sent.find((m) => m.to === 'new@example.com')!.body).toContain('https://app.test/verify-email/');
+      expect([...authTokenRepo.tokens.values()].some((t) => t.kind === 'change_email')).toBe(true);
+      // verified status and sessions untouched until confirmation
+      expect((await userRepo.findByIdWithSecret(user.id))!.tokenVersion).toBe(0);
+    });
+
+    it('does not reveal that the address is taken (same shape, nothing sent)', async () => {
+      const { usecase, userRepo, user, mailer } = await buildSut();
+      await userRepo.insert({ email: 'taken@example.com', name: 'Bob', passwordHash: 'h', verified: true });
+      const r = await usecase.execute({ userId: user.id, email: 'taken@example.com', currentPassword: 'correct-horse-1' });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value.emailChange).toEqual({ pendingEmail: 'taken@example.com' });
+      expect(mailer.sent).toHaveLength(0);
+      expect((await userRepo.findByIdWithSecret(user.id))!.pendingEmail ?? null).toBeNull();
+    });
+
+    it('rejects malformed addresses', async () => {
+      const { usecase, user } = await buildSut();
+      const r = await usecase.execute({ userId: user.id, email: 'notanemail', currentPassword: 'correct-horse-1' });
+      expect(r.ok).toBe(false);
+    });
+
+    it('is refused when the re-auth collaborators are not wired (fail closed)', async () => {
+      const clock = new FakeClock(new Date());
+      const userRepo = new FakeUserRepo(clock);
+      const u = await userRepo.insert({ email: 'a@b.test', name: 'A', passwordHash: 'h', verified: true });
+      const r = await new UpdateProfile({ userRepo }).execute({ userId: u.id, email: 'c@d.test', currentPassword: 'x' });
+      expect(r.ok).toBe(false);
+    });
+  });
+
+  describe('avatar URL (PP-19)', () => {
+    it.each(['javascript:alert(1)', 'data:text/html,<script>x</script>', 'http://x.test/a.png', 'https://u:p@x.test/a.png', 'https://x.test/' + 'a'.repeat(1100)])(
+      'rejects %s',
+      async (avatarUrl) => {
+        const { usecase, user } = await buildSut();
+        const r = await usecase.execute({ userId: user.id, avatarUrl });
+        expect(r.ok).toBe(false);
+      },
+    );
+    it('accepts https', async () => {
+      const { usecase, user } = await buildSut();
+      expect((await usecase.execute({ userId: user.id, avatarUrl: 'https://cdn.test/a.png' })).ok).toBe(true);
+    });
+  });
+
+  it('rejects a 5000-character name instead of failing with a DB error (PP-13)', async () => {
+    const { usecase, user } = await buildSut();
+    expect((await usecase.execute({ userId: user.id, name: 'x'.repeat(5000) })).ok).toBe(false);
   });
 
   it('clears the avatar when avatarUrl is null', async () => {
@@ -58,25 +138,6 @@ describe('updateProfile use case', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.user.avatarUrl).toBeUndefined();
-  });
-
-  it('returns Conflict when the email belongs to another user', async () => {
-    const { usecase, userRepo, user } = await buildSut();
-    await userRepo.insert({
-      email: 'taken@example.com',
-      name: 'Bob',
-      passwordHash: 'hash2',
-      verified: true,
-    });
-
-    const result = await usecase.execute({
-      userId: user.id,
-      email: 'taken@example.com',
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.kind).toBe('Conflict');
   });
 
   it('allows reusing the same email the user already owns', async () => {

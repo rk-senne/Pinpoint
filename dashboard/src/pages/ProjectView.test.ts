@@ -16,7 +16,7 @@
  *   list optimistically.
  * - Detail view shows the bug-report assignee dropdown populated from
  *   the members fetch and saves assignment + due date.
- * - Real-time `annotation:created` updates the list and analytics totals.
+ * - Real-time `annotation.created` updates the list and analytics totals.
  * - Real-time `annotation:viewers` repaints the co-viewer indicator with
  *   avatars or initials, suppressing the local user.
  * - Reconnecting banner toggles when the socket reports a state change.
@@ -133,7 +133,28 @@ const TEMPLATES: Record<string, string> = {
           </div>
         </div>
         <section data-section="list" hidden>
+          <div data-role="filter-bar">
+            <input type="text" data-role="filter-search" />
+            <select data-role="filter-severity"><option value=""></option></select>
+            <select data-role="filter-status"><option value=""></option></select>
+            <select data-role="filter-sort">
+              <option value="newest">newest</option>
+              <option value="oldest">oldest</option>
+              <option value="severity">severity</option>
+              <option value="pin">pin</option>
+            </select>
+            <button type="button" data-action="clear-filters" data-role="clear-filters-btn" hidden>Clear</button>
+          </div>
+          <div data-role="bulk-actions" hidden>
+            <input type="checkbox" data-role="select-all" />
+            <span data-role="bulk-count"></span>
+            <button type="button" data-action="bulk-resolve">Resolve</button>
+            <button type="button" data-action="bulk-in-progress">In progress</button>
+            <button type="button" data-action="bulk-delete">Delete</button>
+            <button type="button" data-action="bulk-clear">Clear</button>
+          </div>
           <p data-role="list-empty" hidden>No annotations yet.</p>
+          <p data-role="filter-empty" hidden>No annotations match the filters.</p>
           <table data-role="list-table" hidden>
             <tbody data-role="list-body"></tbody>
           </table>
@@ -212,6 +233,15 @@ const TEMPLATES: Record<string, string> = {
                 <input type="date" data-role="due-date" />
                 <button type="button" data-action="save-assignment">Save</button>
               </div>
+            </div>
+            <div data-role="comments-panel">
+              <span data-slot="comment-count"></span>
+              <ul data-role="comment-list"></ul>
+              <p data-role="comment-empty" hidden>No comments yet.</p>
+              <form data-role="comment-form">
+                <textarea data-role="comment-input"></textarea>
+                <button type="submit" data-role="comment-submit">Comment</button>
+              </form>
             </div>
           </div>
         </section>
@@ -327,19 +357,28 @@ function makeFetch(plan: FakeFetchPlan): ReturnType<typeof vi.fn> {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     recorded.push({ url, init });
-    if (url.endsWith('/annotations') && (!init || init.method === undefined)) {
-      return jsonResponse({ annotations: plan.annotations ?? [] });
+    // Strip the query string so `/projects/:id/annotations?page=1&pageSize=100`
+    // (the real paginated call) still matches the annotations branch.
+    const path = url.split('?')[0];
+    if (path.endsWith('/annotations') && (!init || init.method === undefined)) {
+      // Real shape: the shared `{ data, pagination }` envelope — NOT
+      // `{ annotations }` (ground truth: responses captured from the live API). Single page.
+      const rows = plan.annotations ?? [];
+      return jsonResponse({
+        data: rows,
+        pagination: { page: 1, pageSize: 100, total: rows.length, totalPages: 1 },
+      });
     }
-    if (url.endsWith('/analytics')) {
+    if (path.endsWith('/analytics')) {
       return jsonResponse({ analytics: plan.analytics ?? makeAnalytics() });
     }
-    if (url.endsWith('/members')) {
+    if (path.endsWith('/members')) {
       return jsonResponse({ members: plan.members ?? [] });
     }
-    if (url.endsWith('/users/me')) {
+    if (path.endsWith('/users/me')) {
       return jsonResponse(plan.me ?? { id: 'user-1', email: 'me@x', name: 'Me' });
     }
-    if (url.includes('/annotations/') && (init?.method === 'PUT')) {
+    if (path.includes('/annotations/') && (init?.method === 'PUT')) {
       return jsonResponse({ ok: true });
     }
     return jsonResponse({});
@@ -353,8 +392,13 @@ function jsonResponse(body: unknown, status = 200): Promise<Response> {
   }));
 }
 
+/** Let real timers + Response.json() settle (used where flush() ticks are too few). */
+async function settle(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 30));
+}
+
 async function flush(): Promise<void> {
-  for (let i = 0; i < 6; i++) await Promise.resolve();
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +442,7 @@ describe('mountProjectView', () => {
 
     expect(getSection('loading').hidden).toBe(true);
     expect(getSection('content').hidden).toBe(false);
-    expect(getProjectTitle().textContent).toBe('Project: proj-1');
+    expect(getProjectTitle().textContent).toBe('Project');
 
     // Analytics panel visible with all four cards populated.
     const analytics = root.querySelector<HTMLElement>('[data-role="analytics"]')!;
@@ -406,7 +450,10 @@ describe('mountProjectView', () => {
     expect(rowsForCard(analytics, 'bySeverity').length).toBe(4);
     expect(rowsForCard(analytics, 'byType').length).toBe(3);
     expect(rowsForCard(analytics, 'byStatus').length).toBe(3);
-    expect(rowsForCard(analytics, 'byBrowser').length).toBe(9);
+    // Zero-count browser families are omitted from the card.
+    expect(rowsForCard(analytics, 'byBrowser').length).toBe(
+      Object.values(makeAnalytics().byBrowser).filter((n) => n > 0).length,
+    );
 
     // List visible with the row.
     const tableRows = root.querySelectorAll('[data-role="list-body"] tr');
@@ -471,8 +518,10 @@ describe('mountProjectView', () => {
       'unknown',
     ] as const;
     for (const key of expectedKeys) {
-      expect(rendered.has(key)).toBe(true);
-      expect(rendered.get(key)).toBe(String(browserCounts[key]));
+      // The `unknown` bucket is displayed as "Unknown".
+      const label = key === 'unknown' ? 'Unknown' : key;
+      expect(rendered.has(label)).toBe(true);
+      expect(rendered.get(label)).toBe(String(browserCounts[key]));
     }
   });
 
@@ -773,7 +822,7 @@ describe('mountProjectView', () => {
     expect(getSection('reconnecting').hidden).toBe(true);
   });
 
-  it('annotation:created broadcast appends to the list and bumps analytics totals', async () => {
+  it('annotation.created broadcast appends to the list and bumps analytics totals', async () => {
     vi.stubGlobal('fetch', makeFetch({ annotations: [], analytics: makeAnalytics({
       total: 0,
       bySeverity: { critical: 0, major: 0, minor: 0, informational: 0 },
@@ -787,7 +836,7 @@ describe('mountProjectView', () => {
     mountProjectView(root, { id: 'proj-1' });
     await flush();
 
-    const handler = socketHandlers.get('annotation:created');
+    const handler = socketHandlers.get('annotation.created');
     expect(handler).toBeDefined();
     handler!(makeAnnotation({ id: 'b1', body: 'realtime row', severity: 'major', status: 'active' }));
 
@@ -800,6 +849,25 @@ describe('mountProjectView', () => {
     const sevRows = rowsForCard(analytics, 'bySeverity');
     const major = sevRows.find((row) => row.firstChild?.textContent === 'major')!;
     expect(major.lastChild!.textContent).toBe('1');
+  });
+
+  it('annotation.status_changed / annotation.updated broadcasts update the row in place', async () => {
+    vi.stubGlobal('fetch', makeFetch({ annotations: [makeAnnotation({ id: 'a1', body: 'orig', status: 'active' })] }));
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    expect(socketHandlers.has('annotation:status')).toBe(false);
+    socketHandlers.get('annotation.status_changed')!(
+      makeAnnotation({ id: 'a1', body: 'orig', status: 'resolved' }),
+    );
+    socketHandlers.get('annotation.updated')!(
+      makeAnnotation({ id: 'a1', body: 'edited', status: 'resolved' }),
+    );
+    const rows = root.querySelectorAll('[data-role="list-body"] tr');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector('[data-slot="body"]')!.textContent).toBe('edited');
   });
 
   it('annotation:viewers broadcast paints avatars and suppresses the local user', async () => {
@@ -832,9 +900,84 @@ describe('mountProjectView', () => {
     expect(tags.sort()).toEqual(['IMG', 'SPAN']);
   });
 
+  it('shows the project name (not the raw id) as the page title', async () => {
+    const base = makeFetch({ annotations: [] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = (typeof input === 'string' ? input : input.toString()).split('?')[0]!;
+        if (url.endsWith('/projects/proj-1')) {
+          return jsonResponse({ project: { id: 'proj-1', name: 'Acme Marketing Site' } });
+        }
+        return (base as unknown as (i: RequestInfo | URL, n?: RequestInit) => Promise<Response>)(input, init);
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+    expect(getProjectTitle().textContent).toBe('Acme Marketing Site');
+    expect(getProjectTitle().textContent).not.toContain('proj-1');
+  });
+
+  it('lists comments in the detail panel and posts a new one with resolved @mentions', async () => {
+    const recorded: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const base = makeFetch({
+      annotations: [makeAnnotation({ id: 'a1', body: 'first' })],
+      members: [
+        { userId: 'u-daniel', name: 'Daniel Okafor', email: 'd@x', avatarUrl: null, role: 'member' },
+      ],
+    });
+    const comments = [
+      { id: 'c1', authorId: 'u-daniel', body: 'Reproduced on iOS', createdAt: '2026-11-14T09:00:00.000Z' },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = (typeof input === 'string' ? input : input.toString()).split('?')[0]!;
+        if (url.endsWith('/annotations/a1/comments')) {
+          recorded.push({ url, init });
+          if (init?.method === 'POST') {
+            const b = JSON.parse(String(init.body)) as { body: string };
+            comments.push({ id: 'c2', authorId: 'u-daniel', body: b.body, createdAt: '2026-11-14T10:00:00.000Z' });
+            return jsonResponse({ comment: comments[1] }, 201);
+          }
+          return jsonResponse({ data: comments });
+        }
+        return (base as unknown as (i: RequestInfo | URL, n?: RequestInit) => Promise<Response>)(input, init);
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+    (root.querySelector('[data-role="list-body"] tr') as HTMLElement).click();
+    await settle();
+
+    const items = root.querySelectorAll('[data-role="comment-list"] [data-role="comment"]');
+    expect(items.length).toBe(1);
+    expect(items[0]!.textContent).toContain('Daniel Okafor');
+    expect(items[0]!.textContent).toContain('Reproduced on iOS');
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="comment-input"]')!;
+    input.value = 'Thanks @Daniel Okafor, taking a look';
+    root.querySelector<HTMLFormElement>('[data-role="comment-form"]')!.dispatchEvent(
+      new Event('submit', { cancelable: true, bubbles: true }),
+    );
+    await settle();
+
+    const post = recorded.find((r) => r.init?.method === 'POST')!;
+    expect(JSON.parse(String(post.init!.body))).toEqual({
+      body: 'Thanks @Daniel Okafor, taking a look',
+      mentions: ['u-daniel'],
+    });
+    expect(root.querySelectorAll('[data-role="comment-list"] [data-role="comment"]').length).toBe(2);
+    expect(input.value).toBe('');
+  });
+
   it('on fetch failure renders the error state', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url = (typeof input === 'string' ? input : input.toString()).split('?')[0]!;
       if (url.endsWith('/annotations')) {
         return Promise.resolve(new Response(
           JSON.stringify({ error: { message: 'forbidden' } }),
@@ -877,15 +1020,17 @@ describe('mountProjectView', () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
       recorded.push({ url, init });
-      if (url.endsWith('/annotations') && (!init || init.method === undefined)) {
+      if (url.split('?')[0]!.endsWith('/annotations') && (!init || init.method === undefined)) {
+        const rows = [
+          makeAnnotation({
+            id: 'a1',
+            severity: 'critical',
+            screenshotObjectKey: 'projects/proj-1/annotations/a1/screenshot.png',
+          }),
+        ];
         return jsonResponse({
-          annotations: [
-            makeAnnotation({
-              id: 'a1',
-              severity: 'critical',
-              screenshotObjectKey: 'projects/proj-1/annotations/a1/screenshot.png',
-            }),
-          ],
+          data: rows,
+          pagination: { page: 1, pageSize: 100, total: rows.length, totalPages: 1 },
         });
       }
       if (url.endsWith('/analytics')) return jsonResponse({ analytics: makeAnalytics() });
@@ -1169,6 +1314,115 @@ describe('mountProjectView', () => {
     expect(updated).toHaveLength(2);
     expect(updated[0].textContent).toContain('a');
     expect(updated[1].textContent).toContain('b');
+  });
+
+  // -------------------------------------------------------------------------
+  // Unverified-guest badge (Mission A7.4)
+  // -------------------------------------------------------------------------
+
+  it('shows an "Unverified guest" badge in the detail view for guest annotations', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetch({
+        annotations: [
+          makeAnnotation({
+            id: 'a1',
+            severity: 'critical',
+            isGuest: true,
+            guestName: 'Pat Guest',
+            guestEmail: 'pat@example.com',
+          } as Partial<Annotation>),
+        ],
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    (root.querySelector('[data-role="list-body"] tr') as HTMLElement).click();
+
+    const badge = root.querySelector<HTMLElement>(
+      '[data-role="guest-badge"] [data-role="guest-badge-label"]',
+    );
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toBe('Unverified guest');
+
+    // Guest name/email render as text next to the badge.
+    const identity = root.querySelector<HTMLElement>('[data-role="guest-identity"]');
+    expect(identity!.textContent).toBe('Pat Guest');
+  });
+
+  it('does NOT show the guest badge for a normal (authenticated) annotation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetch({
+        annotations: [makeAnnotation({ id: 'a1', severity: 'critical' })],
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    (root.querySelector('[data-role="list-body"] tr') as HTMLElement).click();
+
+    const container = root.querySelector<HTMLElement>('[data-role="guest-badge"]');
+    // Container may exist but must be hidden and empty for non-guests.
+    if (container) {
+      expect(container.hidden).toBe(true);
+      expect(container.querySelector('[data-role="guest-badge-label"]')).toBeNull();
+    }
+  });
+
+  it('renders an untrusted guestName as inert text (no markup injection)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetch({
+        annotations: [
+          makeAnnotation({
+            id: 'a1',
+            severity: 'critical',
+            isGuest: true,
+            guestName: '<img src=x onerror=alert(1)>',
+            guestEmail: null,
+          } as Partial<Annotation>),
+        ],
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    (root.querySelector('[data-role="list-body"] tr') as HTMLElement).click();
+
+    const identity = root.querySelector<HTMLElement>('[data-role="guest-identity"]')!;
+    // The payload lands as literal text, never as an <img> element.
+    expect(identity.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(identity.querySelector('img')).toBeNull();
+  });
+
+  it('flags guest-authored rows in the list view with a badge', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetch({
+        annotations: [
+          makeAnnotation({ id: 'a1', body: 'guest row', isGuest: true, guestName: 'G' } as Partial<Annotation>),
+          makeAnnotation({ id: 'a2', pinNumber: 2, body: 'normal row' }),
+        ],
+      }),
+    );
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    mountProjectView(root, { id: 'proj-1' });
+    await flush();
+
+    const rows = root.querySelectorAll<HTMLElement>('[data-role="list-body"] tr');
+    expect(rows).toHaveLength(2);
+    const guestBadges = root.querySelectorAll('[data-role="list-body"] [data-role="guest-badge"]');
+    expect(guestBadges).toHaveLength(1);
+    expect(guestBadges[0].textContent).toBe('Unverified guest');
   });
 });
 

@@ -19,6 +19,7 @@
     { "path": "extension" },
     { "path": "e2e" },
     { "path": "mobile-sdk" },
+    { "path": "mcp-server" },
     { "path": "widget" }
   ],
   "files": []

@@ -19,6 +19,9 @@ import type {
   AnnotationStatus,
   CapturedConsoleEntry,
   CapturedNetworkEntry,
+  ConsoleLogEntry,
+  JsErrorEntry,
+  ReplayEvent,
   NewAnnotation,
 } from '../../../domain/annotation/Annotation.js';
 import type { DOMTarget } from '../../../domain/annotation/DOMTarget.js';
@@ -30,6 +33,7 @@ import type {
 
 interface AnnotationRow {
   id: string;
+  org_id?: string | null;
   project_id: string;
   page_id: string;
   type: string;
@@ -46,6 +50,9 @@ interface AnnotationRow {
   screenshot_object_key: string | null;
   captured_console: unknown;
   captured_network: unknown;
+  console_logs: unknown;
+  js_errors: unknown;
+  session_replay: unknown;
   client_request_id: string | null;
   is_guest: boolean;
   guest_name: string | null;
@@ -70,7 +77,9 @@ export class PgAnnotationRepo implements AnnotationRepo {
       environment: JSON.stringify(input.environment),
       pin_number: input.pinNumber,
     };
-    if (input.orgId) row.org_id = input.orgId;
+    // Guest/widget annotations carry no orgId: inherit the project's, so the row
+    // is visible to its tenant under RLS (PP-08) instead of being orphaned.
+    row.org_id = input.orgId ?? this.db.raw('(select org_id from projects where id = ?)', [input.projectId]);
 
     if (input.guidelineId !== undefined) row.guideline_id = input.guidelineId;
     if (input.assigneeId !== undefined) row.assignee_id = input.assigneeId;
@@ -82,6 +91,17 @@ export class PgAnnotationRepo implements AnnotationRepo {
     if (input.capturedNetwork !== undefined) {
       row.captured_network =
         input.capturedNetwork === null ? null : JSON.stringify(input.capturedNetwork);
+    }
+    if (input.consoleLogs !== undefined) {
+      row.console_logs =
+        input.consoleLogs === null ? null : JSON.stringify(input.consoleLogs);
+    }
+    if (input.jsErrors !== undefined) {
+      row.js_errors = input.jsErrors === null ? null : JSON.stringify(input.jsErrors);
+    }
+    if (input.sessionReplay !== undefined) {
+      row.session_replay =
+        input.sessionReplay === null ? null : JSON.stringify(input.sessionReplay);
     }
     if (input.clientRequestId !== undefined) row.client_request_id = input.clientRequestId;
     if (input.isGuest) row.is_guest = true;
@@ -187,9 +207,10 @@ export class PgAnnotationRepo implements AnnotationRepo {
       pinNumber: row.pin_number,
     };
 
+    if (row.org_id) result.orgId = row.org_id;
     if (row.guideline_id) result.guidelineId = row.guideline_id;
     if (row.assignee_id) result.assigneeId = row.assignee_id;
-    if (row.due_date) result.dueDate = toIso(row.due_date);
+    if (row.due_date) result.dueDate = toDateOnly(row.due_date);
     if (row.screenshot_object_key) result.screenshotObjectKey = row.screenshot_object_key;
 
     // Capture-buffer columns are nullable JSONB. Preserve `null` distinct
@@ -207,6 +228,24 @@ export class PgAnnotationRepo implements AnnotationRepo {
         row.captured_network === null
           ? null
           : (parseJsonb<CapturedNetworkEntry[]>(row.captured_network) as CapturedNetworkEntry[]);
+    }
+    if (row.console_logs !== undefined) {
+      result.consoleLogs =
+        row.console_logs === null
+          ? null
+          : (parseJsonb<ConsoleLogEntry[]>(row.console_logs) as ConsoleLogEntry[]);
+    }
+    if (row.js_errors !== undefined) {
+      result.jsErrors =
+        row.js_errors === null
+          ? null
+          : (parseJsonb<JsErrorEntry[]>(row.js_errors) as JsErrorEntry[]);
+    }
+    if (row.session_replay !== undefined) {
+      result.sessionReplay =
+        row.session_replay === null
+          ? null
+          : (parseJsonb<ReplayEvent[]>(row.session_replay) as ReplayEvent[]);
     }
     if (row.client_request_id) result.clientRequestId = row.client_request_id;
     if (row.is_guest) result.isGuest = true;
@@ -227,6 +266,19 @@ function parseJsonb<T>(value: unknown): T | null {
     }
   }
   return value as T;
+}
+
+/**
+ * `date` columns are returned as 'YYYY-MM-DD' (see composition/pgTypes.ts).
+ * If a Date still reaches us (parser not registered, e.g. a bare knex in a
+ * script), read its LOCAL calendar fields — that is how node-pg built it —
+ * rather than toISOString(), which shifts by the UTC offset.
+ */
+function toDateOnly(value: Date | string): string {
+  if (typeof value === 'string') return value.slice(0, 10);
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
 }
 
 function toIso(value: Date | string): string {

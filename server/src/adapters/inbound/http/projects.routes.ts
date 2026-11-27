@@ -9,7 +9,7 @@
 // analytics, and export sub-routes are also registered here under their
 // `/:id/...` paths to keep the existing URL surface intact.
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import type { Knex } from 'knex';
 
@@ -26,8 +26,9 @@ import type { ResolveProjectByUrl } from '../../../domain/project/usecases/resol
 import type { ExportProjectReport } from '../../../domain/project/usecases/exportProjectReport.js';
 import type { ComputeAnalytics } from '../../../domain/analytics/usecases/computeAnalytics.js';
 import type { ProjectStatus } from '../../../domain/project/Project.js';
-import { sendDomainError, sendZodFailure, paramString } from './errors.js';
-import { recordAudit } from './auditLog.routes.js';
+import { sendDomainError, sendZodFailure, sendError, paramString } from './errors.js';
+import { recordAudit, auditApiKeyContext } from './auditLog.routes.js';
+import { findAccessibleProject } from './access.js';
 
 export interface ProjectsRouteDeps {
   createProject: CreateProject;
@@ -46,13 +47,14 @@ export interface ProjectsRouteDeps {
 }
 
 const CreateProjectBodySchema = z.object({
-  name: z.string().trim().min(1, 'Project name is required.'),
+  name: z.string().trim().min(1, 'Project name is required.').max(255),
   urls: z
     .array(
       z
         .string()
         .trim()
         .min(1, 'URL must not be empty.')
+        .max(2048, 'URL is too long.')
         .refine(
           (u) => {
             try {
@@ -65,12 +67,13 @@ const CreateProjectBodySchema = z.object({
           { message: 'URL must be a valid HTTP or HTTPS URL.' },
         ),
     )
-    .min(1, 'At least one URL is required.'),
+    .min(1, 'At least one URL is required.')
+    .max(100, 'Too many URLs.'),
   teamId: z.string().uuid().optional(),
 });
 
 const UpdateProjectBodySchema = z.object({
-  name: z.string().trim().min(1).optional(),
+  name: z.string().trim().min(1).max(255).optional(),
   status: z.enum(['active', 'archived']).optional(),
 });
 
@@ -81,6 +84,7 @@ const DeleteProjectBodySchema = z.object({
 const ExportBodySchema = z.object({
   format: z.enum(['pdf', 'csv']),
 });
+
 
 export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
   const {
@@ -111,6 +115,9 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
     const userId = req.user!.userId;
     const result = await createProject.execute({
       ownerUserId: userId,
+      // Tenant scoping: every org-scoped feature (widget keys, deliver,
+      // heatmap, webhooks, feedback) filters projects by org_id.
+      orgId: req.user!.orgId,
       name: parsed.data.name,
       urls: parsed.data.urls,
       ...(parsed.data.teamId !== undefined ? { teamId: parsed.data.teamId } : {}),
@@ -240,16 +247,53 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
       sendZodFailure(res, 'Invalid project update payload.', parsed.error.flatten());
       return;
     }
-    if (parsed.data.status === undefined) {
-      res
-        .status(400)
-        .json({ error: { code: 'NOT_IMPLEMENTED', message: 'Project rename is not yet supported via this endpoint.' } });
+    if (parsed.data.status === undefined && parsed.data.name === undefined) {
+      sendError(res, 400, 'VALIDATION', 'Provide a name and/or a status to update.');
       return;
+    }
+
+    // Rename. Only the owner or an org owner/admin may rename; a caller who
+    // cannot see the project gets the same 404 as any unknown id.
+    if (parsed.data.name !== undefined) {
+      const user = req.user!;
+      const accessible = await findAccessibleProject(db, user, paramString(req.params.id));
+      if (!accessible) {
+        sendError(res, 404, 'NOT_FOUND', 'Project not found.');
+        return;
+      }
+      if (accessible.ownerId !== user.userId && user.role !== 'owner' && user.role !== 'admin') {
+        sendError(res, 403, 'FORBIDDEN', 'Only the project owner or an admin can rename this project.');
+        return;
+      }
+      await db('projects')
+        .where({ id: accessible.id, org_id: user.orgId })
+        .update({ name: parsed.data.name, updated_at: db.fn.now() });
+      if (parsed.data.status === undefined) {
+        const renamed = await getProject.execute({ userId: user.userId, projectId: accessible.id });
+        if (!renamed.ok) {
+          sendDomainError(res, renamed.error);
+          return;
+        }
+        const p = renamed.value.project;
+        res.status(200).json({
+          project: {
+            id: p.id,
+            name: p.name,
+            urls: p.urls,
+            status: p.status,
+            ownerId: p.ownerId,
+            teamId: p.teamId ?? null,
+            createdAt: p.createdAt,
+            updatedAt: p.updatedAt,
+          },
+        });
+        return;
+      }
     }
     const result = await archiveProject.execute({
       userId: req.user!.userId,
       projectId: paramString(req.params.id),
-      status: parsed.data.status,
+      status: parsed.data.status!,
     });
     if (!result.ok) {
       sendDomainError(res, result.error);
@@ -289,11 +333,13 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
       return;
     }
     await recordAudit(db, {
+      request: req,
       orgId: req.user!.orgId,
       actorId: req.user!.userId,
       action: 'project.deleted',
       resourceType: 'project',
       resourceId: paramString(req.params.id),
+      ...auditApiKeyContext(req),
     });
     res.status(200).json({
       message: 'Project and all associated data deleted successfully.',
@@ -304,9 +350,7 @@ export function createProjectsRoutes(deps: ProjectsRouteDeps): Router {
   router.delete('/:id/pages/:pageId', async (req: Request, res: Response) => {
     const rawMode = typeof req.query.onNonEmpty === 'string' ? req.query.onNonEmpty : 'block';
     if (rawMode !== 'block' && rawMode !== 'cascade') {
-      res.status(400).json({
-        error: 'Query parameter `onNonEmpty` must be `block` or `cascade`.',
-      });
+      sendError(res, 400, 'VALIDATION', 'Query parameter `onNonEmpty` must be `block` or `cascade`.');
       return;
     }
     const result = await deletePage.execute({

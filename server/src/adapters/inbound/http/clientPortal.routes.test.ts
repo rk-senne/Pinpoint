@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createClientPortalRoutes, type ClientPortalRouteDeps } from './clientPortal.routes.js';
 
@@ -10,9 +10,9 @@ import { createClientPortalRoutes, type ClientPortalRouteDeps } from './clientPo
  * to req.user.orgId before creating a portal.
  */
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
-const PROJECT_ID = 'b0000000-0000-0000-0000-000000000001';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-4000-8000-000000000002';
+const PROJECT_ID = 'b0000000-0000-4000-8000-000000000001';
 
 function fakeAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
   (req as any).user = { userId: 'u1', email: 'a@b.com', orgId: ORG_ID, role: 'admin' };
@@ -21,7 +21,7 @@ function fakeAuth(req: express.Request, _res: express.Response, next: express.Ne
 
 interface MockDbOpts {
   /** Simulated project row returned by `projects` query (undefined = not found) */
-  project?: { id: string; org_id: string } | undefined;
+  project?: { id: string; org_id: string; owner_id?: string } | undefined;
   /** Simulated inserted portal row returned by `.returning('*')` */
   insertedPortal?: any;
 }
@@ -106,7 +106,7 @@ describe('clientPortal.routes — POST /api/v1/portals (IDOR fix)', () => {
   });
 
   it('allows creation when project belongs to the authenticated user org', async () => {
-    const ownedProject = { id: PROJECT_ID, org_id: ORG_ID };
+    const ownedProject = { id: PROJECT_ID, org_id: ORG_ID, owner_id: 'u1' };
     const insertedPortal = {
       id: 'portal-new',
       org_id: ORG_ID,
@@ -127,7 +127,7 @@ describe('clientPortal.routes — POST /api/v1/portals (IDOR fix)', () => {
   });
 
   it('rejects invalid body (missing title)', async () => {
-    const db = makeMockDb({ project: { id: PROJECT_ID, org_id: ORG_ID } });
+    const db = makeMockDb({ project: { id: PROJECT_ID, org_id: ORG_ID, owner_id: 'u1' } });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
     const res = await request(app)
@@ -148,5 +148,39 @@ describe('clientPortal.routes — POST /api/v1/portals (IDOR fix)', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
+  });
+});
+
+// =============================================================================
+// GAP 3 — GET /api/v1/portals returns the shared { data, pagination } envelope
+// and honours page/pageSize.
+// =============================================================================
+describe('clientPortal.routes — GET /api/v1/portals (GAP 3)', () => {
+  function paginatedTableMock(rows: any[], total: number) {
+    const builder: any = {};
+    const chain = () => builder;
+    builder.where = vi.fn(chain);
+    builder.orderBy = vi.fn(chain);
+    builder.clone = vi.fn(chain);
+    builder.limit = vi.fn(chain);
+    builder.offset = vi.fn(() => Promise.resolve(rows));
+    builder.count = vi.fn(() => Promise.resolve([{ count: total }]));
+    return builder;
+  }
+
+  it('returns { data, pagination } and honours page/pageSize', async () => {
+    const rows = [{ id: 'portal-1', title: 'Portal 1' }];
+    const builder = paginatedTableMock(rows, 4);
+    const db: any = vi.fn(() => builder);
+    const app = makeApp({ authMiddleware: fakeAuth, db });
+
+    const res = await request(app).get('/api/v1/portals?page=2&pageSize=2');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual(rows);
+    expect(res.body.pagination).toEqual({ page: 2, pageSize: 2, total: 4, totalPages: 2 });
+    expect(builder.limit).toHaveBeenCalledWith(2);
+    expect(builder.offset).toHaveBeenCalledWith(2);
+    expect(res.body.portals).toBeUndefined();
   });
 });

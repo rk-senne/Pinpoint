@@ -194,6 +194,7 @@ const MARKUP_EDITOR_CSS = `
 
 const TEMPLATE = (() => {
   const t = document.createElement('template');
+  // eslint-disable-next-line no-restricted-syntax -- static <template> markup built from module constants, no user data; parsed inertly
   t.innerHTML = `
     <style>${MARKUP_EDITOR_CSS}</style>
     <div class="fl-markup-toolbar" part="toolbar" role="toolbar" aria-label="Markup tools">

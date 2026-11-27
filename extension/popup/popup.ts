@@ -22,7 +22,11 @@
  */
 
 import { apiFetch } from '../src/lib/api';
-import { setStoredAuthToken } from '../src/lib/authTokenStore';
+import {
+  clearStoredAuthToken,
+  getStoredAuthToken,
+  setStoredAuthToken,
+} from '../src/lib/authTokenStore';
 
 /** Runtime message type the rest of the extension listens for. */
 export const LOGIN_COMPLETE_MESSAGE = { type: 'login-complete' } as const;
@@ -95,17 +99,155 @@ async function broadcastLoginAndRefreshActiveTab(): Promise<void> {
   } catch {
     // No receivers / disconnected port — non-fatal.
   }
+  // Ask the service worker to open the overlay on the active tab. The popup
+  // opening is the `activeTab`-granting gesture, so the SW may inject the
+  // content script on demand even on a host the static `content_scripts`
+  // don't match (e.g. a production site over https). Non-fatal on failure —
+  // the user can still toggle via the keyboard shortcut.
   try {
-    if (chrome.tabs?.query && chrome.tabs?.reload) {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      for (const tab of tabs) {
-        if (typeof tab.id === 'number') {
-          await chrome.tabs.reload(tab.id);
-        }
+    if (chrome.tabs?.query) {
+      const tabs = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+      const tabId = tabs[0]?.id;
+      if (typeof tabId === 'number') {
+        chrome.runtime?.sendMessage?.({
+          type: 'PP_REQUEST_TOGGLE',
+          tabId,
+        });
       }
     }
   } catch {
     // Permissions / no-active-tab — non-fatal.
+  }
+}
+
+/** Optional signed-in panel (absent in older fixtures). */
+interface SignedInElements {
+  section: HTMLElement;
+  signInTitle: HTMLElement | null;
+  name: HTMLElement | null;
+  email: HTMLElement | null;
+  avatar: HTMLElement | null;
+  openOverlay: HTMLButtonElement | null;
+  openOptions: HTMLButtonElement | null;
+  signOut: HTMLButtonElement | null;
+}
+
+function getSignedInElements(doc: Document): SignedInElements | null {
+  const section = doc.getElementById('popup-signed-in');
+  if (!section) return null;
+  const btn = (id: string): HTMLButtonElement | null => {
+    const el = doc.getElementById(id);
+    return el instanceof HTMLButtonElement ? el : null;
+  };
+  return {
+    section,
+    signInTitle: doc.getElementById('popup-signin-title'),
+    name: doc.getElementById('popup-user-name'),
+    email: doc.getElementById('popup-user-email'),
+    avatar: doc.getElementById('popup-avatar'),
+    openOverlay: btn('popup-open-overlay'),
+    openOptions: btn('popup-open-options'),
+    signOut: btn('popup-signout'),
+  };
+}
+
+/** Toggle between the sign-in form and the signed-in panel. */
+function showSignedIn(
+  els: PopupElements,
+  signed: SignedInElements,
+  user: { name?: string; email?: string } | null,
+): void {
+  signed.section.hidden = false;
+  els.form.hidden = true;
+  if (signed.signInTitle) signed.signInTitle.hidden = true;
+  const name = user?.name?.trim() || 'Signed in';
+  if (signed.name) signed.name.textContent = name;
+  if (signed.email) signed.email.textContent = user?.email ?? '';
+  if (signed.avatar) signed.avatar.textContent = (user?.name?.trim() || user?.email || '?').charAt(0).toUpperCase();
+}
+
+function showSignedOut(els: PopupElements, signed: SignedInElements | null): void {
+  if (signed) signed.section.hidden = true;
+  els.form.hidden = false;
+  if (signed?.signInTitle) signed.signInTitle.hidden = false;
+}
+
+async function requestToggleOnActiveTab(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.tabs?.query) return;
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabId = tabs[0]?.id;
+  if (typeof tabId === 'number') {
+    chrome.runtime?.sendMessage?.({ type: 'PP_REQUEST_TOGGLE', tabId });
+  }
+}
+
+/**
+ * Signed-in view: previously the popup ALWAYS rendered the sign-in form,
+ * so a signed-in user had no way to see who they were, open the overlay,
+ * or sign out from the toolbar. Resolves the profile best-effort; a 401
+ * (token expired / revoked) falls back to the sign-in form.
+ */
+async function initSignedInView(
+  doc: Document,
+  els: PopupElements,
+): Promise<void> {
+  const signed = getSignedInElements(doc);
+  if (!signed) return;
+  signed.openOverlay?.addEventListener('click', () => {
+    void requestToggleOnActiveTab()
+      .catch(() => undefined)
+      .finally(() => {
+        try {
+          window.close();
+        } catch {
+          /* non-fatal */
+        }
+      });
+  });
+  signed.openOptions?.addEventListener('click', () => {
+    try {
+      void chrome.runtime?.openOptionsPage?.();
+    } catch {
+      /* non-fatal */
+    }
+  });
+  signed.signOut?.addEventListener('click', async () => {
+    if (signed.signOut) signed.signOut.disabled = true;
+    try {
+      await apiFetch('/auth/logout', { method: 'POST' });
+    } catch {
+      // Signing out locally must succeed even if the server call fails.
+    }
+    await clearStoredAuthToken();
+    if (signed.signOut) signed.signOut.disabled = false;
+    showSignedOut(els, signed);
+    els.email.focus();
+  });
+
+  let token: string | null = null;
+  try {
+    token = await getStoredAuthToken();
+  } catch {
+    token = null;
+  }
+  if (!token) {
+    showSignedOut(els, signed);
+    return;
+  }
+  // Optimistically show the panel, then fill in the profile.
+  showSignedIn(els, signed, null);
+  try {
+    const me = await apiFetch<{ user?: { name?: string; email?: string }; name?: string; email?: string }>(
+      '/users/me',
+    );
+    showSignedIn(els, signed, me.user ?? me);
+  } catch {
+    // An expired/revoked token is cleared by apiFetchRaw on 401.
+    const still = await getStoredAuthToken().catch(() => null);
+    if (!still) showSignedOut(els, signed);
   }
 }
 
@@ -116,6 +258,7 @@ async function broadcastLoginAndRefreshActiveTab(): Promise<void> {
 export async function initPopup(doc: Document = document): Promise<void> {
   const els = getElements(doc);
   clearError(els);
+  await initSignedInView(doc, els);
 
   els.form.addEventListener('submit', async (event) => {
     event.preventDefault();

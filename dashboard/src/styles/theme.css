@@ -11,8 +11,25 @@
 
 /* Apply base colors to body so the page background/text respond to theme */
 body {
+  margin: 0;
   background-color: var(--pp-bg-primary);
   color: var(--pp-text-primary);
+  /* Pages that do not set their own family (auth, invitation, …) used to
+     fall back to the browser default serif. */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* The sidebar root is `height:100%` plus padding; without border-box it
+   overflowed its column and clipped the "+ Create Project" button. */
+.fl-app-layout__body [data-slot="sidebar"] > [data-role="root"] {
+  box-sizing: border-box;
 }
 
 :root {
@@ -25,8 +42,10 @@ body {
 
   /* Text */
   --pp-text-primary: #1a1a1a;
-  --pp-text-secondary: #6b7280;
-  --pp-text-tertiary: #888888;
+  /* Secondary/tertiary text must clear WCAG AA (4.5:1) on every light surface
+     (#fff, #fafafa, #f3f4f6). #6b7280 / #888888 measured 4.39 / 3.39. */
+  --pp-text-secondary: #5f6673;
+  --pp-text-tertiary: #616161;
   --pp-text-heading: #374151;
 
   /* Borders */
@@ -40,8 +59,8 @@ body {
   --pp-accent-hover: #4338ca;
   --pp-accent-light: #e0e7ff;
   --pp-accent-text: #4f46e5;
-  --pp-link: #3182ce;
-  --pp-link-alt: #1976d2;
+  --pp-link: var(--pp-accent-text); /* one primary hue: links, toggles and buttons all follow the accent */
+  --pp-link-alt: var(--pp-accent);
 
   /* Surfaces (cards, dialogs, dropdowns) */
   --pp-surface: #ffffff;
@@ -55,6 +74,8 @@ body {
   --pp-error-bg: #fdecea;
   --pp-error-text: #b71c1c;
   --pp-success: #16a34a;
+  --pp-success-bg: #dcfce7;
+  --pp-success-text: #166534;
   --pp-warning-bg: #fefcbf;
   --pp-warning-text: #744210;
 
@@ -98,7 +119,7 @@ body {
 
     --pp-text-primary: #e2e8f0;
     --pp-text-secondary: #94a3b8;
-    --pp-text-tertiary: #64748b;
+    --pp-text-tertiary: #8b9bb0; /* #64748b was 3.3:1 on the dark surfaces */
     --pp-text-heading: #f1f5f9;
 
     --pp-border: #334155;
@@ -110,8 +131,8 @@ body {
     --pp-accent-hover: #6366f1;
     --pp-accent-light: #312e81;
     --pp-accent-text: #a5b4fc;
-    --pp-link: #63b3ed;
-    --pp-link-alt: #90cdf4;
+    --pp-link: var(--pp-accent-text);
+    --pp-link-alt: var(--pp-accent);
 
     --pp-surface: #1e293b;
     --pp-surface-raised: #1e293b;
@@ -123,6 +144,8 @@ body {
     --pp-error-bg: #451a1a;
     --pp-error-text: #fca5a5;
     --pp-success: #4ade80;
+    --pp-success-bg: #14532d;
+    --pp-success-text: #86efac;
     --pp-warning-bg: #422006;
     --pp-warning-text: #fbbf24;
 
@@ -162,7 +185,7 @@ body {
 
   --pp-text-primary: #e2e8f0;
   --pp-text-secondary: #94a3b8;
-  --pp-text-tertiary: #64748b;
+  --pp-text-tertiary: #8b9bb0;
   --pp-text-heading: #f1f5f9;
 
   --pp-border: #334155;
@@ -174,8 +197,8 @@ body {
   --pp-accent-hover: #6366f1;
   --pp-accent-light: #312e81;
   --pp-accent-text: #a5b4fc;
-  --pp-link: #63b3ed;
-  --pp-link-alt: #90cdf4;
+  --pp-link: var(--pp-accent-text);
+  --pp-link-alt: var(--pp-accent);
 
   --pp-surface: #1e293b;
   --pp-surface-raised: #1e293b;
@@ -187,6 +210,8 @@ body {
   --pp-error-bg: #451a1a;
   --pp-error-text: #fca5a5;
   --pp-success: #4ade80;
+  --pp-success-bg: #14532d;
+  --pp-success-text: #86efac;
   --pp-warning-bg: #422006;
   --pp-warning-text: #fbbf24;
 
@@ -213,4 +238,30 @@ body {
   --pp-severity-info: #60a5fa;
   --pp-severity-info-bg: #172554;
   --pp-severity-info-text: #bfdbfe;
+}
+
+/* Shared primary button for pages built in TS (accept invitation, …). */
+.pp-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 20px;
+  background: var(--pp-accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.pp-btn-primary:hover {
+  background: var(--pp-accent-hover);
+}
+
+.pp-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }

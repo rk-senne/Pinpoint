@@ -7,13 +7,18 @@ export interface WidgetTheme {
   successColor: string;
 }
 
+/**
+ * Defaults meet WCAG AA (4.5:1) for text on white: the previous
+ * #6366f1 / #ef4444 / #10b981 measured 4.47 / 3.76 / 2.54 : 1, so the
+ * white button label, the error title and "Thank you!" were too faint.
+ */
 export const defaultTheme: WidgetTheme = {
-  primaryColor: '#6366f1',
+  primaryColor: '#4f46e5',
   textColor: '#1f2937',
   bgColor: '#ffffff',
-  borderColor: '#e5e7eb',
-  errorColor: '#ef4444',
-  successColor: '#10b981',
+  borderColor: '#d1d5db',
+  errorColor: '#b91c1c',
+  successColor: '#047857',
 };
 
 export function getStyles(theme: WidgetTheme): string {
@@ -34,7 +39,9 @@ export function getStyles(theme: WidgetTheme): string {
 
     .pinpoint-trigger {
       position: fixed;
-      z-index: 2147483647;
+      /* Below the overlay so the open dialog is never covered by the
+         floating button (it used to sit on top of the modal on phones). */
+      z-index: 2147483645;
       width: 48px;
       height: 48px;
       border-radius: 50%;
@@ -128,7 +135,7 @@ export function getStyles(theme: WidgetTheme): string {
     }
 
     .pinpoint-form-group label .optional {
-      color: #9ca3af;
+      color: #6b7280;
       font-weight: 400;
     }
 
@@ -176,6 +183,35 @@ export function getStyles(theme: WidgetTheme): string {
       transition: opacity 0.15s ease;
     }
 
+    .pinpoint-btn:focus-visible {
+      outline: 2px solid ${theme.primaryColor};
+      outline-offset: 2px;
+    }
+
+    .pinpoint-field-error {
+      margin-top: 4px;
+      font-size: 12px;
+      color: ${theme.errorColor};
+    }
+
+    .pinpoint-form-group [aria-invalid="true"],
+    .pinpoint-form-group [aria-invalid="true"]:focus {
+      border-color: ${theme.errorColor};
+    }
+
+    .pinpoint-form-group [aria-invalid="true"]:focus {
+      box-shadow: 0 0 0 3px ${theme.errorColor}22;
+    }
+
+    #pinpoint-form .pinpoint-message.error {
+      text-align: left;
+      padding: 10px 12px;
+      margin-top: 4px;
+      border: 1px solid ${theme.errorColor}55;
+      border-radius: 8px;
+      background: ${theme.errorColor}0d;
+    }
+
     .pinpoint-btn:disabled {
       opacity: 0.6;
       cursor: not-allowed;
@@ -213,15 +249,45 @@ export function getStyles(theme: WidgetTheme): string {
       color: ${theme.errorColor};
     }
 
-    .pinpoint-message p {
-      font-size: 15px;
-      font-weight: 500;
-      margin-bottom: 4px;
+    .pinpoint-message p,
+    .pinpoint-message .pinpoint-message-title {
+      font-size: 17px;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+
+    .pinpoint-success-icon {
+      display: block;
+      margin: 0 auto 12px;
+      width: 48px;
+      height: 48px;
+      color: ${theme.successColor};
     }
 
     .pinpoint-message small {
       font-size: 13px;
-      color: #6b7280;
+      color: #4b5563;
+    }
+
+    @media (max-width: 480px) {
+      /* Phones: a bottom sheet is easier to reach than a centred card. */
+      .pinpoint-overlay { align-items: flex-end; }
+      .pinpoint-modal {
+        width: 100%;
+        max-width: none;
+        border-radius: 16px 16px 0 0;
+        padding: 20px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+      }
+      .pinpoint-btn { padding: 12px 16px; font-size: 15px; }
+      /* 16px stops iOS Safari from zooming the page on focus. */
+      .pinpoint-form-group textarea,
+      .pinpoint-form-group input,
+      .pinpoint-form-group select { font-size: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pinpoint-overlay, .pinpoint-modal { animation: none; }
+      .pinpoint-trigger { transition: none; }
     }
 
     @keyframes fadeIn {

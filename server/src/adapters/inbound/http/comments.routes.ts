@@ -15,6 +15,7 @@ import type { ListComments } from '../../../domain/comment/usecases/listComments
 import type { CreateUserNotification } from '../../../domain/notification/usecases/userNotifications.js';
 import type { Comment } from '../../../domain/comment/Comment.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
+import { registerSessionDb, requireAnnotationAccess, requireWriteAccess } from './access.js';
 
 export interface CommentsRouteDeps {
   createComment: CreateComment;
@@ -25,8 +26,8 @@ export interface CommentsRouteDeps {
 }
 
 const CommentBodySchema = z.object({
-  body: z.string().min(1),
-  mentions: z.array(z.string()).optional(),
+  body: z.string().min(1).max(10_000),
+  mentions: z.array(z.string().uuid()).max(50).optional(),
   clientRequestId: z.string().uuid().optional(),
 });
 
@@ -47,8 +48,12 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
 
   const router = Router({ mergeParams: true });
   router.use(authMiddleware);
+  registerSessionDb(db);
+  // Org match + access to the annotation's project for both list and create.
+  // A foreign / unknown annotation id is an indistinguishable 404.
+  router.use(requireAnnotationAccess(db));
 
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', requireWriteAccess, async (req: Request, res: Response) => {
     const parsed = CommentBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendZodFailure(res, 'Invalid comment payload.', parsed.error.flatten());
@@ -57,6 +62,7 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
     const annotationId = paramString((req.params as { id?: string | string[] }).id);
     const result = await createComment.execute({
       authorUserId: req.user!.userId,
+      orgId: req.user!.orgId,
       annotationId,
       body: parsed.data.body,
       ...(parsed.data.mentions !== undefined ? { mentions: parsed.data.mentions } : {}),
@@ -82,7 +88,7 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
       const orgId = req.user!.orgId;
       const recipients = new Set<string>(comment.mentions ?? []);
       // Notify annotation author if someone else commented
-      if (result.value.annotationAuthorId !== authorId) {
+      if (result.value.annotationAuthorId !== null && result.value.annotationAuthorId !== authorId) {
         recipients.add(result.value.annotationAuthorId);
       }
       // Don't notify the comment author themselves
@@ -109,7 +115,7 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
     const offset = (page - 1) * pageSize;
 
     // Verify annotation exists via the use case's validation
-    const result = await listComments.execute({ annotationId });
+    const result = await listComments.execute({ annotationId, orgId: req.user!.orgId });
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;

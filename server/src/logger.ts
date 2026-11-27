@@ -10,10 +10,82 @@ import pinoHttp from 'pino-http';
  * Request handlers SHOULD use the per-request child logger attached at
  * `req.log` by the `httpLogger` middleware below so that records inherit
  * the request_id field (Requirement 27.4).
+ *
+ * Mission A4: sensitive credential fields are redacted wherever they appear in
+ * a logged object. We list both the bare key (depth-0) and common nested
+ * locations (headers, req/res, body, config, integration/data) so an errant
+ * `logger.info({ integration })` or `req.log.error({ err, body })` can't leak
+ * an access token, refresh token, client secret, password, cookie, or auth
+ * header into the log stream. `censor` is the default `[Redacted]`.
  */
-export const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-});
+const REDACT_KEYS = [
+  'authorization',
+  'cookie',
+  'access_token',
+  'accessToken',
+  'refresh_token',
+  'refreshToken',
+  'client_secret',
+  'clientSecret',
+  'password',
+  'token',
+  'rawKey',
+  'secret',
+];
+
+const REDACT_PARENTS = ['', '*', 'headers', 'req.headers', 'res.headers', 'body', 'config', 'data', 'integration'];
+
+/** Cartesian expansion of parent paths × sensitive keys into pino redact paths. */
+const REDACT_PATHS = REDACT_PARENTS.flatMap((parent) =>
+  REDACT_KEYS.map((key) => (parent === '' ? key : `${parent}.${key}`)),
+);
+
+/**
+ * Header-specific paths. Header names containing a dash need bracket notation
+ * in pino redact paths. Covers both inbound request headers and the response
+ * `set-cookie` header that pino-http serialises at `res.headers`.
+ */
+const REDACT_HEADER_PATHS = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers["x-csrf-token"]',
+  'req.headers["x-project-key"]',
+  'req.headers["x-api-key"]',
+  'req.headers["proxy-authorization"]',
+  'res.headers["set-cookie"]',
+  'headers["x-csrf-token"]',
+  'headers["x-project-key"]',
+  'headers["x-api-key"]',
+  'headers["set-cookie"]',
+  // Body fields (req.body is not logged by pino-http by default, but an
+  // errant `{ req, body }` context must not leak credentials either).
+  'req.body.password',
+  'req.body.token',
+  'req.body.rawKey',
+  'req.body.secret',
+  'req.body.clientSecret',
+];
+
+/**
+ * The single redaction config shared by the root logger AND the per-request
+ * pino-http logger built in `composition/container.ts` (F-04). Anything that
+ * constructs a pino instance for HTTP traffic must pass this.
+ */
+export const REDACT_OPTIONS = {
+  paths: [...REDACT_PATHS, ...REDACT_HEADER_PATHS],
+  censor: '[Redacted]',
+} as const;
+
+/**
+ * pino options (level + redaction) shared by every pino instance in the
+ * process, including the one the composition root hands to pino-http so
+ * request/response headers are redacted in HTTP access logs (F-04).
+ */
+export function buildPinoOptions(level: string): pino.LoggerOptions {
+  return { level, redact: { paths: [...REDACT_OPTIONS.paths], censor: REDACT_OPTIONS.censor } };
+}
+
+export const logger = pino(buildPinoOptions(process.env.LOG_LEVEL || 'info'));
 
 /**
  * pino-http middleware (Requirement 27.2 / 27.4).

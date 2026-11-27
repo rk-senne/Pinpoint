@@ -25,7 +25,7 @@
  *
  * Implements: Requirement 44.1.
  */
-import { signal, type Signal } from '@pinpoint/shared';
+import { signal, type Signal } from '@pinpoint/shared/dist/signal.js';
 
 import { API_BASE, resolveServerOrigin as defaultResolveOrigin } from './api';
 
@@ -210,13 +210,29 @@ export function createConnectionMonitor(
     return tracked;
   };
 
+  // After an `online` event the first probe often fails while the network
+  // stack settles; re-probe quickly (1 s, 2 s, 4 s, 8 s) instead of leaving
+  // the "Offline" banner up until the next 30 s heartbeat.
+  let onlineRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  const probeAfterOnline = (attempt: number): void => {
+    void heartbeatOnce().then(() => {
+      if (disposed || !isOffline.get() || browserReportsOffline() || attempt >= 4) return;
+      onlineRetryTimer = setTimeout(() => {
+        onlineRetryTimer = null;
+        probeAfterOnline(attempt + 1);
+      }, 1_000 * 2 ** attempt);
+    });
+  };
+
   const onOnline = (): void => {
     // navigator.onLine just flipped to true. Don't assume reachability —
     // run an immediate heartbeat so the banner clears only when the API
     // actually answers. If heartbeats are disabled, fall through to
     // clearing the offline state directly (we have no better signal).
     if (enableHeartbeat && typeof fetchImpl === 'function') {
-      void heartbeatOnce();
+      if (onlineRetryTimer !== null) clearTimeout(onlineRetryTimer);
+      onlineRetryTimer = null;
+      probeAfterOnline(0);
     } else if (isOffline.get()) {
       updateBannerState(false);
     }
@@ -256,6 +272,10 @@ export function createConnectionMonitor(
       if (timer !== null) {
         clearInterval(timer);
         timer = null;
+      }
+      if (onlineRetryTimer !== null) {
+        clearTimeout(onlineRetryTimer);
+        onlineRetryTimer = null;
       }
       if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
         window.removeEventListener('online', onOnline);

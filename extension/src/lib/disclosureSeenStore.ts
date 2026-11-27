@@ -32,6 +32,9 @@
  */
 export const STORAGE_KEY_PREFIX = 'disclosure-seen-';
 
+/** Upper bound on the seen-flag read before falling back to "not seen". */
+export const DISCLOSURE_READ_TIMEOUT_MS = 1500;
+
 /**
  * `chrome.storage.sync` is unavailable when this module is exercised
  * outside a Manifest V3 context (jsdom unit tests, the dashboard, the
@@ -61,7 +64,15 @@ export async function readDisclosureSeen(host: string): Promise<boolean> {
   if (!area) return false;
   const key = `${STORAGE_KEY_PREFIX}${host}`;
   try {
-    const got = await area.get(key);
+    // chrome.storage.sync can be slow on a cold profile; never leave the user
+    // clicking with no response. On timeout treat it as "not seen" (the safe
+    // default: show the disclosure again).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), DISCLOSURE_READ_TIMEOUT_MS);
+    });
+    const got = await Promise.race([area.get(key), timeout]);
+    if (timer) clearTimeout(timer);
     return Boolean((got as Record<string, unknown> | null | undefined)?.[key]);
   } catch {
     // Storage outage — surface as "not seen" so the user gets another

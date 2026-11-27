@@ -4,7 +4,7 @@
 // represents a single-use token issued for either email verification, a
 // password reset, or a team invitation.
 
-export type AuthTokenKind = 'verify_email' | 'reset_password' | 'team_invite';
+export type AuthTokenKind = 'verify_email' | 'reset_password' | 'team_invite' | 'change_email';
 
 export interface AuthToken {
   id: string;

@@ -11,20 +11,17 @@ import './styles/responsive.css';
 import './styles/skeleton.css';
 import './styles/toast.css';
 import './styles/empty-state.css';
+import './styles/polish.css';
+import './styles/diagnostics.css';
 import { themeCss } from '@pinpoint/shared';
-import { defineRoute, setFallback, start } from './lib/router';
+import { defineRoute, lazyRoute, setFallback, start } from './lib/router';
 import { mountAuthPage } from './pages/AuthPage';
-import { mountClientPortalPage } from './pages/ClientPortalPage';
 import { mountDashboardHome } from './pages/DashboardHome';
 import { mountNotFoundPage } from './pages/NotFoundPage';
 import { mountProjectView } from './pages/ProjectView';
 import { mountSettingsPage } from './pages/SettingsPage';
-import { mountSharedProjectView } from './pages/SharedProjectView';
 import { mountVerifyEmailPage } from './pages/VerifyEmailPage';
 import { mountOnboardingWizard } from './pages/OnboardingWizard';
-import { mountReportingPage } from './pages/ReportingPage';
-import { mountWorkflowsPage } from './pages/WorkflowsPage';
-import { mountIntegrationsPage } from './pages/IntegrationsPage';
 import { mountCommandPalette } from './components/CommandPalette';
 import { initToastContainer } from './components/Toast';
 
@@ -74,18 +71,26 @@ if (!root) {
 // `/auth` is registered alongside `/login` so the existing logout flow in
 // `AppLayout.ts` (which navigates to `/auth`) keeps landing on the vanilla
 // AuthPage.
+// Low-traffic routes are code-split: their page module AND their <template>
+// markup (pages/*.templates.html) load on first visit.
 defineRoute('/', mountDashboardHome);
 defineRoute('/login', mountAuthPage);
 defineRoute('/auth', mountAuthPage);
 defineRoute('/projects/:id', mountProjectView);
 defineRoute('/settings', mountSettingsPage);
-defineRoute('/shared/:linkId', mountSharedProjectView);
+defineRoute('/shared/:linkId', lazyRoute(() => import('./pages/SharedProjectView').then((m) => m.mountSharedProjectView)));
+defineRoute('/review/:linkId', lazyRoute(() => import('./pages/ReviewLinkPage').then((m) => m.mountReviewLinkPage)));
 defineRoute('/verify-email/:token', mountVerifyEmailPage);
+defineRoute('/reset-password', lazyRoute(() => import('./pages/ResetPasswordPage').then((m) => m.mountResetPasswordPage)));
+defineRoute('/reset-password/:token', lazyRoute(() => import('./pages/ResetPasswordPage').then((m) => m.mountResetPasswordPage)));
+defineRoute('/developer', lazyRoute(() => import('./pages/DeveloperPage').then((m) => m.mountDeveloperPage)));
 defineRoute('/onboarding', mountOnboardingWizard);
-defineRoute('/reports', mountReportingPage);
-defineRoute('/workflows', mountWorkflowsPage);
-defineRoute('/integrations', mountIntegrationsPage);
-defineRoute('/portals', mountClientPortalPage);
+defineRoute('/reports', lazyRoute(() => import('./pages/ReportingPage').then((m) => m.mountReportingPage)));
+defineRoute('/workflows', lazyRoute(() => import('./pages/WorkflowsPage').then((m) => m.mountWorkflowsPage)));
+defineRoute('/integrations', lazyRoute(() => import('./pages/IntegrationsPage').then((m) => m.mountIntegrationsPage)));
+defineRoute('/portals', lazyRoute(() => import('./pages/ClientPortalPage').then((m) => m.mountClientPortalPage)));
+defineRoute('/portal/:slug', lazyRoute(() => import('./pages/PortalGuestPage').then((m) => m.mountPortalGuestPage)));
+defineRoute('/invitations/accept', lazyRoute(() => import('./pages/AcceptInvitationPage').then((m) => m.mountAcceptInvitationPage)));
 setFallback(mountNotFoundPage);
 start(root);
 

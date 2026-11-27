@@ -22,10 +22,11 @@
 // migration) plus optional `apiFetch`, `confirmDelete`, etc. overrides for
 // tests.
 
-import type { Project } from '@pinpoint/shared';
+import type { PaginatedResponse, Project } from '@pinpoint/shared';
 
-import { apiFetch as defaultApiFetch } from '../lib/api';
+import { apiFetch as defaultApiFetch, apiFetchBlob as defaultApiFetchBlob } from '../lib/api';
 import { showToast } from './Toast';
+import { createEmptyState } from './EmptyState';
 import { trapFocus, linkInputToError } from '../lib/a11y';
 import {
   attr,
@@ -38,7 +39,6 @@ import {
   loadProjects,
   projectsStore,
   setProjectListFilter,
-  type ProjectListFilter,
 } from '../lib/stores';
 
 // --- Public API -------------------------------------------------------
@@ -48,6 +48,8 @@ export interface ProjectListSidebarDeps {
   navigate: (path: string) => void;
   /** Fetch shim — defaults to the production `apiFetch`. Tests inject fakes. */
   apiFetch?: typeof defaultApiFetch;
+  /** File-download fetch for the export dialog — defaults to `apiFetchBlob`. */
+  apiFetchBlob?: typeof defaultApiFetchBlob;
   /** Confirm dialog — defaults to `window.confirm`. Tests inject fakes. */
   confirm?: (message: string) => boolean;
   /** Toast/alert handler — defaults to `window.alert`. */
@@ -73,6 +75,7 @@ export function mountProjectListSidebar(
   deps: ProjectListSidebarDeps,
 ): ProjectListSidebarHandle {
   const apiFetch = deps.apiFetch ?? defaultApiFetch;
+  const apiFetchBlob = deps.apiFetchBlob ?? defaultApiFetchBlob;
   const confirmFn = deps.confirm ?? ((m: string) => window.confirm(m));
   const alertFn = deps.alert ?? ((m: string) => window.alert(m));
   const writeClipboard =
@@ -86,7 +89,6 @@ export function mountProjectListSidebar(
 
   const tabActiveBtn = root.querySelector<HTMLButtonElement>('[data-role="tab-active"]')!;
   const tabArchivedBtn = root.querySelector<HTMLButtonElement>('[data-role="tab-archived"]')!;
-  const searchInput = root.querySelector<HTMLInputElement>('[data-role="search"]')!;
   const listEl = root.querySelector<HTMLElement>('[data-role="list"]')!;
 
   const cleanups: Array<() => void> = [];
@@ -141,11 +143,17 @@ export function mountProjectListSidebar(
     listEl.replaceChildren();
 
     if (filtered.length === 0) {
-      const empty = document.createElement('p');
-      empty.style.color = '#888';
-      empty.style.fontSize = '13px';
-      empty.textContent = 'No projects found.';
-      listEl.appendChild(empty);
+      const searching = needle.length > 0;
+      listEl.appendChild(
+        createEmptyState(searching ? 'no-search-results' : 'no-projects', {
+          compact: true,
+          noCta: true,
+          title: 'No projects found.',
+          description: searching
+            ? 'Nothing matches that search.'
+            : 'Create a project to start collecting feedback.',
+        }),
+      );
       return;
     }
 
@@ -173,12 +181,24 @@ export function mountProjectListSidebar(
 
     const menuButton = row.querySelector<HTMLButtonElement>('[data-role="menu-button"]')!;
     attr(menuButton, 'aria-label', `Actions for ${project.name}`);
+    attr(menuButton, 'aria-haspopup', 'menu');
+    // The row itself opens the project, so it must be reachable and
+    // operable from the keyboard (it is a <div> in the template).
+    attr(row, 'tabindex', '0');
+    attr(row, 'role', 'link');
 
     const rowCleanup = bindEvents(row, {
       menu: (e) => {
         e.stopPropagation();
         const ev = e as MouseEvent;
-        openContextMenu(project, ev.clientX, ev.clientY);
+        // A keyboard-activated click has no pointer coordinates; anchor the
+        // menu under the button instead of the viewport's top-left corner.
+        if (ev.clientX === 0 && ev.clientY === 0) {
+          const rect = menuButton.getBoundingClientRect();
+          openContextMenu(project, rect.left, rect.bottom, menuButton);
+        } else {
+          openContextMenu(project, ev.clientX, ev.clientY, menuButton);
+        }
       },
     });
     rowCleanups.push(rowCleanup);
@@ -196,13 +216,21 @@ export function mountProjectListSidebar(
       const ev = e as MouseEvent;
       openContextMenu(project, ev.clientX, ev.clientY);
     };
+    const onRowKey = (e: KeyboardEvent): void => {
+      if (e.target !== row) return; // ignore keys from the ⋯ button
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onRowClick();
+      }
+    };
     const onRowEnter = (): void => {
-      row.style.background = '#f3f4f6';
+      row.style.background = 'var(--pp-bg-hover)';
     };
     const onRowLeave = (): void => {
       row.style.background = 'transparent';
     };
     row.addEventListener('click', onRowClick);
+    row.addEventListener('keydown', onRowKey);
     row.addEventListener('contextmenu', onRowContext);
     row.addEventListener('mouseenter', onRowEnter);
     row.addEventListener('mouseleave', onRowLeave);
@@ -214,6 +242,7 @@ export function mountProjectListSidebar(
 
     rowCleanups.push(() => {
       row.removeEventListener('click', onRowClick);
+      row.removeEventListener('keydown', onRowKey);
       row.removeEventListener('contextmenu', onRowContext);
       row.removeEventListener('mouseenter', onRowEnter);
       row.removeEventListener('mouseleave', onRowLeave);
@@ -230,7 +259,7 @@ export function mountProjectListSidebar(
     const input = document.createElement('input');
     input.value = project.name;
     input.style.cssText =
-      'flex: 1; padding: 2px 4px; font-size: 13px; border: 1px solid #4f46e5; border-radius: 3px;';
+      'flex: 1; padding: 2px 4px; font-size: 13px; border: 1px solid var(--pp-accent); border-radius: 3px;';
     input.addEventListener('click', (e) => e.stopPropagation());
 
     const submit = async (): Promise<void> => {
@@ -268,8 +297,8 @@ export function mountProjectListSidebar(
 
   function paintTab(el: Element, isActive: boolean): void {
     const button = el as HTMLButtonElement;
-    button.style.borderBottom = isActive ? '2px solid #4f46e5' : '2px solid transparent';
-    button.style.color = isActive ? '#4f46e5' : '#666';
+    button.style.borderBottom = isActive ? '2px solid var(--pp-accent)' : '2px solid transparent';
+    button.style.color = isActive ? 'var(--pp-accent-text)' : 'var(--pp-text-secondary)';
     button.style.fontWeight = isActive ? '600' : '400';
   }
 
@@ -283,8 +312,17 @@ export function mountProjectListSidebar(
     }
   }
 
-  function openContextMenu(project: Project, x: number, y: number): void {
+  /** Element that opened the current menu/dialog, to restore focus on close. */
+  let menuOpener: HTMLElement | null = null;
+
+  function openContextMenu(
+    project: Project,
+    x: number,
+    y: number,
+    opener: HTMLElement | null = null,
+  ): void {
     closeContextMenu();
+    menuOpener = opener;
 
     const fragment = cloneTemplate('tpl-project-list-menu', {
       archiveLabel: project.status === 'active' ? 'Archive' : 'Unarchive',
@@ -320,7 +358,12 @@ export function mountProjectListSidebar(
             `Delete project "${project.name}"? This will permanently remove the project and all annotations.`,
           )
         ) {
-          await apiFetch(`/projects/${project.id}`, { method: 'DELETE' });
+          // The API requires the project name as `confirmationToken` (Req 2.7);
+          // the user has just confirmed deleting exactly this project.
+          await apiFetch(`/projects/${project.id}`, {
+            method: 'DELETE',
+            body: JSON.stringify({ confirmationToken: project.name }),
+          });
           showToast({ message: 'Project deleted', variant: 'success' });
           await refresh();
         }
@@ -377,6 +420,7 @@ export function mountProjectListSidebar(
       document.addEventListener('mousedown', onOutsideClick);
     };
     queueMicrotask(arm);
+    if (menuOpener) queueMicrotask(() => menu.querySelector<HTMLButtonElement>('button')?.focus());
 
     openMenuCleanup = () => {
       teardown();
@@ -389,6 +433,26 @@ export function mountProjectListSidebar(
   // ---------- Create-project dialog ----------------------------------
   let openDialogCleanup: (() => void) | null = null;
 
+  // Escape closes the topmost surface (dialog first, then the context menu)
+  // and returns focus to whatever opened it.
+  const onEscape = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape') return;
+    if (openDialogCleanup) {
+      e.preventDefault();
+      const opener = dialogOpener;
+      closeDialog();
+      opener?.focus();
+    } else if (openMenuCleanup) {
+      e.preventDefault();
+      const opener = menuOpener;
+      closeContextMenu();
+      opener?.focus();
+    }
+  };
+  document.addEventListener('keydown', onEscape);
+  cleanups.push(() => document.removeEventListener('keydown', onEscape));
+  let dialogOpener: HTMLElement | null = null;
+
   function closeDialog(): void {
     if (openDialogCleanup) {
       openDialogCleanup();
@@ -398,6 +462,7 @@ export function mountProjectListSidebar(
 
   function openCreateDialog(): void {
     closeDialog();
+    dialogOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const fragment = cloneTemplate('tpl-create-project-dialog');
     const overlay = fragment.firstElementChild as HTMLElement;
     const panel = overlay.querySelector<HTMLElement>('[data-role="panel"]')!;
@@ -471,6 +536,7 @@ export function mountProjectListSidebar(
 
   // ---------- Export-project dialog ----------------------------------
   function openExportDialog(project: Project): void {
+    dialogOpener = menuOpener;
     closeDialog();
     const fragment = cloneTemplate('tpl-export-project-dialog', {
       projectName: project.name,
@@ -498,9 +564,9 @@ export function mountProjectListSidebar(
       ];
       for (const { btn, key } of buttons) {
         const active = format === key;
-        btn.style.border = active ? '2px solid #4f46e5' : '1px solid #d1d5db';
+        btn.style.border = active ? '2px solid var(--pp-accent)' : '1px solid var(--pp-border-medium)';
         btn.style.background = active ? '#eef2ff' : '#fff';
-        btn.style.color = active ? '#4f46e5' : '#333';
+        btn.style.color = active ? 'var(--pp-accent-text)' : 'var(--pp-text-primary)';
         btn.style.fontWeight = active ? '600' : '400';
       }
     };
@@ -523,14 +589,25 @@ export function mountProjectListSidebar(
       exportBtn.style.cursor = value ? 'not-allowed' : 'pointer';
     };
 
-    const showDownload = (url: string | null): void => {
+    let objectUrl: string | null = null;
+    const revokeObjectUrl = (): void => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
+    };
+    const showDownload = (url: string | null, filename?: string | null): void => {
+      revokeObjectUrl();
       if (url) {
+        objectUrl = url;
         downloadEl.hidden = false;
         downloadLink.href = url;
+        downloadLink.download = filename || `${project.name}.${format}`;
         downloadLink.textContent = `Download ${format.toUpperCase()} report`;
       } else {
         downloadEl.hidden = true;
         downloadLink.removeAttribute('href');
+        downloadLink.removeAttribute('download');
       }
     };
 
@@ -555,11 +632,13 @@ export function mountProjectListSidebar(
         setError('');
         showDownload(null);
         try {
-          const data = await apiFetch<{ downloadUrl: string }>(
-            `/projects/${project.id}/export`,
-            { method: 'POST', body: JSON.stringify({ format }) },
-          );
-          showDownload(data.downloadUrl);
+          // The endpoint streams the report itself (attachment), so keep the
+          // bytes as a Blob and hand the user a same-origin object URL.
+          const { blob, filename } = await apiFetchBlob(`/projects/${project.id}/export`, {
+            method: 'POST',
+            body: JSON.stringify({ format }),
+          });
+          showDownload(URL.createObjectURL(blob), filename);
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Export failed.');
         } finally {
@@ -569,8 +648,13 @@ export function mountProjectListSidebar(
     });
 
     document.body.appendChild(overlay);
+    // Keyboard users land inside the dialog, and Tab stays within it.
+    const releaseExportFocus = trapFocus(panel);
+    queueMicrotask(() => pdfBtn.focus());
 
     openDialogCleanup = () => {
+      releaseExportFocus();
+      revokeObjectUrl();
       teardown();
       overlay.remove();
     };
@@ -579,8 +663,28 @@ export function mountProjectListSidebar(
   // ---------- Data fetch ---------------------------------------------
   async function refresh(): Promise<void> {
     try {
-      const data = await apiFetch<Project[]>('/projects');
-      loadProjects(data);
+      // `GET /api/v1/projects` returns the shared `{ data, pagination }`
+      // envelope (server caps `pageSize` at 100 — see
+      // `PaginationParamsSchema` in `@pinpoint/shared`). The sidebar needs
+      // every project to populate the Active/Archived tabs, so page through
+      // until we've collected `pagination.total` rows rather than reading
+      // only the first 25 (the previous bug treated the body as a bare
+      // `Project[]`, which left `loadProjects` with an envelope object and
+      // an empty sidebar).
+      const pageSize = 100;
+      let page = 1;
+      const all: Project[] = [];
+      for (;;) {
+        const res = await apiFetch<PaginatedResponse<Project>>(
+          `/projects?page=${page}&pageSize=${pageSize}`,
+        );
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        all.push(...rows);
+        const totalPages = res?.pagination?.totalPages ?? 1;
+        if (rows.length === 0 || page >= totalPages) break;
+        page += 1;
+      }
+      loadProjects(all);
     } catch {
       // Silently fail — caller may not be authenticated yet. Matches the
       // prior React component's behaviour.

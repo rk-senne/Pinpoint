@@ -5,10 +5,14 @@
  * Feedback Volume, Resolution Rate, and Team Activity.
  */
 
-import { signal } from '@pinpoint/shared';
+import { registerTemplates } from '../lib/lazyTemplates';
+import templatesHtml from './ReportingPage.templates.html?raw';
+import { signal, el, BRAND_COLORS } from '@pinpoint/shared';
 import { mountAppLayout } from '../components/AppLayout';
 import { apiFetch as defaultApiFetch } from '../lib/api';
 import { cloneTemplate, text } from '../lib/render';
+import { createEmptyState } from '../components/EmptyState';
+import { navigate } from '../lib/router';
 
 interface VolumeEntry {
   date: string;
@@ -16,9 +20,11 @@ interface VolumeEntry {
 }
 
 interface ResolutionData {
-  total: number;
-  resolved: number;
-  rate: number;
+  /** Postgres counts arrive as strings. */
+  total: number | string;
+  resolved: number | string;
+  /** null while nothing has been reported yet. */
+  rate: number | null;
   avgHours: number | null;
 }
 
@@ -40,6 +46,7 @@ export function mountReportingPage(
   _params: Record<string, string>,
   options: { apiFetch?: typeof defaultApiFetch } = {},
 ): () => void {
+  registerTemplates('ReportingPage', templatesHtml);
   const apiFetch = options.apiFetch ?? defaultApiFetch;
 
   const fragment = cloneTemplate('reporting-page');
@@ -57,10 +64,22 @@ export function mountReportingPage(
     } catch {
       loading.set(false);
       cardsContainer.textContent = 'Failed to load reports.';
+      cardsContainer.style.display = 'block';
     }
   })();
 
   function renderCards(data: ReportOverview): void {
+    const hasData =
+      data.volume.some((v) => Number(v.count) > 0) ||
+      Number(data.resolution.total) > 0 ||
+      data.teamActivity.some((m) => Number(m.annotations) + Number(m.comments) > 0);
+    if (!hasData) {
+      cardsContainer.style.display = 'block';
+      cardsContainer.replaceChildren(
+        createEmptyState('no-reports', { onCta: () => navigate('/') }),
+      );
+      return;
+    }
     // Card 1: Feedback Volume
     const totalNew = data.volume.reduce((sum, v) => sum + Number(v.count), 0);
     const volumeCard = cloneTemplate('reporting-card');
@@ -76,7 +95,7 @@ export function mountReportingPage(
     const resCard = cloneTemplate('reporting-card');
     const rc = resCard.firstElementChild as HTMLElement;
     text(rc.querySelector('[data-slot="title"]')!, 'Resolution Rate');
-    text(rc.querySelector('[data-slot="value"]')!, `${data.resolution.rate}%`);
+    text(rc.querySelector('[data-slot="value"]')!, data.resolution.rate == null ? '—' : `${data.resolution.rate}%`);
     const avgText = data.resolution.avgHours != null
       ? `Avg resolution: ${data.resolution.avgHours}h`
       : 'No resolved items yet';
@@ -93,7 +112,12 @@ export function mountReportingPage(
     for (const member of data.teamActivity.slice(0, 5)) {
       const li = document.createElement('li');
       li.style.cssText = 'display: flex; justify-content: space-between; padding: 2px 0;';
-      li.innerHTML = `<span>${member.email}</span><span>${member.annotations}a / ${member.comments}c</span>`;
+      // member.email is user-supplied — build via DOM so markup payloads
+      // render as inert text, never parsed HTML.
+      li.append(
+        el('span', {}, member.email),
+        el('span', {}, `${member.annotations}a / ${member.comments}c`),
+      );
       list.appendChild(li);
     }
     tc.querySelector('[data-slot="detail"]')!.appendChild(list);
@@ -107,7 +131,7 @@ export function mountReportingPage(
     for (const v of values) {
       const bar = document.createElement('div');
       const h = Math.max(2, Math.round((v / max) * 24));
-      bar.style.cssText = `width: 4px; height: ${h}px; background: #4f46e5; border-radius: 1px;`;
+      bar.style.cssText = `width: 4px; height: ${h}px; background: ${BRAND_COLORS.primary}; border-radius: 1px;`;
       container.appendChild(bar);
     }
     return container;

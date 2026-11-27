@@ -103,6 +103,9 @@ describe('mountVerifyEmailPage', () => {
     const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/v1/auth/verify-email/tok-abc');
     expect(init.method).toBe('POST');
+    // Regression: a logged-in browser's session cookie must not ride along
+    // (it would fail the CSRF check on this token-authenticated endpoint).
+    expect(init.credentials).toBe('omit');
   });
 
   it('encodes special characters in the token', async () => {

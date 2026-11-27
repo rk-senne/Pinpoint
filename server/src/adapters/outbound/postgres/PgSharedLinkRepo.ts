@@ -24,6 +24,7 @@ export class PgSharedLinkRepo implements SharedLinkRepo {
   async insert(input: NewSharedLink): Promise<SharedLink> {
     const [created] = await this.db<SharedLinkRow>('shared_links')
       .insert({
+        ...(input.id !== undefined ? { id: input.id } : {}),
         project_id: input.projectId,
         password_hash: input.passwordHash ?? null,
         failed_attempts: 0,

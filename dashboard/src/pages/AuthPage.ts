@@ -65,6 +65,8 @@ export function mountAuthPage(
   // so it does not belong in the global stores.
   const mode = signal<AuthMode>('login');
   const errorMessage = signal<string>('');
+  /** Non-error status line (e.g. "check your email" after registering). */
+  const noticeMessage = signal<string>('');
   const loading = signal<boolean>(false);
 
   // ---- DOM refs -----------------------------------------------------------
@@ -103,8 +105,13 @@ export function mountAuthPage(
   }
 
   function renderError(msg: string): void {
-    if (msg) {
-      text(errorEl, msg);
+    // The error slot doubles as the notice line; `data-tone` lets CSS style
+    // the two differently while keeping a single aria-live region.
+    const shown = msg || noticeMessage.get();
+    if (shown) {
+      text(errorEl, shown);
+      errorEl.dataset.tone = msg ? 'error' : 'info';
+      errorEl.setAttribute('role', msg ? 'alert' : 'status');
       errorEl.removeAttribute('hidden');
     } else {
       text(errorEl, '');
@@ -124,6 +131,9 @@ export function mountAuthPage(
     errorMessage.subscribe((msg) => {
       renderError(msg);
     }),
+    noticeMessage.subscribe(() => {
+      renderError(errorMessage.get());
+    }),
   ];
 
   // ---- Event wiring -------------------------------------------------------
@@ -141,6 +151,7 @@ export function mountAuthPage(
 
   async function handleSubmit(): Promise<void> {
     errorMessage.set('');
+    noticeMessage.set('');
 
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -161,6 +172,17 @@ export function mountAuthPage(
         method: 'POST',
         body: JSON.stringify(body),
       });
+
+      if (m === 'register') {
+        // Registration never signs the user in: the account must be
+        // verified first, and the server answers identically whether or not
+        // the email already exists (no enumeration). Tell the user what to
+        // do next and switch to the login form.
+        passwordInput.value = '';
+        mode.set('login');
+        noticeMessage.set('Check your email to verify your account, then log in.');
+        return;
+      }
 
       setToken(data.token);
       // Capture the CSRF token mirrored in the login response into the

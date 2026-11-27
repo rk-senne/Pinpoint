@@ -8,17 +8,23 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:widget": "vite build --config vite.widget.config.ts",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "build:firefox": "vite build --outDir dist-firefox && node scripts/firefox-manifest.mjs dist-firefox",
+    "package:firefox": "npm run build:firefox && node scripts/package.mjs firefox",
+    "package:source": "node scripts/package.mjs source",
+    "build:safari": "vite build --outDir dist-safari && SAFARI_ENTRY=background vite build --config vite.safari-scripts.config.ts && SAFARI_ENTRY=content vite build --config vite.safari-scripts.config.ts && node scripts/safari-manifest.mjs dist-safari",
+    "safari:sync": "node scripts/safari-app.mjs sync",
+    "build:safari-app": "npm run build:safari && node scripts/safari-app.mjs build"
   },
   "dependencies": {
     "@pinpoint/shared": "*",
-    "socket.io-client": "^4.8.3"
+    "@webcomponents/custom-elements": "1.6.0",
+    "socket.io-client": "4.8.4"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.4.0",
-    "@types/chrome": "^0.0.268",
-    "fast-check": "^4.1.1",
-    "vite": "^6.0.0"
+    "@crxjs/vite-plugin": "2.7.1",
+    "@types/chrome": "0.0.268",
+    "fast-check": "4.10.2",
+    "vite": "6.4.6"
   }
 }

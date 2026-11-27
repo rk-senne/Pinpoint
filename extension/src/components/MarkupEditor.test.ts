@@ -322,7 +322,6 @@ describe('<fl-markup-editor>', () => {
           strokeWidth: 1,
         },
         // missing required fields — should be dropped
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         { type: 'rect' } as any,
       ],
     };

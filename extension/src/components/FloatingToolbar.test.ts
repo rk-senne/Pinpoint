@@ -63,7 +63,7 @@ describe('<fl-floating-toolbar>', () => {
     const buttons = Array.from(
       t.shadowRoot!.querySelectorAll<HTMLButtonElement>('.fl-toolbar button'),
     );
-    expect(buttons.length).toBe(4);
+    expect(buttons.length).toBe(5);
     for (const btn of buttons) {
       const name = btn.getAttribute('aria-label');
       expect(name).toBeTruthy();
@@ -77,6 +77,7 @@ describe('<fl-floating-toolbar>', () => {
     const root = t.shadowRoot!;
     const close = root.querySelector('button[data-action="close"]') as HTMLButtonElement;
     const avatar = root.querySelector('button[data-action="avatar"]') as HTMLButtonElement;
+    const sidebar = root.querySelector('button[data-action="sidebar"]') as HTMLButtonElement;
     const share = root.querySelector('button[data-action="share"]') as HTMLButtonElement;
     const link = root.querySelector('button[data-action="link"]') as HTMLButtonElement;
     const toolbar = root.querySelector('.fl-toolbar') as HTMLElement;
@@ -88,10 +89,13 @@ describe('<fl-floating-toolbar>', () => {
     expect(root.activeElement).toBe(avatar);
 
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(root.activeElement).toBe(sidebar);
+
+    toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(root.activeElement).toBe(share);
 
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-    expect(root.activeElement).toBe(avatar);
+    expect(root.activeElement).toBe(sidebar);
 
     // Wrap-around at the ends.
     close.focus();
@@ -117,30 +121,31 @@ describe('<fl-floating-toolbar>', () => {
     const root = t.shadowRoot!;
     const close = root.querySelector('button[data-action="close"]') as HTMLButtonElement;
     const avatar = root.querySelector('button[data-action="avatar"]') as HTMLButtonElement;
+    const sidebar = root.querySelector('button[data-action="sidebar"]') as HTMLButtonElement;
     const share = root.querySelector('button[data-action="share"]') as HTMLButtonElement;
     const link = root.querySelector('button[data-action="link"]') as HTMLButtonElement;
     const toolbar = root.querySelector('.fl-toolbar') as HTMLElement;
-    const buttons = [close, avatar, share, link];
+    const buttons = [close, avatar, sidebar, share, link];
 
     const tabIndexes = (): number[] => buttons.map((b) => b.tabIndex);
 
     // Initial: only the first (close) button is tabbable.
-    expect(tabIndexes()).toEqual([0, -1, -1, -1]);
+    expect(tabIndexes()).toEqual([0, -1, -1, -1, -1]);
 
     // ArrowRight rotates the active tabstop along with focus.
     close.focus();
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(root.activeElement).toBe(avatar);
-    expect(tabIndexes()).toEqual([-1, 0, -1, -1]);
+    expect(tabIndexes()).toEqual([-1, 0, -1, -1, -1]);
 
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    expect(tabIndexes()).toEqual([-1, -1, 0, -1]);
+    expect(tabIndexes()).toEqual([-1, -1, 0, -1, -1]);
 
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
-    expect(tabIndexes()).toEqual([-1, -1, -1, 0]);
+    expect(tabIndexes()).toEqual([-1, -1, -1, -1, 0]);
 
     toolbar.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-    expect(tabIndexes()).toEqual([0, -1, -1, -1]);
+    expect(tabIndexes()).toEqual([0, -1, -1, -1, -1]);
 
     t.remove();
   });

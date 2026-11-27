@@ -1,7 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import type { Knex } from 'knex';
+import { PaginationParamsSchema, paginationMeta } from '@pinpoint/shared';
 import { sendZodFailure, validateUuidParam } from './errors.js';
+import { findAccessibleProject, registerSessionDb, requireOrgAdmin } from './access.js';
 
 export interface WorkflowRouteDeps {
   authMiddleware: (req: Request, res: Response, next: NextFunction) => void;
@@ -10,16 +12,22 @@ export interface WorkflowRouteDeps {
 
 const CreateRuleSchema = z.object({
   projectId: z.string().uuid().optional(),
-  name: z.string().min(1),
+  name: z.string().min(1).max(255),
   triggerEvent: z.enum(['annotation.created', 'annotation.status_changed', 'comment.created']),
-  conditions: z.record(z.unknown()).optional(),
+  conditions: z.record(z.string(), z.unknown()).optional(),
   actionType: z.enum(['assign', 'set_status', 'set_due_date', 'notify']),
-  actionParams: z.record(z.unknown()),
+  actionParams: z.record(z.string(), z.unknown()),
   priority: z.number().int().optional(),
 });
 
+const UpdateRuleSchema = z.object({
+  active: z.boolean().optional(),
+  priority: z.number().int().optional(),
+  name: z.string().min(1).max(255).optional(),
+});
+
 const CreateSlaSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().min(1).max(255),
   severity: z.enum(['critical', 'major', 'minor']),
   responseTimeHours: z.number().int().min(1),
   resolutionTimeHours: z.number().int().min(1),
@@ -29,21 +37,29 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
   const { authMiddleware, db } = deps;
   const router = Router();
   router.use(authMiddleware);
+  registerSessionDb(db);
 
   // === Automation Rules ===
 
   router.get('/rules', async (req: Request, res: Response) => {
-    const rules = await db('automation_rules').where('org_id', req.user!.orgId).orderBy('priority');
-    res.json({ rules });
+    const { page, pageSize } = PaginationParamsSchema.parse(req.query);
+    const base = db('automation_rules').where('org_id', req.user!.orgId);
+    const [{ count: total }] = await base.clone().count('* as count');
+    const data = await base
+      .clone()
+      .orderBy('priority')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    res.json({ data, pagination: paginationMeta(Number(total), page, pageSize) });
   });
 
-  router.post('/rules', async (req: Request, res: Response) => {
+  router.post('/rules', requireOrgAdmin, async (req: Request, res: Response) => {
     const parsed = CreateRuleSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid rule.', parsed.error.flatten()); return; }
 
-    // Verify project belongs to the caller's org when provided (prevent cross-tenant IDOR)
+    // Verify the caller can access the project when provided (prevent cross-tenant IDOR)
     if (parsed.data.projectId) {
-      const project = await db('projects').where({ id: parsed.data.projectId, org_id: req.user!.orgId }).first();
+      const project = await findAccessibleProject(db, req.user!, parsed.data.projectId);
       if (!project) {
         res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Project not in your organization' } });
         return;
@@ -63,9 +79,11 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
     res.status(201).json({ rule });
   });
 
-  router.patch('/rules/:id', async (req: Request, res: Response) => {
+  router.patch('/rules/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     if (!validateUuidParam(res, 'id', req.params.id as string)) return;
-    const { active, priority, name } = req.body;
+    const parsedBody = UpdateRuleSchema.safeParse(req.body ?? {});
+    if (!parsedBody.success) { sendZodFailure(res, 'Invalid rule update.', parsedBody.error.flatten()); return; }
+    const { active, priority, name } = parsedBody.data;
     const updated = await db('automation_rules')
       .where({ id: req.params.id, org_id: req.user!.orgId })
       .update({ ...(active !== undefined && { active }), ...(priority !== undefined && { priority }), ...(name && { name }), updated_at: db.fn.now() })
@@ -74,7 +92,7 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
     res.json({ rule: updated[0] });
   });
 
-  router.delete('/rules/:id', async (req: Request, res: Response) => {
+  router.delete('/rules/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     if (!validateUuidParam(res, 'id', req.params.id as string)) return;
     const deleted = await db('automation_rules').where({ id: req.params.id, org_id: req.user!.orgId }).del();
     if (!deleted) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Rule not found' } }); return; }
@@ -84,11 +102,18 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
   // === SLA Policies ===
 
   router.get('/sla', async (req: Request, res: Response) => {
-    const policies = await db('sla_policies').where('org_id', req.user!.orgId);
-    res.json({ policies });
+    const { page, pageSize } = PaginationParamsSchema.parse(req.query);
+    const base = db('sla_policies').where('org_id', req.user!.orgId);
+    const [{ count: total }] = await base.clone().count('* as count');
+    const data = await base
+      .clone()
+      .orderBy('created_at', 'desc')
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    res.json({ data, pagination: paginationMeta(Number(total), page, pageSize) });
   });
 
-  router.post('/sla', async (req: Request, res: Response) => {
+  router.post('/sla', requireOrgAdmin, async (req: Request, res: Response) => {
     const parsed = CreateSlaSchema.safeParse(req.body);
     if (!parsed.success) { sendZodFailure(res, 'Invalid SLA.', parsed.error.flatten()); return; }
 
@@ -102,65 +127,29 @@ export function createWorkflowRoutes(deps: WorkflowRouteDeps): Router {
     res.status(201).json({ policy });
   });
 
-  router.delete('/sla/:id', async (req: Request, res: Response) => {
+  router.delete('/sla/:id', requireOrgAdmin, async (req: Request, res: Response) => {
     if (!validateUuidParam(res, 'id', req.params.id as string)) return;
-    await db('sla_policies').where({ id: req.params.id, org_id: req.user!.orgId }).del();
+    const deleted = await db('sla_policies').where({ id: req.params.id, org_id: req.user!.orgId }).del();
+    if (!deleted) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SLA policy not found' } }); return; }
     res.status(204).end();
   });
 
   // === SLA Breach Check (called by a scheduled job or on annotation update) ===
 
   router.get('/sla/breaches', async (req: Request, res: Response) => {
-    const breaches = await db('sla_breaches')
+    const { page, pageSize } = PaginationParamsSchema.parse(req.query);
+    const base = db('sla_breaches')
       .join('annotations', 'annotations.id', 'sla_breaches.annotation_id')
-      .where('annotations.org_id', req.user!.orgId)
+      .where('annotations.org_id', req.user!.orgId);
+    const [{ count: total }] = await base.clone().count('sla_breaches.id as count');
+    const data = await base
+      .clone()
       .select('sla_breaches.*', 'annotations.body', 'annotations.severity', 'annotations.status')
       .orderBy('sla_breaches.breached_at', 'desc')
-      .limit(50);
-    res.json({ breaches });
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    res.json({ data, pagination: paginationMeta(Number(total), page, pageSize) });
   });
 
   return router;
-}
-
-/**
- * Run automation rules against a domain event. Call from the inbound
- * adapter after an annotation/comment event fires.
- */
-export async function executeRules(
-  db: Knex,
-  orgId: string,
-  triggerEvent: string,
-  context: Record<string, unknown>,
-): Promise<void> {
-  const rules = await db('automation_rules')
-    .where({ org_id: orgId, trigger_event: triggerEvent, active: true })
-    .orderBy('priority');
-
-  for (const rule of rules) {
-    const conditions = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
-    // Check conditions match
-    const matches = Object.entries(conditions).every(
-      ([key, val]) => context[key] === val,
-    );
-    if (!matches) continue;
-
-    const params = typeof rule.action_params === 'string' ? JSON.parse(rule.action_params) : rule.action_params;
-    const annotationId = context.annotationId as string;
-    if (!annotationId) continue;
-
-    switch (rule.action_type) {
-      case 'assign':
-        await db('annotations').where('id', annotationId).update({ assignee_id: params.assigneeId });
-        break;
-      case 'set_status':
-        await db('annotations').where('id', annotationId).update({ status: params.status });
-        break;
-      case 'set_due_date': {
-        const due = new Date(Date.now() + (params.hoursFromNow ?? 48) * 3600 * 1000);
-        await db('annotations').where('id', annotationId).update({ due_date: due });
-        break;
-      }
-    }
-  }
 }

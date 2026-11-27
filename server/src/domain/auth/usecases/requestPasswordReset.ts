@@ -12,12 +12,16 @@
 //
 // We mail directly through `Mailer` rather than enqueueing into the
 // notification queue so that "I didn't get the email" issues are
-// debuggable from a single SMTP log line during a reset incident; the
-// dispatcher path is reserved for fan-out heavy events (annotations,
-// comments, mentions). This matches the imperative implementation
-// today (`sendResetEmail` is invoked inline, not via `enqueue`).
+// debuggable from a single SMTP log line during a reset incident.
+//
+// Timing (F-17): the SMTP round-trip is NOT awaited. Awaiting it made the
+// known-email path measurably slower than the unknown-email path, which is a
+// timing oracle for account existence. The send is detached (failures are
+// logged), and the unknown-email path performs a comparable token-table read
+// so both paths do about the same awaited work.
 
 import { randomBytes, createHash } from 'node:crypto';
+import type { Logger } from '../../shared/ports/Logger.js';
 import { ok } from '../../shared/DomainError.js';
 import type { DomainError, Result } from '../../shared/DomainError.js';
 import type { Clock } from '../../shared/ports/Clock.js';
@@ -42,6 +46,8 @@ export interface RequestPasswordResetDeps {
   authTokenRepo: AuthTokenRepo;
   mailer: Mailer;
   clock: Clock;
+  /** Optional: used to report detached mail-send failures. */
+  logger?: Logger;
   /** Composition root supplies the absolute reset link. */
   buildResetLink: (rawToken: string) => string;
 }
@@ -64,6 +70,12 @@ export class RequestPasswordReset {
 
     const user = await userRepo.findByEmail(input.email.toLowerCase());
     if (!user) {
+      // Comparable awaited work to the real path's token insert.
+      await authTokenRepo.findValid(
+        createHash('sha256').update(randomBytes(32)).digest('hex'),
+        'reset_password',
+        clock.now(),
+      );
       return ok({ emailDispatched: true });
     }
 
@@ -81,11 +93,18 @@ export class RequestPasswordReset {
     });
 
     const link = buildResetLink(rawToken);
-    await mailer.send({
-      to: user.email,
-      subject: 'Reset your Pinpoint password',
-      body: `A password reset was requested for your account. Visit the following link within the next hour to choose a new password: ${link}`,
-    });
+    // Detached on purpose — see the timing note at the top of this file.
+    void (async () => {
+      try {
+        await mailer.send({
+          to: user.email,
+          subject: 'Reset your Pinpoint password',
+          body: `A password reset was requested for your account. Visit the following link within the next hour to choose a new password: ${link}`,
+        });
+      } catch (error: unknown) {
+        this.deps.logger?.error({ err: error, userId: user.id }, 'Failed to send password reset email');
+      }
+    })();
 
     return ok({ emailDispatched: true });
   }

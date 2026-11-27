@@ -589,7 +589,7 @@ This phase carves out the Domain / Adapters / Composition layers BEFORE the rest
 ### Phase 20: Keyboard Shortcuts and Drafts (Reqs 40, 41)
 
 - [x] 31. Shortcuts
-  - [x] 31.1 Add `commands` block to `manifest.json`: toggle (`Alt+Shift+F`), sidebar (`Alt+Shift+S`), next pin (`Alt+]`), prev pin (`Alt+[`). _Requirements: 40.1_
+  - [x] 31.1 Add `commands` block to `manifest.json`: toggle (`Alt+Shift+F`), sidebar (`Alt+Shift+S`), next pin (`Alt+Shift+.` (Chrome rejects `Alt+]`)), prev pin (`Alt+Shift+,`). _Requirements: 40.1_
   - [x] 31.2 Service worker dispatches each command to the active tab's content script. _Requirements: 40.1_
   - [x] 31.3 Document the remap path (`chrome://extensions/shortcuts`) in the README. _Requirements: 40.2_
 

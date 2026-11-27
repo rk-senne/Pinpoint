@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 // Domain use-case factory extracted from composition/container.ts
 // (Mission E2 — Component Decomposition).
 
@@ -5,6 +6,7 @@ import type { Knex } from 'knex';
 
 import type { Config } from './config.js';
 import type { Adapters } from './adapters.js';
+import type { DispatchPendingNotificationsDeps } from '../domain/notification/usecases/dispatchPendingNotifications.js';
 
 // --- domain (use cases) ------------------------------------------------
 import {
@@ -18,6 +20,7 @@ import {
 } from '../domain/annotation/usecases/changeAnnotationStatus.js';
 import {
   CreateAnnotation,
+  CreateGuestAnnotation,
 } from '../domain/annotation/usecases/createAnnotation.js';
 import {
   DeleteAnnotation,
@@ -37,6 +40,7 @@ import {
 } from '../domain/auth/usecases/requestPasswordReset.js';
 import { VerifyEmail } from '../domain/auth/usecases/verifyEmail.js';
 import { OAuthLogin } from '../domain/auth/usecases/oauthLogin.js';
+import { ResendVerification } from '../domain/auth/usecases/resendVerification.js';
 import { CreateComment } from '../domain/comment/usecases/createComment.js';
 import { ListComments } from '../domain/comment/usecases/listComments.js';
 import {
@@ -49,8 +53,9 @@ import {
   DispatchPendingNotifications,
 } from '../domain/notification/usecases/dispatchPendingNotifications.js';
 import {
-  RegisterWebhook, DispatchWebhook, DeleteWebhook,
+  RegisterWebhook, DispatchWebhook, DispatchWebhookDeliveries, DeleteWebhook,
 } from '../domain/webhook/usecases/webhooks.js';
+import { assertPublicUrl, safeFetch } from '../services/egressGuard.js';
 import {
   CreateUserNotification, ListUserNotifications, MarkNotificationRead,
 } from '../domain/notification/usecases/userNotifications.js';
@@ -103,6 +108,7 @@ import {
   AcceptInvitation,
 } from '../domain/org/usecases/acceptInvitation.js';
 
+import { isOrgMember } from '../adapters/inbound/http/access.js';
 import type { PinoLogger } from '../adapters/outbound/logger/PinoLogger.js';
 import type { WebhookDispatchingEventBus } from '../adapters/outbound/socket/WebhookDispatchingEventBus.js';
 
@@ -116,6 +122,7 @@ export interface UseCases {
   refreshToken: RefreshToken;
   verifyEmail: VerifyEmail;
   requestPasswordReset: RequestPasswordReset;
+  resendVerification: ResendVerification;
   completePasswordReset: CompletePasswordReset;
   logout: Logout;
   oauthLogin: OAuthLogin;
@@ -130,6 +137,8 @@ export interface UseCases {
   exportProjectReport: ExportProjectReport;
   computeAnalytics: ComputeAnalytics;
   createAnnotation: CreateAnnotation;
+  /** Guest/widget submissions (author_id NULL, is_guest). */
+  createGuestAnnotation: CreateGuestAnnotation;
   updateAnnotation: UpdateAnnotation;
   changeAnnotationStatus: ChangeAnnotationStatus;
   deleteAnnotation: DeleteAnnotation;
@@ -151,6 +160,7 @@ export interface UseCases {
   dispatchPendingNotifications: DispatchPendingNotifications;
   registerWebhook: RegisterWebhook;
   dispatchWebhook: DispatchWebhook;
+  dispatchWebhookDeliveries: DispatchWebhookDeliveries;
   deleteWebhook: DeleteWebhook;
   createUserNotification: CreateUserNotification;
   listUserNotifications: ListUserNotifications;
@@ -170,10 +180,12 @@ export interface BuildUseCasesDeps {
   eventBus: WebhookDispatchingEventBus;
   logger: PinoLogger;
   db: Knex;
+  /** Extra notification channels (e.g. Slack) keyed by notification kind. */
+  channelDeliverers?: DispatchPendingNotificationsDeps['channelDeliverers'];
 }
 
 export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
-  const { adapters, config, eventBus, logger, db } = deps;
+  const { adapters, config, eventBus, logger, db, channelDeliverers } = deps;
   const {
     userRepo,
     projectRepo,
@@ -216,7 +228,28 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     `${trimSlash(config.appUrl)}/reset-password/${rawToken}`;
 
   // ---- Auth use cases -------------------------------------------------
-  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo });
+  /**
+   * Idempotent, transactional personal-org provisioning shared by email
+   * login and OAuth signup. A per-user advisory lock serializes concurrent
+   * first logins so exactly one org is created; the slug carries random
+   * bytes so it can't collide on the unique index.
+   */
+  const provisionPersonalOrg = (userId: string, userName: string): Promise<string> =>
+    db.transaction(async (trx) => {
+      await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [`personal-org:${userId}`]);
+      const existing = await trx('memberships').where({ user_id: userId }).orderBy('created_at', 'asc').first();
+      if (existing) return existing.org_id as string;
+      const [org] = await trx('organizations')
+        .insert({
+          name: `${userName || 'My'}'s Org`.slice(0, 255),
+          slug: `user-${userId.slice(0, 8)}-${randomBytes(4).toString('hex')}`,
+          plan: 'free',
+        })
+        .returning('id');
+      await trx('memberships').insert({ org_id: org.id, user_id: userId, role: 'owner', accepted_at: trx.fn.now() });
+      return org.id as string;
+    });
+  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo, provisionPersonalOrg });
   const registerUser = new RegisterUser({
     userRepo,
     authTokenRepo,
@@ -225,14 +258,22 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     clock,
     buildVerifyEmailLink,
   });
-  const refreshToken = new RefreshToken({ tokenIssuer, clock });
+  const refreshToken = new RefreshToken({ tokenIssuer, clock, userRepo, membershipRepo });
   const verifyEmail = new VerifyEmail({ authTokenRepo, userRepo, clock });
   const requestPasswordReset = new RequestPasswordReset({
     userRepo,
     authTokenRepo,
     mailer,
     clock,
+    logger,
     buildResetLink,
+  });
+  const resendVerification = new ResendVerification({
+    userRepo,
+    authTokenRepo,
+    notificationQueue,
+    clock,
+    buildVerifyEmailLink,
   });
   const completePasswordReset = new CompletePasswordReset({
     userRepo,
@@ -240,16 +281,10 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     passwordHasher,
     clock,
   });
-  const logout = new Logout({ authTokenRepo });
+  const logout = new Logout({ authTokenRepo, userRepo });
 
   // ---- OAuth ----------------------------------------------------------
-  const createOrgAndMembership = async (userId: string, userName: string): Promise<string> => {
-    const [org] = await db('organizations')
-      .insert({ name: `${userName}'s Org`, slug: `user-${userId.slice(0, 8)}`, plan: 'free' })
-      .returning('id');
-    await db('memberships').insert({ org_id: org.id, user_id: userId, role: 'owner', accepted_at: db.fn.now() });
-    return org.id as string;
-  };
+  const createOrgAndMembership = provisionPersonalOrg;
 
   const oauthLogin = new OAuthLogin({
     providers: oauthProviders,
@@ -257,6 +292,8 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     userRepo,
     tokenIssuer,
     membershipRepo,
+    passwordHasher,
+    authTokenRepo,
     createOrgAndMembership,
   });
 
@@ -265,6 +302,8 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     projectRepo,
     pageRepo,
     runInTransaction,
+    teamRepo,
+    teamMemberRepo,
   });
   const searchProjects = new SearchProjects({ projectRepo });
   const getProject = new GetProject({ projectRepo, teamMemberRepo });
@@ -308,7 +347,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
   const notificationTriggers = new NotificationTriggers({ createUserNotification, userNotificationRepo });
 
   // ---- Annotation use cases -------------------------------------------
-  const createAnnotation = new CreateAnnotation({
+  const createAnnotationDeps = {
     annotationRepo,
     projectRepo,
     pageRepo,
@@ -317,17 +356,23 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     runInTransaction,
     clock,
     eventBus,
-  });
+  };
+  const createAnnotation = new CreateAnnotation(createAnnotationDeps);
+  const createGuestAnnotation = new CreateGuestAnnotation(createAnnotationDeps);
   const updateAnnotation = new UpdateAnnotation({
     annotationRepo,
     projectRepo,
     teamMemberRepo,
+    eventBus,
+    pageRepo,
   });
   const changeAnnotationStatus = new ChangeAnnotationStatus({
     annotationRepo,
     projectRepo,
     teamMemberRepo,
     notificationTriggers,
+    eventBus,
+    pageRepo,
   });
   const deleteAnnotation = new DeleteAnnotation({
     annotationRepo,
@@ -347,6 +392,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     annotationRepo,
     eventBus,
     notificationTriggers,
+    isOrgMember: (orgId, userId) => isOrgMember(db, orgId, userId),
   });
   const listComments = new ListComments({ commentRepo, annotationRepo });
 
@@ -358,13 +404,14 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     teamMemberRepo,
     userRepo,
     eventBus,
+    membershipRepo,
   });
   const updateMemberRole = new UpdateMemberRole({
     teamRepo,
     teamMemberRepo,
     eventBus,
   });
-  const removeMember = new RemoveMember({ teamRepo, teamMemberRepo });
+  const removeMember = new RemoveMember({ teamRepo, teamMemberRepo, eventBus });
 
   // ---- Shared links ---------------------------------------------------
   const createSharedLink = new CreateSharedLink({
@@ -376,6 +423,8 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     sharedLinkRepo,
     passwordHasher,
     clock,
+    // Global per-link ceiling; the strict 3-strike lock is per (link, IP) in the route (PP-14).
+    maxFailedAttempts: 30,
   });
 
   // ---- Guidelines -----------------------------------------------------
@@ -384,7 +433,15 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
 
   // ---- User -----------------------------------------------------------
   const getCurrentUser = new GetCurrentUser({ userRepo });
-  const updateProfile = new UpdateProfile({ userRepo });
+  const updateProfile = new UpdateProfile({
+    userRepo,
+    passwordHasher,
+    authTokenRepo,
+    mailer,
+    clock,
+    logger,
+    buildConfirmLink: buildVerifyEmailLink,
+  });
   const updateNotificationPreferences = new UpdateNotificationPreferences({
     userRepo,
   });
@@ -396,17 +453,34 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     mailer,
     clock,
     logger,
+    ...(channelDeliverers ? { channelDeliverers } : {}),
   });
 
   // ---- Webhooks -------------------------------------------------------
-  const registerWebhook = new RegisterWebhook({ webhookRepo });
+  // Wire the SSRF egress guard (Mission A5a). Allow plain http only outside
+  // production so local dev endpoints keep working; prod is https-only.
+  // Plain http egress is dev-only: never in production AND never on any
+  // exposed deployment (self-host / non-loopback bind) (F-14).
+  const egressOptions = { allowHttp: config.nodeEnv !== 'production' && !config.exposed };
+  const registerWebhook = new RegisterWebhook({
+    webhookRepo,
+    assertPublicUrl: (url: string) => assertPublicUrl(url, egressOptions),
+  });
+  // DispatchWebhook only ENQUEUES durable delivery rows (Mission A5b). The
+  // actual signed HTTP delivery + retry happens in the webhook delivery
+  // worker via DispatchWebhookDeliveries, so a crash mid-backoff can't drop a
+  // delivery.
   const dispatchWebhook = new DispatchWebhook({ webhookRepo });
+  const dispatchWebhookDeliveries = new DispatchWebhookDeliveries({
+    webhookRepo,
+    safeFetch: (url, init) => safeFetch(url, init as never, egressOptions) as never,
+  });
   const deleteWebhook = new DeleteWebhook({ webhookRepo });
   const listUserNotifications = new ListUserNotifications({ userNotificationRepo });
   const markNotificationRead = new MarkNotificationRead({ userNotificationRepo });
 
   // ---- Org use cases --------------------------------------------------
-  const inviteToOrg = new InviteToOrg({ invitationRepo, membershipRepo, clock, eventBus });
+  const inviteToOrg = new InviteToOrg({ invitationRepo, membershipRepo, clock, eventBus, mailer, appUrl: config.appUrl });
   const acceptInvitation = new AcceptInvitation({ invitationRepo, membershipRepo, clock });
 
   return {
@@ -415,6 +489,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     refreshToken,
     verifyEmail,
     requestPasswordReset,
+    resendVerification,
     completePasswordReset,
     logout,
     oauthLogin,
@@ -429,6 +504,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     exportProjectReport,
     computeAnalytics,
     createAnnotation,
+    createGuestAnnotation,
     updateAnnotation,
     changeAnnotationStatus,
     deleteAnnotation,
@@ -450,6 +526,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
     dispatchPendingNotifications,
     registerWebhook,
     dispatchWebhook,
+    dispatchWebhookDeliveries,
     deleteWebhook,
     createUserNotification,
     listUserNotifications,

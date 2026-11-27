@@ -8,65 +8,6 @@
  * CSS lives in `styles/skeleton.css` and must be imported in `main.ts`.
  */
 
-export interface SkeletonConfig {
-  /** Number of text lines (default 3). */
-  lines?: number;
-  /** Custom height for block skeletons. */
-  height?: string;
-  /** Custom width. */
-  width?: string;
-  /** Shape variant. */
-  variant?: 'text' | 'card' | 'circle';
-}
-
-/**
- * Creates a generic skeleton placeholder element with animated shimmer.
- * Supports text lines, card blocks, and circle avatars.
- */
-export function createSkeleton(config?: SkeletonConfig): HTMLElement {
-  const { lines = 3, height, width, variant = 'text' } = config ?? {};
-
-  const container = document.createElement('div');
-  container.classList.add('pp-skeleton-container');
-  container.setAttribute('aria-busy', 'true');
-  container.setAttribute('aria-label', 'Loading content');
-  container.setAttribute('role', 'status');
-
-  if (variant === 'circle') {
-    const circle = document.createElement('div');
-    circle.classList.add('pp-skeleton', 'pp-skeleton--circle');
-    if (height) circle.style.width = height;
-    if (height) circle.style.height = height;
-    container.appendChild(circle);
-    return container;
-  }
-
-  if (variant === 'card') {
-    const card = document.createElement('div');
-    card.classList.add('pp-skeleton', 'pp-skeleton--card');
-    if (height) card.style.height = height;
-    if (width) card.style.width = width;
-    container.appendChild(card);
-    return container;
-  }
-
-  // Text variant — render multiple lines with varying widths.
-  for (let i = 0; i < lines; i++) {
-    const line = document.createElement('div');
-    line.classList.add('pp-skeleton', 'pp-skeleton--text');
-    // Last line is shorter to look natural.
-    if (i === lines - 1) {
-      line.style.width = width ?? '60%';
-    } else {
-      line.style.width = width ?? '100%';
-    }
-    if (height) line.style.height = height;
-    container.appendChild(line);
-  }
-
-  return container;
-}
-
 /**
  * Card-shaped skeleton — mimics a project card in the dashboard home grid.
  * Returns a single card element with a header line and two body lines.

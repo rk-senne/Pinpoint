@@ -111,23 +111,35 @@
  *      worker and toggling the Shadow Host's visibility.
  */
 
+// MUST stay first: installs a Custom Elements registry in the isolated
+// world before any component module calls customElements.define().
+import './lib/isolatedWorldElements';
 import {
   apiFetch,
   queueChangeAnnotationStatus,
   queueCreateAnnotation,
   queueCreateComment,
 } from './lib/api';
-import { getStoredAuthToken } from './lib/authTokenStore';
+import { relayFetch } from './lib/apiRelay';
+import { resolveCanonicalAnnotationId } from './lib/canonicalAnnotationId';
+import { primeServerOrigin, resolveServerOriginSync } from './lib/serverOrigin';
+import { queryAuthStatus, requestCollabToken } from './lib/authBridge';
 import { installHistoryPatch } from './lib/historyPatch';
 import { lookupProject } from './lib/projectMappingStore';
 import { shouldSkipInjection } from './lib/hostFilter';
 import { startSyncer, setSyncRemapAdapter } from './lib/Syncer';
 import { createConnectionMonitor, type ConnectionMonitor } from './lib/connectionMonitor';
 import { withContentScriptBoundary } from './lib/ContentScriptBoundary';
+import { ConsoleCapture } from './lib/consoleCapture';
+import {
+  INSTALL_PAGE_CONSOLE_MESSAGE_TYPE,
+  listenForPageConsole,
+} from './lib/pageConsoleBridge';
+import { SessionReplayRecorder } from './lib/sessionReplay';
 import './components/OverlayHost';
 import type { FlOverlayHost, OverlayHostAction } from './components/OverlayHost';
 import type { PickerProject } from './components/ProjectPicker';
-import type { Annotation, Project } from '@pinpoint/shared';
+import type { Annotation, Comment, PaginatedResponse, Project } from '@pinpoint/shared';
 
 const SHADOW_HOST_ID = 'pinpoint-shadow-host';
 
@@ -135,6 +147,17 @@ let shadowHostEl: HTMLElement | null = null;
 let overlayHostEl: FlOverlayHost | null = null;
 let overlayEnabled = false;
 let connectionMonitorInstance: ConnectionMonitor | null = null;
+
+/**
+ * Diagnostics capture (Mission C2) + session-replay recorder (Mission C3).
+ * Installed in `bootstrap()` and torn down in `unmountOverlay()`. Both are
+ * module-level so `onHostAction` can read a snapshot at create-annotation
+ * time without threading them through every call.
+ */
+let consoleCaptureInstance: ConsoleCapture | null = null;
+let sessionReplayRecorder: SessionReplayRecorder | null = null;
+/** Teardown for the MAIN-world console bridge listener. */
+let stopPageConsoleListener: (() => void) | null = null;
 
 /** Response shape for `GET /api/v1/projects/by-url`. */
 interface ProjectByUrlResponse {
@@ -151,10 +174,9 @@ interface ProjectMember {
   role: string;
 }
 
-/** Pull the stored auth token; null when logged out. Re-exported via
- * `getStoredAuthToken` so every surface in the extension uses one
- * canonical implementation. */
-const readStoredAuthToken = getStoredAuthToken;
+/** Signed-in check for the content script (F8): boolean only — the content
+ * script never reads the bearer from `chrome.storage.local`. */
+const isSignedIn = queryAuthStatus;
 
 /**
  * Resolve the project the current page belongs to. Returns null when the
@@ -191,15 +213,26 @@ export async function resolveProjectForUrl(
 
   // 2. Cache miss → ask the server. Failures (404, 401, network) all
   //    funnel into `null` so the host page stays stable.
-  try {
-    const res = await apiFetch<ProjectByUrlResponse>(
-      `/projects/by-url?url=${encodeURIComponent(href)}`,
-    );
-    return res.projectId;
-  } catch {
-    return null;
+  //    A definitive answer (404: no project for this URL; 401: signed out)
+  //    returns null at once. Transient failures (relay hiccup while the
+  //    service worker wakes, network blip, 5xx) are retried briefly so a
+  //    registered page never falls back to the project picker by accident.
+  const path = `/projects/by-url?url=${encodeURIComponent(href)}`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await apiFetch<ProjectByUrlResponse>(path);
+      return res.projectId;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const definitive = /status (401|403|404)\b|No accessible project|Unauthori[sz]ed|sign(ed)? ?in/i.test(msg);
+      if (definitive || attempt >= BY_URL_RETRY_DELAYS_MS.length) return null;
+      await new Promise((r) => setTimeout(r, BY_URL_RETRY_DELAYS_MS[attempt]));
+    }
   }
 }
+
+/** Backoff for transient `by-url` failures (total ~1.2 s before giving up). */
+export const BY_URL_RETRY_DELAYS_MS = [250, 900];
 
 /**
  * Build (or reuse) the Shadow Host element. Pointer events are disabled
@@ -262,6 +295,35 @@ async function onHostAction(event: Event): Promise<void> {
     switch (detail.kind) {
       case 'create-annotation': {
         const a = detail.annotation;
+        // Mission C2 + C3 — attach a bounded, PII-scrubbed diagnostics
+        // snapshot and the redaction-applied session-replay buffer at submit
+        // time. Honour anything the popover already attached (e.g. a future
+        // in-popover toggle); otherwise read the live module instances. All
+        // reads are defensive — capture failures must never block a create.
+        let consoleLogs = a.consoleLogs;
+        let jsErrors = a.jsErrors;
+        if ((consoleLogs == null || jsErrors == null) && consoleCaptureInstance) {
+          try {
+            const snap = consoleCaptureInstance.snapshot();
+            if (consoleLogs == null && snap.consoleLogs.length > 0) {
+              consoleLogs = snap.consoleLogs;
+            }
+            if (jsErrors == null && snap.jsErrors.length > 0) {
+              jsErrors = snap.jsErrors;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        let sessionReplay = a.sessionReplay;
+        if (sessionReplay == null && sessionReplayRecorder) {
+          try {
+            const events = sessionReplayRecorder.getSnapshot();
+            if (events.length > 0) sessionReplay = events;
+          } catch {
+            /* ignore */
+          }
+        }
         // Use the popover-generated id as the outbox `localUuid` so the
         // optimistic row already in the store, the outbox entry, and the
         // Syncer's eventual `Outbox.replace` (task 36.4) all key off the
@@ -287,6 +349,10 @@ async function onHostAction(event: Event): Promise<void> {
             capturedConsole: a.capturedConsole,
             capturedNetwork: a.capturedNetwork,
             screenshotObjectKey: a.screenshotObjectKey,
+            // Diagnostics capture (Mission C2) + session replay (Mission C3).
+            consoleLogs,
+            jsErrors,
+            sessionReplay,
           },
           // The host already optimistically inserted the row with id=a.id
           // in `<fl-overlay-host>`'s `#onPopoverSubmit`, so we deliberately
@@ -337,6 +403,25 @@ async function onHostAction(event: Event): Promise<void> {
         }
         break;
       }
+      case 'open-project': {
+        // Toolbar "open in dashboard": the dashboard and API share one
+        // origin in the supported deployments (see README Quickstart).
+        const url = `${resolveServerOriginSync()}/projects/${encodeURIComponent(detail.projectId)}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+        break;
+      }
+      case 'load-comments': {
+        if (!host) break;
+        const res = await apiFetch<{ data?: Comment[] }>(
+          `/annotations/${encodeURIComponent(detail.annotationId)}/comments?pageSize=100`,
+        );
+        const fetched = Array.isArray(res?.data) ? res.data : [];
+        const current = host.store.comments.get();
+        const known = new Set(current.map((c) => c.id));
+        const merged = [...current, ...fetched.filter((c) => !known.has(c.id))];
+        if (merged.length !== current.length) host.store.comments.set(merged);
+        break;
+      }
       case 'picker-select': {
         // Manual project picker fallback (Req 38.2 / 39.1, task 29.4).
         // The picker has already persisted the URL→Project mapping to
@@ -374,9 +459,7 @@ async function seedProjectData(
   projectId: string,
 ): Promise<void> {
   const [annotationsRes, membersRes] = await Promise.allSettled([
-    apiFetch<{ annotations: Annotation[] }>(
-      `/projects/${encodeURIComponent(projectId)}/annotations`,
-    ),
+    fetchAllProjectAnnotations(projectId),
     apiFetch<{ members: ProjectMember[] }>(
       `/projects/${encodeURIComponent(projectId)}/members`,
     ),
@@ -388,7 +471,7 @@ async function seedProjectData(
   if (host.projectId !== projectId) return;
 
   if (annotationsRes.status === 'fulfilled') {
-    host.store.annotations.set(annotationsRes.value.annotations ?? []);
+    host.store.annotations.set(annotationsRes.value);
   }
   if (membersRes.status === 'fulfilled') {
     const members = (membersRes.value.members ?? []).map((m) => ({
@@ -398,6 +481,33 @@ async function seedProjectData(
     }));
     host.store.members.set(members);
   }
+}
+
+/**
+ * Fetch every annotation for a project. `GET /api/v1/projects/:id/annotations`
+ * returns the shared `{ data, pagination }` envelope — NOT `{ annotations }`
+ * (the old code read a non-existent key, so the overlay rendered zero pins
+ * even when the project had feedback). The server caps `pageSize` at 100
+ * (`PaginationParamsSchema` in `@pinpoint/shared`); page through so projects
+ * with more than the default 25-row window still load fully.
+ */
+async function fetchAllProjectAnnotations(
+  projectId: string,
+): Promise<Annotation[]> {
+  const pageSize = 100;
+  let page = 1;
+  const all: Annotation[] = [];
+  for (;;) {
+    const res = await apiFetch<PaginatedResponse<Annotation>>(
+      `/projects/${encodeURIComponent(projectId)}/annotations?page=${page}&pageSize=${pageSize}`,
+    );
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    all.push(...rows);
+    const totalPages = res?.pagination?.totalPages ?? 1;
+    if (rows.length === 0 || page >= totalPages) break;
+    page += 1;
+  }
+  return all;
 }
 
 /**
@@ -427,6 +537,18 @@ async function seedProjectData(
  * Exported so unit tests can drive the helper directly without going
  * through the top-level `runGuardThenBootstrap` side effects.
  */
+/**
+ * The mount-time `by-url` lookup while it is in flight. The picker must not
+ * open before it settles: a registered page would flash (and keep) the
+ * picker when the overlay is toggled on quickly.
+ */
+let pendingInitialResolution: Promise<string | null> | null = null;
+
+/** Test hook: simulate a mount-time lookup that is still in flight. */
+export function __setPendingInitialResolutionForTests(p: Promise<string | null> | null): void {
+  pendingInitialResolution = p;
+}
+
 export async function maybeShowProjectPicker(host: FlOverlayHost): Promise<void> {
   // Skip when the overlay is disabled. The shadow host's `display: none`
   // would hide the picker anyway, but we also avoid the `/projects`
@@ -435,8 +557,12 @@ export async function maybeShowProjectPicker(host: FlOverlayHost): Promise<void>
 
   // Skip when the user is signed out. The picker has nothing to show
   // and the user needs to authenticate via the popup first.
-  const token = await readStoredAuthToken();
-  if (!token) return;
+  if (!(await isSignedIn())) return;
+
+  if (pendingInitialResolution) {
+    const resolved = await pendingInitialResolution.catch(() => null);
+    if (resolved || host.projectId) return;
+  }
 
   let projects: PickerProject[];
   try {
@@ -466,8 +592,24 @@ export async function maybeShowProjectPicker(host: FlOverlayHost): Promise<void>
  * Exported so tests can stub `apiFetch` and verify the projection.
  */
 export async function fetchPickerProjects(): Promise<PickerProject[]> {
-  const res = await apiFetch<{ projects: Project[] }>(`/projects`);
-  const list = Array.isArray(res?.projects) ? res.projects : [];
+  // `GET /api/v1/projects` returns the shared `{ data, pagination }`
+  // envelope — NOT `{ projects }` (the old key was always `undefined`, so
+  // the picker showed an empty list and the user could never map a page to
+  // a project manually). Request the server's max `pageSize` (100) and page
+  // through so users with many projects still see them all.
+  const pageSize = 100;
+  let page = 1;
+  const list: Project[] = [];
+  for (;;) {
+    const res = await apiFetch<PaginatedResponse<Project>>(
+      `/projects?page=${page}&pageSize=${pageSize}`,
+    );
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    list.push(...rows);
+    const totalPages = res?.pagination?.totalPages ?? 1;
+    if (rows.length === 0 || page >= totalPages) break;
+    page += 1;
+  }
   return list.map((p) => ({
     id: p.id,
     name: p.name,
@@ -542,6 +684,19 @@ async function onLocationChange(): Promise<void> {
   await seedProjectData(host, nextProjectId);
 }
 
+/**
+ * Heartbeat transport for the connection monitor, relayed through the
+ * service worker. MUST be a GET: the relay's method allow-list (F6) rejects
+ * HEAD, so the previous `HEAD` heartbeat failed on every tick and the
+ * toolbar showed "Offline" permanently after ~90 s even when online.
+ */
+export function relayHeartbeatFetch(
+  _input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  return relayFetch('/health', { method: 'GET', signal: init?.signal ?? undefined });
+}
+
 /** Bootstrap: create the Shadow Host, mount `<fl-overlay-host>`, configure it. */
 async function mountOverlay(): Promise<void> {
   const { root } = ensureShadowHost();
@@ -564,7 +719,7 @@ async function mountOverlay(): Promise<void> {
   // the optimistic row's `id === localUuid` for the server-assigned
   // values so the rest of the UI stops referencing the local UUID.
   // Every step is defensive: a row that was already reconciled by a
-  // socket broadcast (`annotation:created`, `comment:created`) is left
+  // socket broadcast (`annotation.created`, `comment.created`) is left
   // alone, and a row that was never inserted optimistically is a no-
   // op rather than a duplicate insert. The cascade rewrite of *other*
   // outbox entries (e.g., a comment queued under the optimistic
@@ -572,10 +727,21 @@ async function mountOverlay(): Promise<void> {
   // touches the in-memory signals.
   setSyncRemapAdapter({
     remapAnnotation: (localUuid, serverAnnotation) => {
+      // Unblock work waiting on the canonical id (screenshot upload).
+      resolveCanonicalAnnotationId(localUuid, serverAnnotation.id);
       const current = overlayHostEl;
       if (!current) return;
       const annotations = current.store.annotations.get();
-      const next = annotations.map((a) => {
+      // A socket replay may already have inserted the server row (it
+      // normally reconciles via clientRequestId, but be defensive): keep a
+      // single row per id.
+      const alreadyHasServerRow = annotations.some(
+        (a) => a.id === serverAnnotation.id && a.id !== localUuid,
+      );
+      const base = alreadyHasServerRow
+        ? annotations.filter((a) => a.id !== localUuid)
+        : annotations;
+      const next = base.map((a) => {
         if (a.id === localUuid) {
           return {
             ...a,
@@ -589,7 +755,7 @@ async function mountOverlay(): Promise<void> {
         }
         return a;
       });
-      // If a parallel `annotation:created` socket replay already
+      // If a parallel `annotation.created` socket replay already
       // swapped the row, `Object.is(prev, next)` will short-circuit
       // inside the signal — no redundant fan-out.
       current.store.annotations.set(next);
@@ -650,7 +816,15 @@ async function mountOverlay(): Promise<void> {
   // of truth for every UI surface) and so tests that assemble a host
   // by hand can swap a fake monitor without touching the toolbar.
   if (!connectionMonitorInstance) {
-    connectionMonitorInstance = createConnectionMonitor();
+    // The heartbeat runs from the content script, so a direct `fetch` to
+    // the API origin would be blocked by the host page's CORS policy. Route
+    // it through the service-worker relay like every other API call: we
+    // pass a sentinel `url` and a `fetchImpl` that relays a HEAD to
+    // `/health`, so the monitor stays origin-agnostic.
+    connectionMonitorInstance = createConnectionMonitor({
+      url: '/health',
+      fetchImpl: relayHeartbeatFetch as typeof fetch,
+    });
     connectionMonitorInstance.isOffline.subscribe((offline) => {
       const current = overlayHostEl;
       if (!current) return;
@@ -658,13 +832,26 @@ async function mountOverlay(): Promise<void> {
     });
   }
 
+  // Point the overlay's Socket.IO client at the resolved API origin. The
+  // origin cache is primed in `bootstrap()` so the sync read reflects any
+  // user-configured Server URL.
+  host.serverUrl = resolveServerOriginSync();
+
+  const resolution = resolveProjectForUrl(window.location.href);
+  pendingInitialResolution = resolution;
   const [token, projectId] = await Promise.all([
-    readStoredAuthToken(),
-    resolveProjectForUrl(window.location.href),
+    // Collab socket handshake runs in the page origin and cannot be relayed;
+    // this is the one explicit, in-memory token handoff from the worker.
+    requestCollabToken(),
+    resolution,
   ]);
+  if (pendingInitialResolution === resolution) pendingInitialResolution = null;
   host.token = token;
   host.projectId = projectId;
   if (projectId) {
+    // The overlay may have been toggled on while this lookup was in flight
+    // and shown the picker; the page is registered, so dismiss it.
+    host.hideProjectPicker();
     await seedProjectData(host, projectId);
   }
 }
@@ -695,6 +882,28 @@ function unmountOverlay(): void {
   if (connectionMonitorInstance) {
     connectionMonitorInstance.dispose();
     connectionMonitorInstance = null;
+  }
+  // Mission C2 / C3 — restore console + remove error listeners, and stop the
+  // session-replay recorder so we leave no observers behind on `pagehide`.
+  if (consoleCaptureInstance) {
+    try {
+      consoleCaptureInstance.uninstall();
+    } catch {
+      /* ignore teardown failures */
+    }
+    consoleCaptureInstance = null;
+  }
+  if (stopPageConsoleListener) {
+    stopPageConsoleListener();
+    stopPageConsoleListener = null;
+  }
+  if (sessionReplayRecorder) {
+    try {
+      sessionReplayRecorder.stop();
+    } catch {
+      /* ignore teardown failures */
+    }
+    sessionReplayRecorder = null;
   }
   // Task 36.4 — drop the Syncer's adapter so a stale closure cannot
   // poke at a torn-down `overlayHostEl` after `pagehide`.
@@ -730,6 +939,11 @@ function toggleOverlay(): void {
  * host page happen here.
  */
 function bootstrap(): void {
+  // Prime the server-origin cache (user setting → build-time → default) so
+  // the synchronous `resolveServerOriginSync()` used by `OverlayHost`'s
+  // Socket.IO factory and the API relay reflects any configured Server URL.
+  void primeServerOrigin();
+
   // Observe SPA navigations on the host page (Req 38.1, task 29.1).
   // Other modules subscribe to `pinpoint:locationchange` to
   // re-resolve the active project and refresh the overlay; this only
@@ -742,6 +956,46 @@ function bootstrap(): void {
   // the server's idempotent-replay path (task 35.2) recognises retries.
   // Idempotent — repeat calls (HMR, double script injection) are no-ops.
   startSyncer();
+
+  // Mission C2 — install bounded, PII-scrubbed console + JS-error capture
+  // as early as possible so a later annotation carries the context leading
+  // up to it. Capture preserves the host page's console semantics
+  // (pass-through) and is torn down in `unmountOverlay`.
+  if (!consoleCaptureInstance) {
+    try {
+      consoleCaptureInstance = new ConsoleCapture();
+      consoleCaptureInstance.install();
+    } catch {
+      consoleCaptureInstance = null;
+    }
+  }
+  // The wrap above only sees THIS isolated world's console. The host page's
+  // console calls and uncaught errors live in the MAIN world, so ask the
+  // service worker to inject the page bridge and ingest what it forwards
+  // (lib/pageConsoleBridge.ts). Best-effort: failures leave capture as-is.
+  if (consoleCaptureInstance && !stopPageConsoleListener) {
+    stopPageConsoleListener = listenForPageConsole(consoleCaptureInstance);
+    try {
+      void chrome.runtime
+        ?.sendMessage?.({ type: INSTALL_PAGE_CONSOLE_MESSAGE_TYPE })
+        ?.catch?.(() => undefined);
+    } catch {
+      /* no runtime (tests) — ignore */
+    }
+  }
+
+  // Mission C3 — start the session-replay recorder (already present in the
+  // extension) so a bounded, redaction-aware `ReplayEvent[]` snapshot is
+  // available at submit time. The recorder keeps only the last ~10 s and is
+  // stopped in `unmountOverlay`.
+  if (!sessionReplayRecorder) {
+    try {
+      sessionReplayRecorder = new SessionReplayRecorder();
+      sessionReplayRecorder.start();
+    } catch {
+      sessionReplayRecorder = null;
+    }
+  }
 
   window.addEventListener('pinpoint:locationchange', () => {
     onLocationChange().catch((err) => {

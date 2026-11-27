@@ -1,7 +1,43 @@
 # Pinpoint — Inconsistencies & Technical Debt
 
+> **Superseded (Nov 2026):** AWS is no longer used. Deployment is the provider-neutral Docker Compose stack in `deploy/` (see `docs/DEPLOYMENT.md`); AWS/Terraform/ECS mentions below are historical.
+
+
 Quick-reference for moonbase agents. These are things that are broken, contradictory, or incomplete in the current codebase.
 
+> **Status update — 2026-11-15 (branch `feat/enhancement-roadmap`):** The
+> `Popover.ts` split (113 KB → 94 KB; styles/template/helpers extracted to
+> `extension/src/components/popover/`) and the dashboard template lazy-loading
+> (`index.html` 89.5 KB → 73.8 KB, 6 lazy routes) are now **done**. Still open
+> by design: thin-CRUD premium routes (ADR-006). Open infra items found while
+> documenting deployment (see `docs/DEPLOYMENT.md`): the ECR repo is
+> `IMMUTABLE` while the workflows push `:latest`/`:production`, and `ecs.tf`
+> defines no `OAUTH_STATE_SECRET` secret although the production preflight
+> requires it.
+>
+> Defects found by running against the real stack and fixed this session:
+> - Self-registered users could never log in (no org) — first login now provisions a personal org.
+> - Projects, annotations and comments were created with NULL `org_id`.
+> - Annotation diagnostics/replay were stripped by the route schema and never serialized.
+> - `api_keys.key_prefix` `varchar(8)` overflow.
+> - Widget CORS preflight rejected by real browsers; widget bundle blocked cross-origin by CORP.
+> - MV3 extension rejected by Chrome (invalid shortcuts), could not mount (`customElements` null in the isolated world) and could not call the API (page-origin CORS) — fixed with a polyfill + service-worker relay.
+> - Dashboard read the wrong response shape in 4 places; Send-to menu TDZ crash.
+> - Realtime + mutations broken after a page reload (CSRF/bearer only in memory).
+> - Review iframe recursively framed the SPA and was blocked by `X-Frame-Options: DENY`.
+> - SIGTERM exited 1 without closing the DB; migrations couldn't connect in production (`DATABASE_URL`-only) and CI never ran them in the VPC.
+> - Webhook queue double-send; heatmap SQL; SSRF IPv6 bypass.
+>
+> **Status update — 2026-11-13 (branch `feat/enhancement-roadmap`):** The remaining
+> open items below are resolved: error envelopes unified, pagination on all list
+> endpoints, dead `extension/src/services` + legacy embed removed, `mobile-sdk`
+> tested and private, session replay wired end to end, heatmap aggregated in SQL,
+> Nielsen heuristics auto-seeded, Mailpit + monitoring profile in compose, and
+> premium-page UI tests added. See `docs/ENHANCEMENT_ROADMAP.md` (status header)
+> for the full list, including the defects found by real-Postgres verification.
+> (At that time the `Popover.ts` / `index.html` splits were deferred; they are
+> done as of 2026-11-15.)
+>
 > **Status update — 2026-07-31 (branch `feat/full-platform-wiring`):** All four
 > P0 bugs (1–4) and the higher-severity wiring gaps (5–9) below have been
 > **resolved** — see the per-row Status column and the Dead Code section.
@@ -55,7 +91,7 @@ Quick-reference for moonbase agents. These are things that are broken, contradic
 - Extension: Bearer JWT in `chrome.storage.local`
 - API Keys: `X-API-Key` header
 - Shared Links: separate password-verify flow
-- Widget: (not yet implemented) project public key
+- Widget: project-bound `pk_widget_` key in `X-Project-Key` (per-key origin allow-list)
 
 ### Pagination
 - `feedback.routes.ts` and `notifications.routes.ts`: paginated with `{ data, pagination }`
@@ -100,12 +136,12 @@ Quick-reference for moonbase agents. These are things that are broken, contradic
 
 1. **Heatmap:** Loads ALL annotations for a project into memory, processes in JS → should be DB aggregate
 2. **Reporting:** 4 complex queries per request with no caching → should use materialized views
-3. **Dashboard `index.html`:** 76 KB single HTML file with all templates → should lazy-load pages
+3. ~~**Dashboard `index.html`:** 76 KB single HTML file with all templates → should lazy-load pages~~ ✅ Done (2026-11-15) — now 73.8 KB with 6 lazy routes (was 89.5 KB)
 4. **No virtual scrolling:** Long annotation lists render all DOM rows
 5. **No query timeouts:** No `statement_timeout` in Knex config → long queries exhaust pool
 6. **Cache is process-local:** Restarting server invalidates all caches; inconsistent across instances
 7. **No cache invalidation on write:** Creating an annotation doesn't invalidate analytics cache (60s stale window)
-8. **`Popover.ts` is 110 KB** — single monolithic Web Component file
+8. ~~**`Popover.ts` is 110 KB** — single monolithic Web Component file~~ ✅ Done (2026-11-15) — now 94 KB; styles/template/helpers extracted to `extension/src/components/popover/`
 
 ---
 

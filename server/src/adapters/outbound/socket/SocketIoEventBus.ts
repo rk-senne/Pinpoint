@@ -9,7 +9,7 @@
 //
 // Routing rules:
 //   - `event.room` set    → `io.of(ns).to(room).emit(event.type, event.payload)`
-//   - `event.room` unset  → `io.of(ns).emit(event.type, event.payload)`
+//   - `event.room` unset  → dropped (never broadcast namespace-wide; PP-01)
 //
 // The `EventBus.emit` method is fire-and-forget per the port contract;
 // any send failures are swallowed at the Socket.IO layer (clients will
@@ -29,6 +29,15 @@ import type {
  */
 const DEFAULT_NAMESPACE_PATH = '/collab';
 
+/** Control event: disconnect every socket in `event.room` (access was revoked). */
+export const SESSION_REVOKED_EVENT = 'session.revoked';
+
+/**
+ * Realtime event names are the dotted domain names (`annotation.created`,
+ * `annotation.updated`, `annotation.status_changed`, `comment.created` — also
+ * the webhook vocabulary) and are emitted as-is, with the domain payload.
+ */
+
 export class SocketIoEventBus implements EventBus {
   private readonly namespacePath: string;
 
@@ -41,10 +50,15 @@ export class SocketIoEventBus implements EventBus {
 
   emit(event: DomainEvent): void {
     const namespace = this.io.of(this.namespacePath);
-    if (event.room) {
-      namespace.to(event.room).emit(event.type, event.payload);
+    // Default-deny (PP-01): a room-less event would reach every socket of every
+    // tenant, so it is dropped rather than broadcast to the whole namespace.
+    if (!event.room) return;
+    // Control event (PP-02): cut every socket of that room (user:<id>) instead of
+    // delivering a payload. Clients reconnect and are re-authorised from scratch.
+    if (event.type === SESSION_REVOKED_EVENT) {
+      namespace.in(event.room).disconnectSockets(true);
       return;
     }
-    namespace.emit(event.type, event.payload);
+    namespace.to(event.room).emit(event.type, event.payload);
   }
 }

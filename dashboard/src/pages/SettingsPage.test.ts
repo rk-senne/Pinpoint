@@ -52,6 +52,7 @@ const TEMPLATES: Record<string, string> = {
         <form data-action="submit:saveProfile" data-role="profile-form" hidden>
           <input type="text" data-role="profile-name" />
           <input type="email" data-role="profile-email" />
+          <input type="password" data-role="profile-current-password" />
           <input type="text" data-role="profile-avatar" />
           <p data-role="profile-message" hidden></p>
           <button type="submit" data-role="profile-submit">Save</button>
@@ -245,7 +246,8 @@ function makeFakeApi(responses: Record<string, ApiResponse> = {}): FakeApi {
     fetch: async <T,>(path: string, init?: RequestInit): Promise<T> => {
       calls.push({ path, init });
       const method = init?.method ?? 'GET';
-      const keys = [`${method} ${path}`, path];
+      const bare = path.split('?')[0];
+      const keys = [`${method} ${path}`, path, `${method} ${bare}`, bare];
       for (const key of keys) {
         if (key in responses) {
           const value = responses[key];
@@ -385,6 +387,33 @@ describe('Profile tab', () => {
     ) as HTMLElement;
     expect(message.hidden).toBe(false);
     expect(message.textContent).toBe('Profile updated.');
+  });
+
+  it('sends currentPassword only when the email changes and reports the pending confirmation', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const api = makeFakeApi({
+      '/users/me': makeUser({ name: 'Alice', email: 'alice@test.com' }),
+      'PUT /users/me': { message: 'Confirmation link sent.', emailChangePending: true },
+    });
+    mountSettingsPage(root, undefined, { apiFetch: api.fetch });
+    await flushAsync();
+
+    (root.querySelector('[data-role="profile-email"]') as HTMLInputElement).value = 'new@test.com';
+    (root.querySelector('[data-role="profile-current-password"]') as HTMLInputElement).value = 'pw-123456789';
+    root
+      .querySelector<HTMLFormElement>('[data-role="profile-form"]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushAsync();
+
+    const put = api.calls.find((c) => c.init?.method === 'PUT');
+    expect(JSON.parse((put?.init?.body as string) ?? '{}')).toMatchObject({
+      email: 'new@test.com',
+      currentPassword: 'pw-123456789',
+    });
+    expect(root.querySelector('[data-role="profile-message"]')!.textContent).toBe('Confirmation link sent.');
+    // The shown login email reverts until the link is confirmed.
+    expect((root.querySelector('[data-role="profile-email"]') as HTMLInputElement).value).toBe('alice@test.com');
   });
 
   it('shows an error message when the save fails', async () => {
@@ -592,15 +621,17 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [
-        makeGuideline({ id: 'g1', name: 'Default One', isDefault: true }),
-        makeGuideline({
-          id: 'g2',
-          name: 'Custom One',
-          isDefault: false,
-          description: 'Custom desc',
-        }),
-      ],
+      '/guidelines': {
+        data: [
+          makeGuideline({ id: 'g1', name: 'Default One', isDefault: true }),
+          makeGuideline({
+            id: 'g2',
+            name: 'Custom One',
+            isDefault: false,
+            description: 'Custom desc',
+          }),
+        ],
+      },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -630,13 +661,38 @@ describe('Guidelines tab', () => {
     expect(secondDesc.textContent).toBe('Custom desc');
   });
 
+  it('pages through every guideline (regression: only the first 25 were shown)', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const mk = (i: number) => makeGuideline({ id: `g${i}`, name: `Guideline ${i}`, isDefault: false });
+    const api = makeFakeApi({
+      '/users/me': makeUser(),
+      'GET /guidelines?page=1&pageSize=100': {
+        data: Array.from({ length: 100 }, (_, i) => mk(i)),
+        pagination: { page: 1, pageSize: 100, total: 130, totalPages: 2 },
+      } as ApiResponse,
+      'GET /guidelines?page=2&pageSize=100': {
+        data: Array.from({ length: 30 }, (_, i) => mk(100 + i)),
+        pagination: { page: 2, pageSize: 100, total: 130, totalPages: 2 },
+      } as ApiResponse,
+    });
+
+    mountSettingsPage(root, undefined, { apiFetch: api.fetch });
+    await flushAsync();
+    (root.querySelector('[data-role="tab-guidelines"]') as HTMLButtonElement).click();
+    await flushAsync(8);
+
+    expect(root.querySelectorAll('[data-role="guideline-row"]')).toHaveLength(130);
+    expect(api.calls.filter((c) => c.path.startsWith('/guidelines')).length).toBe(2);
+  });
+
   it('shows the empty state when no guidelines exist', async () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -659,7 +715,7 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });
@@ -694,7 +750,7 @@ describe('Guidelines tab', () => {
     const list: Guideline[] = [];
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      'GET /guidelines': () => [...list],
+      'GET /guidelines': () => ({ data: [...list] }),
       'POST /guidelines': () => {
         list.push(
           makeGuideline({
@@ -756,7 +812,7 @@ describe('Guidelines tab', () => {
 
     const api = makeFakeApi({
       '/users/me': makeUser(),
-      '/guidelines': [],
+      '/guidelines': { data: [] },
     });
 
     mountSettingsPage(root, undefined, { apiFetch: api.fetch });

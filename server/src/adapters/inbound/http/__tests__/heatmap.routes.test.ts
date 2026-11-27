@@ -1,13 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../../__tests__/supertestClient.js';
 
 import { createHeatmapRoutes, type HeatmapRouteDeps } from '../heatmap.routes.js';
+import {
+  buildHeatmapAggregateSql,
+  bucketIntoHeatmapCells,
+  type HeatmapInput,
+} from '../heatmap.utils.js';
 
 /**
- * Route-level tests for the heatmap endpoint — validates the coordinate
- * extraction (Bug 1 fix) and the pageUrl filtering (Bug 2 fix) using
- * a mocked Knex query builder and supertest.
+ * Route-level tests for the heatmap endpoint. Density is now computed by a
+ * Postgres `GROUP BY floor(...)` aggregate (GAP 6), so these tests mock
+ * `db.raw` (returning pre-aggregated rows exactly as Postgres would) plus the
+ * `db('pages')` resolution used for the optional `pageUrl` filter. The SQL
+ * shape itself is exercised against a real DB in
+ * `heatmap.sqlAggregate.integration.test.ts`; parity with the oracle lives in
+ * `heatmap.parity.property.test.ts`.
  */
 
 function fakeAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
@@ -16,54 +25,54 @@ function fakeAuth(req: express.Request, _res: express.Response, next: express.Ne
 }
 
 interface MockDbOpts {
-  annotations?: any[];
-  /** Track whether whereIn was called (for pageUrl filter verification) */
-  whereInSpy?: ReturnType<typeof vi.fn>;
+  /** Pre-aggregated rows db.raw should resolve to (as Postgres would return). */
+  rawRows?: any[];
+  /** Pages the pages sub-query should resolve to. */
+  pages?: Array<{ id: string }>;
+  rawSpy?: ReturnType<typeof vi.fn>;
+  pagesWhereSpy?: ReturnType<typeof vi.fn>;
 }
 
 function makeMockDb(opts: MockDbOpts = {}): any {
-  const { annotations = [], whereInSpy } = opts;
+  const { rawRows = [], pages = [], rawSpy, pagesWhereSpy } = opts;
 
   const db: any = vi.fn((table: string) => {
+    if (table === 'projects') {
+      // Project access check (org match + owner): caller `u1` owns the project.
+      const projectBuilder: any = {};
+      projectBuilder.where = vi.fn(() => projectBuilder);
+      projectBuilder.first = vi.fn(() => Promise.resolve({ id: 'proj-1', org_id: 'org-1', owner_id: 'u1' }));
+      return projectBuilder;
+    }
     if (table === 'pages') {
-      // Sub-query builder for page_id filtering
       const pagesBuilder: any = {};
-      const pagesChain = () => pagesBuilder;
-      pagesBuilder.select = vi.fn(pagesChain);
-      pagesBuilder.where = vi.fn(pagesChain);
+      pagesBuilder.select = vi.fn(() => pagesBuilder);
+      pagesBuilder.where = pagesWhereSpy
+        ? pagesWhereSpy.mockReturnValue(Promise.resolve(pages))
+        : vi.fn(() => Promise.resolve(pages));
       return pagesBuilder;
     }
-
-    // annotations table builder
-    const builder: any = {};
-    const chain = () => builder;
-    builder.where = vi.fn(chain);
-    builder.whereNotNull = vi.fn(chain);
-    builder.whereIn = whereInSpy ?? vi.fn(chain);
-    builder.whereRaw = vi.fn(chain);
-    builder.select = vi.fn(() => Promise.resolve(annotations));
-    return builder;
+    throw new Error(`unexpected table ${table}`);
   });
 
+  db.raw = rawSpy ?? vi.fn(() => Promise.resolve({ rows: rawRows }));
   return db;
 }
 
 function makeApp(deps: HeatmapRouteDeps): express.Express {
   const app = express();
   app.use(express.json());
-  // Heatmap routes are mounted at /api/v1/projects
   app.use('/api/v1/projects', createHeatmapRoutes(deps));
   return app;
 }
 
 describe('heatmap.routes — GET /api/v1/projects/:id/heatmap', () => {
-  it('returns correct cells from annotations with pageX/pageY (Bug 1 fix)', async () => {
-    const annotations = [
-      { target: { cssSelector: 'div', xpath: '/div', pageX: 120, pageY: 230, tagName: 'div', textSnippet: '' }, severity: 'critical' },
-      { target: { cssSelector: 'p', xpath: '/p', pageX: 130, pageY: 210, tagName: 'p', textSnippet: '' }, severity: 'major' },
-      { target: { cssSelector: 'a', xpath: '/a', pageX: 300, pageY: 400, tagName: 'a', textSnippet: '' }, severity: 'minor' },
+  it('maps pre-aggregated Postgres rows into the response shape', async () => {
+    const rawRows = [
+      { x: 100, y: 200, count: 2, severities: { critical: 1, major: 1 } },
+      { x: 300, y: 400, count: 1, severities: { minor: 1 } },
     ];
-    const db = makeMockDb({ annotations });
+    const db = makeMockDb({ rawRows });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
     const res = await request(app).get('/api/v1/projects/proj-1/heatmap');
@@ -73,58 +82,26 @@ describe('heatmap.routes — GET /api/v1/projects/:id/heatmap', () => {
     expect(res.body.totalAnnotations).toBe(3);
     expect(res.body.cells).toHaveLength(2);
 
-    // Cell (100, 200): 2 annotations (120,230) and (130,210) both floor to (2,4) → (100,200)
     const hotCell = res.body.cells[0];
-    expect(hotCell.x).toBe(100);
-    expect(hotCell.y).toBe(200);
-    expect(hotCell.count).toBe(2);
-    expect(hotCell.severities).toEqual({ critical: 1, major: 1 });
-
-    // Cell (300, 400): 1 annotation
-    const coldCell = res.body.cells[1];
-    expect(coldCell.x).toBe(300);
-    expect(coldCell.y).toBe(400);
-    expect(coldCell.count).toBe(1);
+    expect(hotCell).toEqual({ x: 100, y: 200, count: 2, severities: { critical: 1, major: 1 } });
+    expect(res.body.cells[1]).toEqual({ x: 300, y: 400, count: 1, severities: { minor: 1 } });
   });
 
-  it('skips annotations with missing or non-numeric coordinates', async () => {
-    const annotations = [
-      { target: { pageX: 50, pageY: 50 }, severity: 'minor' },
-      { target: { pageX: null, pageY: 50 }, severity: 'minor' },
-      { target: { pageX: 'not-a-number', pageY: 50 }, severity: 'minor' },
-      { target: { pageY: 50 }, severity: 'minor' },
-      { target: null, severity: 'minor' },
-      { target: { pageX: 50, pageY: NaN }, severity: 'minor' },
-      { target: { pageX: Infinity, pageY: 50 }, severity: 'minor' },
+  it('parses stringified JSONB severities (driver compat)', async () => {
+    const rawRows = [
+      { x: 50, y: 100, count: 1, severities: JSON.stringify({ informational: 1 }) },
     ];
-    const db = makeMockDb({ annotations });
+    const db = makeMockDb({ rawRows });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
     const res = await request(app).get('/api/v1/projects/proj-1/heatmap');
 
     expect(res.status).toBe(200);
-    // Only the first annotation has valid numeric coords
-    expect(res.body.totalAnnotations).toBe(1);
-    expect(res.body.cells).toHaveLength(1);
+    expect(res.body.cells[0].severities).toEqual({ informational: 1 });
   });
 
-  it('handles stringified target JSONB (Knex driver compat)', async () => {
-    const annotations = [
-      { target: JSON.stringify({ pageX: 75, pageY: 125, cssSelector: '.x', xpath: '/', tagName: 'div', textSnippet: '' }), severity: 'informational' },
-    ];
-    const db = makeMockDb({ annotations });
-    const app = makeApp({ authMiddleware: fakeAuth, db });
-
-    const res = await request(app).get('/api/v1/projects/proj-1/heatmap');
-
-    expect(res.status).toBe(200);
-    expect(res.body.totalAnnotations).toBe(1);
-    expect(res.body.cells[0].x).toBe(50);
-    expect(res.body.cells[0].y).toBe(100);
-  });
-
-  it('returns empty cells when no annotations exist', async () => {
-    const db = makeMockDb({ annotations: [] });
+  it('returns empty cells when the aggregate yields no rows', async () => {
+    const db = makeMockDb({ rawRows: [] });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
     const res = await request(app).get('/api/v1/projects/proj-1/heatmap');
@@ -135,87 +112,96 @@ describe('heatmap.routes — GET /api/v1/projects/:id/heatmap', () => {
     expect(res.body.cells).toEqual([]);
   });
 
-  it('uses page_id sub-query when pageUrl is provided (Bug 2 fix)', async () => {
-    const whereInSpy = vi.fn().mockReturnThis();
-    const db = makeMockDb({ annotations: [], whereInSpy });
+  it('passes the project/org and cell size bindings into db.raw', async () => {
+    const rawSpy = vi.fn((_sql: string, _bindings: unknown[]) => Promise.resolve({ rows: [] }));
+    const db = makeMockDb({ rawSpy });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
-    await request(app)
-      .get('/api/v1/projects/proj-1/heatmap?pageUrl=https://example.com/page');
+    await request(app).get('/api/v1/projects/proj-1/heatmap');
 
-    // whereIn should have been called with 'page_id' and a sub-query builder
-    expect(whereInSpy).toHaveBeenCalledWith('page_id', expect.anything());
-    // The second arg should be the pages sub-query (not a raw string or whereRaw)
-    const subQueryArg = whereInSpy.mock.calls[0][1];
-    // Verify it came from db('pages') — the mock returns an object with .select/.where
-    expect(subQueryArg).toBeDefined();
+    expect(rawSpy).toHaveBeenCalledTimes(1);
+    const [sql, bindings] = rawSpy.mock.calls[0];
+    expect(sql).toContain("(target->>'pageX')::numeric");
+    expect(sql).toContain("(target->>'pageY')::numeric");
+    expect(sql).toContain('GROUP BY cell_x, cell_y');
+    expect(sql).toContain('ORDER BY count DESC');
+    // project_id + org_id are part of the bindings
+    expect(bindings).toContain('proj-1');
+    expect(bindings).toContain('org-1');
+    // cell size (50) appears among the floor-division bindings
+    expect(bindings).toContain(50);
   });
 
-  it('does NOT call whereRaw with environment url (Bug 2 regression guard)', async () => {
-    const annotations: any[] = [];
-    const whereRawSpy = vi.fn().mockReturnThis();
-    // Custom mock to track whereRaw
-    const db: any = vi.fn((table: string) => {
-      if (table === 'pages') {
-        const pb: any = {};
-        pb.select = vi.fn(() => pb);
-        pb.where = vi.fn(() => pb);
-        return pb;
-      }
-      const builder: any = {};
-      const chain = () => builder;
-      builder.where = vi.fn(chain);
-      builder.whereNotNull = vi.fn(chain);
-      builder.whereIn = vi.fn(chain);
-      builder.whereRaw = whereRawSpy;
-      builder.select = vi.fn(() => Promise.resolve(annotations));
-      return builder;
+  it('resolves pageUrl to page ids and includes them in the aggregate (Bug 2 behavior preserved)', async () => {
+    const rawSpy = vi.fn((_sql: string, _bindings: unknown[]) => Promise.resolve({ rows: [] }));
+    const pagesWhereSpy = vi.fn();
+    const db = makeMockDb({
+      rawSpy,
+      pages: [{ id: 'page-a' }, { id: 'page-b' }],
+      pagesWhereSpy,
     });
-
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
-    await request(app)
-      .get('/api/v1/projects/proj-1/heatmap?pageUrl=https://example.com');
+    await request(app).get('/api/v1/projects/proj-1/heatmap?pageUrl=https://example.com/page');
 
-    // The old broken code used whereRaw("environment->>'url' = ?", ...)
-    // Verify that whereRaw is NEVER called
-    expect(whereRawSpy).not.toHaveBeenCalled();
+    // pages sub-query scoped to the project + url
+    expect(pagesWhereSpy).toHaveBeenCalledWith({
+      project_id: 'proj-1',
+      url: 'https://example.com/page',
+    });
+    // resolved page ids flow into the aggregate bindings
+    const [sql, bindings] = rawSpy.mock.calls[0];
+    expect(sql).toContain('page_id IN');
+    expect(bindings).toContain('page-a');
+    expect(bindings).toContain('page-b');
+  });
+
+  it('matches nothing when pageUrl resolves to zero pages', async () => {
+    const rawSpy = vi.fn((_sql: string, _bindings: unknown[]) => Promise.resolve({ rows: [] }));
+    const db = makeMockDb({ rawSpy, pages: [] });
+    const app = makeApp({ authMiddleware: fakeAuth, db });
+
+    await request(app).get('/api/v1/projects/proj-1/heatmap?pageUrl=https://example.com/none');
+
+    const [sql] = rawSpy.mock.calls[0];
+    expect(sql).toContain('1 = 0');
   });
 
   it('rejects invalid pageUrl with 400', async () => {
-    const db = makeMockDb({ annotations: [] });
+    const db = makeMockDb({ rawRows: [] });
     const app = makeApp({ authMiddleware: fakeAuth, db });
 
-    const res = await request(app)
-      .get('/api/v1/projects/proj-1/heatmap?pageUrl=not-a-url');
+    const res = await request(app).get('/api/v1/projects/proj-1/heatmap?pageUrl=not-a-url');
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION');
   });
 
-  it('does not select status column (perf — AC-7)', async () => {
-    const selectSpy = vi.fn().mockResolvedValue([]);
-    const db: any = vi.fn((table: string) => {
-      if (table === 'pages') {
-        const pb: any = {};
-        pb.select = vi.fn(() => pb);
-        pb.where = vi.fn(() => pb);
-        return pb;
-      }
-      const builder: any = {};
-      const chain = () => builder;
-      builder.where = vi.fn(chain);
-      builder.whereNotNull = vi.fn(chain);
-      builder.whereIn = vi.fn(chain);
-      builder.whereRaw = vi.fn(chain);
-      builder.select = selectSpy;
-      return builder;
+  it('end-to-end shape check: builder SQL fed oracle-equivalent rows round-trips', async () => {
+    // Build the SQL the route would build, then simulate Postgres by running
+    // the oracle over the "stored" inputs and feeding those cells back as the
+    // raw rows — asserting the route returns exactly the oracle output.
+    const inputs: HeatmapInput[] = [
+      { pageX: 10, pageY: 10, severity: 'minor' },
+      { pageX: 60, pageY: 10, severity: 'major' },
+      { pageX: 70, pageY: 20, severity: 'critical' },
+    ];
+    const oracleCells = bucketIntoHeatmapCells(inputs, 50);
+
+    const { sql, bindings } = buildHeatmapAggregateSql({
+      projectId: 'proj-1',
+      orgId: 'org-1',
+      cellSize: 50,
+      pageIds: null,
     });
+    expect(sql).toContain('jsonb_object_agg(severity, sev_count)');
+    expect(bindings).toContain('proj-1');
 
+    const db = makeMockDb({ rawRows: oracleCells });
     const app = makeApp({ authMiddleware: fakeAuth, db });
-    await request(app).get('/api/v1/projects/proj-1/heatmap');
+    const res = await request(app).get('/api/v1/projects/proj-1/heatmap');
 
-    // select should be called with only 'target' and 'severity', not 'status'
-    expect(selectSpy).toHaveBeenCalledWith('target', 'severity');
+    expect(res.body.cells).toEqual(oracleCells);
+    expect(res.body.totalAnnotations).toBe(inputs.length);
   });
 });

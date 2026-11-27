@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
-import request from 'supertest';
+import { request } from '../../../__tests__/supertestClient.js';
 
 import { createTriageRoutes, type TriageRouteDeps } from './triage.routes.js';
 
@@ -16,8 +16,8 @@ function noopAuth(_req: express.Request, _res: express.Response, next: express.N
   next();
 }
 
-const ORG_ID = 'a0000000-0000-0000-0000-000000000001';
-const OTHER_ORG_ID = 'a0000000-0000-0000-0000-000000000002';
+const ORG_ID = 'a0000000-0000-4000-8000-000000000001';
+const OTHER_ORG_ID = 'a0000000-0000-4000-8000-000000000002';
 
 interface MockDbOpts {
   candidates?: Array<{ id: string; body: string; pin_number: number }>;
@@ -34,7 +34,7 @@ function makeDb(opts: MockDbOpts = {}): any {
       const builder: any = {};
       const chain = () => builder;
       builder.where = vi.fn(chain);
-      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID } : undefined));
+      builder.first = vi.fn(() => Promise.resolve(projectOwned ? { id: 'proj-1', org_id: ORG_ID, owner_id: 'u1' } : undefined));
       return builder;
     }
     const builder: any = {};
@@ -92,8 +92,8 @@ describe('triage.routes — POST /api/v1/projects/:id/annotations/triage', () =>
   it('suggests severity and tags, and detects a duplicate', async () => {
     const db = makeDb({
       candidates: [
-        { id: 'a0000000-0000-0000-0000-000000000001', body: 'the mobile menu is broken', pin_number: 7 },
-        { id: 'a0000000-0000-0000-0000-000000000002', body: 'please add a dark theme', pin_number: 8 },
+        { id: 'a0000000-0000-4000-8000-000000000001', body: 'the mobile menu is broken', pin_number: 7 },
+        { id: 'a0000000-0000-4000-8000-000000000002', body: 'please add a dark theme', pin_number: 8 },
       ],
     });
     const app = makeApp({ authMiddleware: noopAuth, db });
@@ -107,7 +107,7 @@ describe('triage.routes — POST /api/v1/projects/:id/annotations/triage', () =>
     expect(res.body.suggestedTags).toContain('mobile');
     // The identical candidate is a duplicate; the unrelated one is not.
     expect(res.body.duplicates).toHaveLength(1);
-    expect(res.body.duplicates[0].id).toBe('a0000000-0000-0000-0000-000000000001');
+    expect(res.body.duplicates[0].id).toBe('a0000000-0000-4000-8000-000000000001');
     expect(res.body.duplicates[0].pinNumber).toBe(7);
     expect(res.body.duplicates[0].similarity).toBeGreaterThan(0.6);
     expect(res.body.suggestedAssignee).toBeNull(); // no cssSelector provided
@@ -156,5 +156,21 @@ describe('triage.routes — POST /api/v1/projects/:id/annotations/triage', () =>
 
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  // GAP 7 — validation failures use the canonical envelope with the
+  // standardized details.issues (flatten() shape), never flat issues.
+  it('emits the canonical error envelope with flatten()-shaped details.issues', async () => {
+    const app = makeApp({ authMiddleware: noopAuth, db: makeDb() });
+    const res = await request(app)
+      .post(`/api/v1/projects/${PROJECT}/annotations/triage`)
+      .send({ body: '' });
+
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('object');
+    expect(res.body.error.code).toBe('VALIDATION');
+    expect(res.body.error.details.issues).toBeDefined();
+    expect(res.body.error.details.issues.fieldErrors).toBeDefined();
+    expect(res.body.issues).toBeUndefined();
   });
 });

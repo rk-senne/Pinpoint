@@ -1699,11 +1699,11 @@ On every URL change the Extension consults the cache before hitting `GET /by-url
       "description": "Open or close the Pinpoint sidebar"
     },
     "next-pin": {
-      "suggested_key": { "default": "Alt+]" },
+      "suggested_key": { "default": "Alt+Shift+Period" },
       "description": "Jump to the next annotation pin"
     },
     "prev-pin": {
-      "suggested_key": { "default": "Alt+[" },
+      "suggested_key": { "default": "Alt+Shift+Comma" },
       "description": "Jump to the previous annotation pin"
     }
   }

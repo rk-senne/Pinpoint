@@ -19,6 +19,8 @@ import {
 
 export interface CreateTeamInput {
   ownerUserId: string;
+  /** Organisation the team belongs to (PP-04). */
+  orgId?: string;
   name: string;
 }
 
@@ -47,6 +49,7 @@ export class CreateTeam {
     const team = await teamRepo.insert({
       name: trimmed,
       ownerId: input.ownerUserId,
+      orgId: input.orgId ?? null,
     });
 
     await teamMemberRepo.add({

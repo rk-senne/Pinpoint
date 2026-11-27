@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PinPositioner } from './PinPositioner';
 import { PIN_POSITIONER_OPT_OUT_STORAGE_KEY } from './PinPositioner';
+import { computePinPosition, PIN_SIZE } from './PinPositioner';
 import type {
   PinPositionerOptOutStorage,
   PinPositionerStorageChangeListener,
@@ -97,7 +98,7 @@ describe('PinPositioner', () => {
       positioner.register('a1', pin, target);
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(100px, 200px, 0)');
+      expect(pin.style.transform).toBe('translate3d(78px, 178px, 0)');
       expect(pin.dataset.fallback).toBeUndefined();
     });
 
@@ -113,7 +114,7 @@ describe('PinPositioner', () => {
       positioner.register('a1', pin, target);
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(60px, 95px, 0)');
+      expect(pin.style.transform).toBe('translate3d(54px, 79px, 0)');
     });
 
     it('reflects layout changes on the registered target on the next tick', () => {
@@ -125,7 +126,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(10px, 10px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
 
       // Simulate a layout change — element moves
       target.getBoundingClientRect = () =>
@@ -145,7 +146,7 @@ describe('PinPositioner', () => {
       document.dispatchEvent(new Event('scroll'));
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(200px, 300px, 0)');
+      expect(pin.style.transform).toBe('translate3d(178px, 278px, 0)');
     });
 
     it('coalesces multiple events into a single rAF tick', () => {
@@ -163,7 +164,7 @@ describe('PinPositioner', () => {
       // register + 2 resizes + 1 scroll → 1 rAF call
       expect(raf).toHaveBeenCalledTimes(1);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(0px, 0px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
     });
   });
 
@@ -207,7 +208,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBeUndefined();
-      expect(pin.style.transform).toBe('translate3d(5px, 6px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
     });
   });
 
@@ -249,7 +250,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBeUndefined();
-      expect(pin.style.transform).toBe('translate3d(7px, 8px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
     });
 
     it('switches between fallback transform and resolved transform when the target connects/disconnects', () => {
@@ -259,7 +260,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target, { pageX: 1, pageY: 2 });
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(50px, 60px, 0)');
+      expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
       expect(pin.dataset.fallback).toBeUndefined();
 
       // Detach the target → next tick falls back to stored coords
@@ -320,7 +321,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(1px, 2px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
 
       positioner.unregister('a1');
 
@@ -339,7 +340,7 @@ describe('PinPositioner', () => {
         }) as DOMRect;
       positioner.flush();
 
-      expect(pin.style.transform).toBe('translate3d(1px, 2px, 0)');
+      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
     });
 
     it('dispose() disconnects observers, removes listeners, and stops scheduling', () => {
@@ -743,7 +744,7 @@ describe('PinPositioner per-host opt-out (Req 51.3 / task 43.2)', () => {
     positioner.register('a1', pin, target);
 
     // Initial placement happened synchronously via `flush()`, no rAF needed.
-    expect(pin.style.transform).toBe('translate3d(50px, 60px, 0)');
+    expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
     expect(raf).not.toHaveBeenCalled();
 
     // Layout event must NOT schedule a tick on an opted-out host.
@@ -765,7 +766,7 @@ describe('PinPositioner per-host opt-out (Req 51.3 / task 43.2)', () => {
         toJSON: () => ({}),
       }) as DOMRect;
     document.dispatchEvent(new Event('scroll'));
-    expect(pin.style.transform).toBe('translate3d(50px, 60px, 0)');
+    expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
   });
 
   it('starts the layout observers when the host is NOT opted out', async () => {
@@ -937,3 +938,38 @@ describe('PinPositioner per-host opt-out (Req 51.3 / task 43.2)', () => {
   });
 });
 
+
+describe('computePinPosition (pin sits outside the top-left corner)', () => {
+  const vp = { width: 1280, height: 800 };
+  const r = (left: number, top: number, w = 100, h = 40) => ({ left, top, right: left + w, bottom: top + h });
+
+  it('offsets the pin up and to the left of the element corner', () => {
+    expect(computePinPosition(r(300, 300), vp)).toEqual({ x: 278, y: 278 });
+  });
+
+  it('clamps into the viewport for elements at x=0 / y=0 (full-width header)', () => {
+    expect(computePinPosition(r(0, 0, 1280, 60), vp)).toEqual({ x: 4, y: 4 });
+  });
+
+  it('clamps to the bottom-right edge for elements hanging off the viewport', () => {
+    const p = computePinPosition(r(1270, 790, 400, 400), vp);
+    expect(p.x).toBe(1280 - PIN_SIZE - 4);
+    expect(p.y).toBe(800 - PIN_SIZE - 4);
+  });
+
+  it('clamps vertically only while the element is partly on screen (scrolled under the top edge)', () => {
+    // Element scrolled partly above the viewport: pin stays pinned at the top.
+    expect(computePinPosition(r(300, -20, 100, 60), vp).y).toBe(4);
+  });
+
+  it('does not clamp an element that is entirely off-screen (it scrolls into view with it)', () => {
+    expect(computePinPosition(r(300, -500, 100, 40), vp).y).toBe(-522);
+    expect(computePinPosition(r(300, 2000, 100, 40), vp).y).toBe(1978);
+    expect(computePinPosition(r(-900, 100, 100, 40), vp).x).toBe(-922);
+  });
+
+  it('never returns NaN and tolerates a tiny viewport', () => {
+    const p = computePinPosition(r(0, 0), { width: 10, height: 10 });
+    expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+  });
+});

@@ -41,10 +41,31 @@ export interface LoginDeps {
   passwordHasher: PasswordHasher;
   tokenIssuer: TokenIssuer;
   membershipRepo: MembershipRepo;
+  /**
+   * Provision a personal org + owner membership for a verified user who has
+   * none, returning the new orgId. Email/password signup never created one,
+   * so without this no self-registered account could log in. Idempotent and
+   * transactional in the composition root. Optional so existing test
+   * wiring keeps its "no membership → Unauthorized" behaviour.
+   */
+  provisionPersonalOrg?: (userId: string, userName: string) => Promise<string>;
 }
 
 export class Login {
+  /**
+   * A real hash (same cost factor as production hashes) that no password
+   * matches. Verified against when the account is unknown or has no password
+   * so the unknown-email path costs one bcrypt compare, like the real path
+   * (F-17: no timing-based account enumeration). Created lazily, once.
+   */
+  private dummyHash: Promise<string> | undefined;
+
   constructor(private readonly deps: LoginDeps) {}
+
+  private getDummyHash(): Promise<string> {
+    this.dummyHash ??= this.deps.passwordHasher.hash(randomBytes(16).toString('hex'));
+    return this.dummyHash;
+  }
 
   async execute(
     input: LoginInput,
@@ -63,7 +84,10 @@ export class Login {
     const record = await userRepo.findByEmailWithSecret(
       input.email.toLowerCase(),
     );
-    if (!record) {
+    if (!record || !record.passwordHash) {
+      // Unknown email, or an OAuth-only account with no local password: burn
+      // an equivalent bcrypt compare, then fail identically.
+      await passwordHasher.verify(input.password, await this.getDummyHash());
       return err(new Unauthorized('Invalid email or password.'));
     }
 
@@ -79,11 +103,16 @@ export class Login {
       return err(
         new Unauthorized(
           'Please verify your email before logging in.',
+          'EMAIL_NOT_VERIFIED',
         ),
       );
     }
 
-    const membership = await membershipRepo.findDefaultForUser(record.id);
+    let membership = await membershipRepo.findDefaultForUser(record.id);
+    if (!membership && this.deps.provisionPersonalOrg) {
+      await this.deps.provisionPersonalOrg(record.id, record.name);
+      membership = await membershipRepo.findDefaultForUser(record.id);
+    }
     if (!membership) {
       return err(new Unauthorized('No organization membership found.'));
     }

@@ -1,0 +1,25 @@
+# Rendered by blackbox-entrypoint.sh: __DOMAIN__ is replaced with $DOMAIN so
+# the probes present the right SNI / Host to Caddy over the private network.
+modules:
+  tls_edge:
+    prober: tcp
+    timeout: 10s
+    tcp:
+      tls: true
+      tls_config:
+        server_name: __DOMAIN__
+        insecure_skip_verify: true
+
+  health_edge:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      fail_if_body_not_matches_regexp:
+        - '"database":"ok"'
+      headers:
+        Host: __DOMAIN__
+      tls_config:
+        server_name: __DOMAIN__
+        insecure_skip_verify: true

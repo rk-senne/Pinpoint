@@ -1,0 +1,82 @@
+# Prometheus config for the `monitoring` profile of deploy/docker-compose.prod.yml.
+# Everything is addressed by Compose service name on the private network; no
+# secret is interpolated here (the API bearer token is read from a file the
+# service entrypoint writes from METRICS_TOKEN).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: pinpoint-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/metrics_token
+    static_configs:
+      - targets: ["api:3001"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: blackbox
+    static_configs:
+      - targets: ["blackbox:9115"]
+
+  # Certificate expiry of what Caddy actually serves for $DOMAIN (SNI is set
+  # in the rendered blackbox module). Chain validity is deliberately not
+  # checked here - the external uptime monitor does that from the outside.
+  - job_name: blackbox-tls
+    metrics_path: /probe
+    params:
+      module: [tls_edge]
+    static_configs:
+      - targets: ["caddy:443"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # End-to-end: Caddy (TLS + routing) -> API -> PostgreSQL.
+  - job_name: blackbox-health
+    # 30s: stays far below the API's per-IP rate limit (this probe counts as one client).
+    scrape_interval: 30s
+    metrics_path: /probe
+    params:
+      module: [health_edge]
+    static_configs:
+      - targets: ["https://caddy/api/v1/health"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

@@ -261,16 +261,35 @@ Test a restore on a scratch host before you need it.
 ### Monitoring profile
 
 ```bash
-dc --profile monitoring up -d
+dc --profile monitoring up -d      # or COMPOSE_PROFILES=monitoring in deploy/.env.production
+PINPOINT_MONITORING=1 deploy/install.sh   # same, plus generates the Grafana password
 ```
 
-starts Prometheus (config: `deploy/prometheus.prod.yml`, scrapes `api:3001`
-with `METRICS_TOKEN` as the bearer token). It publishes **no host port**:
-reach it with `ssh -L 9090:localhost:9090 <host>` plus
-`docker compose … port`/`exec`, or add your own authenticated exposure through
-Caddy. The local dev stack's equivalent is `docker compose --profile monitoring up`
-with `infrastructure/monitoring/prometheus.yml` (Prometheus + Grafana on
-loopback).
+starts a free, self-hosted stack (all images pinned to exact versions; config
+in `deploy/monitoring/`): Prometheus (scrapes the API with `METRICS_TOKEN` as
+the bearer token, plus node, Postgres and Redis exporters and two blackbox
+probes of Caddy — TLS expiry and `/api/v1/health` end to end), Alertmanager
+(e-mail through your `SMTP_*` relay, optional ntfy/Discord/Slack/Telegram/
+webhook, plus a dead-man's-switch heartbeat) and Grafana with a provisioned
+dashboard. It publishes **no public port**: Grafana is bound to
+`127.0.0.1:3000` (`ssh -L 3000:127.0.0.1:3000 <host>`), Prometheus and
+Alertmanager are only on the private Compose network (use `dc exec`).
+
+`deploy/backup.sh` also writes `pinpoint_backup_last_success_timestamp_seconds`
+(node_exporter textfile collector, dir `PINPOINT_TEXTFILE_DIR`, default
+`deploy/monitoring/textfile`) and, when `HEALTHCHECKS_URL` is set, pings
+Healthchecks.io at start/success/failure.
+
+A monitoring stack on the box cannot report the box being down: set up the
+free external UptimeRobot check and the Healthchecks.io heartbeats too. The
+alert list with runbooks, the exact setup steps, free-tier limits and the
+error-tracking decision are in [`docs/MONITORING.md`](./MONITORING.md); CI
+(`.github/workflows/monitoring.yml`) unit-tests every alert rule and boots
+this profile to prove an outage reaches Alertmanager and e-mail.
+
+The local dev stack's equivalent is `docker compose --profile monitoring up`
+(`infrastructure/monitoring/prometheus.yml`; Prometheus + Grafana on loopback,
+same rules and dashboard, no Alertmanager).
 
 ## 6. Pre-deploy checklist
 

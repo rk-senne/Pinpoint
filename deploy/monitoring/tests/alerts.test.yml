@@ -1,0 +1,566 @@
+# promtool unit tests: `promtool test rules deploy/monitoring/tests/alerts.test.yml`
+# Every alert in ../alerts.yml has a firing case here; most also have a
+# "must not fire" case. The CI check (monitoring.yml) also asserts this file
+# mentions every alertname, so adding a rule without a test fails the build.
+rule_files:
+  - ../alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: Watchdog always fires
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations:
+              summary: Always-firing heartbeat for the external dead-man's switch.
+              runbook: docs/MONITORING.md#watchdog
+
+  - name: InstanceDown fires after 2m, not before; healthy target is silent
+    interval: 1m
+    input_series:
+      - series: 'up{job="node", instance="node-exporter:9100"}'
+        values: '1 1 0 0 0 0'
+      - series: 'up{job="pinpoint-api", instance="api:3001"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: InstanceDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: InstanceDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: node, instance: "node-exporter:9100"}
+            exp_annotations:
+              summary: "node (node-exporter:9100) is not scrapable"
+              description: "Prometheus could not scrape node at node-exporter:9100 for 2 minutes."
+              runbook: docs/MONITORING.md#instancedown
+
+  - name: EdgeProbeFailed
+    interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-health", instance="https://caddy/api/v1/health"}'
+        values: '1 1 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EdgeProbeFailed
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: EdgeProbeFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, job: blackbox-health, instance: "https://caddy/api/v1/health"}
+            exp_annotations:
+              summary: "Health probe through Caddy failed (https://caddy/api/v1/health)"
+              description: "GET /api/v1/health through the TLS edge has failed for 3 minutes (Caddy, API or database)."
+              runbook: docs/MONITORING.md#edgeprobefailed
+
+  - name: DatabaseUnavailable from the API gauge, from pg_up, and not when both are 1
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_db_up{job="pinpoint-api"}'
+        values: '1 1 0 0 0 0'
+      - series: 'pg_up{job="postgres"}'
+        values: '1 1 1 1 1 1'
+      - series: 'pinpoint_db_up{job="other"}'
+        values: '1x6'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: DatabaseUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: DatabaseUnavailable
+        exp_alerts:
+          - exp_labels: {severity: critical, job: pinpoint-api}
+            exp_annotations:
+              summary: PostgreSQL is unreachable
+              description: "The API (pinpoint_db_up) or postgres_exporter (pg_up) cannot query PostgreSQL."
+              runbook: docs/MONITORING.md#databaseunavailable
+
+  - name: DatabaseUnavailable via pg_up alone
+    interval: 1m
+    input_series:
+      - series: 'pg_up{job="postgres"}'
+        values: '1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: DatabaseUnavailable
+        exp_alerts:
+          - exp_labels: {severity: critical, job: postgres}
+            exp_annotations:
+              summary: PostgreSQL is unreachable
+              description: "The API (pinpoint_db_up) or postgres_exporter (pg_up) cannot query PostgreSQL."
+              runbook: docs/MONITORING.md#databaseunavailable
+
+  - name: CertificateExpiringSoon (13d left fires after 1h; 30d left is silent)
+    interval: 1m
+    input_series:
+      # expiry timestamp = 13 days after t=0 (eval time starts at 0)
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-tls", instance="caddy:443"}'
+        values: '1123200x200'
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-tls", instance="ok:443"}'
+        values: '2592000x200'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, job: blackbox-tls, instance: "caddy:443"}
+            exp_annotations:
+              summary: "TLS certificate for caddy:443 expires in 12d 22h 30m 0s"
+              description: "Caddy renews automatically ~30 days before expiry; under 14 days left means renewal is failing."
+              runbook: docs/MONITORING.md#certificateexpiringsoon
+
+  - name: ApiHighErrorRate fires at 5% 5xx for 5m; silent at 1% and on negligible traffic
+    interval: 1m
+    input_series:
+      # 60 req/min total (1/s): 3 of them 5xx -> 5%
+      - series: 'http_requests_total{job="pinpoint-api", route="/api/v1/projects", status="200"}'
+        values: '0+57x20'
+      - series: 'http_requests_total{job="pinpoint-api", route="/api/v1/projects", status="500"}'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ApiHighErrorRate
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ApiHighErrorRate
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "More than 2% of API requests fail with 5xx (5%)"
+              description: "5xx ratio over the last 5 minutes has been above 2% for 5 minutes (ignored below ~0.6 req/min)."
+              runbook: docs/MONITORING.md#apihigherrorrate
+
+  - name: ApiHighErrorRate silent at 1% errors
+    interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="pinpoint-api", route="/x", status="200"}'
+        values: '0+99x30'
+      - series: 'http_requests_total{job="pinpoint-api", route="/x", status="500"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ApiHighErrorRate
+        exp_alerts: []
+
+  - name: ApiHighErrorRate silent when 100% errors but under 0.6 req per minute
+    interval: 1m
+    input_series:
+      # one 500 every 5 minutes = 0.0033 req/s < 0.01
+      - series: 'http_requests_total{job="pinpoint-api", route="/x", status="500"}'
+        values: '0x4 1x5 2x5 3x5 4x5 5x5'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ApiHighErrorRate
+        exp_alerts: []
+
+  - name: ApiHighLatency fires when p95 is ~2.5s for 10m, silent when fast
+    interval: 1m
+    input_series:
+      # all requests land in the (1, 2.5] bucket -> p95 ~ 2.4s
+      - series: 'http_request_duration_seconds_bucket{job="pinpoint-api", le="1"}'
+        values: '0x30'
+      - series: 'http_request_duration_seconds_bucket{job="pinpoint-api", le="2.5"}'
+        values: '0+60x30'
+      - series: 'http_request_duration_seconds_bucket{job="pinpoint-api", le="+Inf"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ApiHighLatency
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ApiHighLatency
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "API p95 latency is 2.425s"
+              description: "95th percentile request latency has been above 1.5s for 10 minutes."
+              runbook: docs/MONITORING.md#apihighlatency
+
+  - name: ApiHighLatency silent when fast
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{job="pinpoint-api", le="0.1"}'
+        values: '0+60x30'
+      - series: 'http_request_duration_seconds_bucket{job="pinpoint-api", le="+Inf"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ApiHighLatency
+        exp_alerts: []
+
+  - name: ApiNoTraffic fires on silence (health polling ignored), silent with real traffic
+    interval: 1m
+    input_series:
+      - series: 'up{job="pinpoint-api"}'
+        values: '1x40'
+      - series: 'http_requests_total{job="pinpoint-api", route="/health/live", status="200", method="GET"}'
+        values: '0+4x40'
+      - series: 'http_requests_total{job="pinpoint-api", route="/api/v1/health", status="200", method="GET"}'
+        values: '0+1x40'
+      - series: 'http_requests_total{job="pinpoint-api", route="/api/v1/projects", status="200", method="GET"}'
+        values: '0x20 0+1x20'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ApiNoTraffic
+        exp_alerts:
+          - exp_labels: {severity: info}
+            exp_annotations:
+              summary: No API requests for 15 minutes
+              description: "The API is up but has served no real traffic for 15 minutes. Expected on a quiet install; suspicious if users are active (DNS, Caddy, CDN?)."
+              runbook: docs/MONITORING.md#apinotraffic
+      - eval_time: 35m
+        alertname: ApiNoTraffic
+        exp_alerts: []
+
+  - name: ApiNoTraffic silent while the API itself is down (InstanceDown covers that)
+    interval: 1m
+    input_series:
+      - series: 'up{job="pinpoint-api"}'
+        values: '0x30'
+      - series: 'http_requests_total{job="pinpoint-api", route="/api/v1/projects", status="200"}'
+        values: '5x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ApiNoTraffic
+        exp_alerts: []
+
+  - name: ApiRestarting fires on 3 distinct start times in 15m
+    interval: 1m
+    input_series:
+      - series: 'process_start_time_seconds{job="pinpoint-api"}'
+        values: '100x3 200x3 300x3 400x6'
+      - series: 'process_start_time_seconds{job="stable"}'
+        values: '100x15'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: ApiRestarting
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ApiRestarting
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: The API process restarted more than twice in 15 minutes
+              description: "Crash loop or OOM kill. Check `docker compose logs api` and `docker inspect` for OOMKilled."
+              runbook: docs/MONITORING.md#apirestarting
+
+  - name: NotificationBacklog
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_notifications_pending{job="pinpoint-api"}'
+        values: '5x5 150x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: NotificationBacklog
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: NotificationBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "150 notifications are waiting to be sent"
+              description: "More than 100 pending e-mail notifications for 15 minutes - SMTP is slow/failing or the worker is behind."
+              runbook: docs/MONITORING.md#notificationbacklog
+
+  - name: NotificationWorkerStuck
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_notifications_oldest_pending_age_seconds{job="pinpoint-api"}'
+        values: '30x5 1800x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: NotificationWorkerStuck
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: NotificationWorkerStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "Oldest due notification is 30m 0s old"
+              description: "A due notification has been pending for over 15 minutes (the worker retries with backoff up to 32 min; a sustained value means the worker is dead or SMTP is down)."
+              runbook: docs/MONITORING.md#notificationworkerstuck
+
+  - name: NotificationFailures fires on a new failure, silent when the counter is flat
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_notification_failures_total{job="pinpoint-api"}'
+        values: '0x10 1x20'
+      - series: 'pinpoint_notification_failures_total{job="flat"}'
+        values: '4x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: NotificationFailures
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: NotificationFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "1 notification(s) permanently failed in the last hour"
+              description: "Notifications exhausted their retries (status=failed). Usually an SMTP credential or relay problem."
+              runbook: docs/MONITORING.md#notificationfailures
+
+  - name: WebhookBacklog
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_webhook_deliveries_pending{job="pinpoint-api"}'
+        values: '3x5 101x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: WebhookBacklog
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: WebhookBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "101 webhook deliveries are waiting to be sent"
+              description: "More than 100 pending outbound webhook deliveries for 15 minutes."
+              runbook: docs/MONITORING.md#webhookbacklog
+
+  - name: WebhookWorkerStuck
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_webhook_deliveries_oldest_pending_age_seconds{job="pinpoint-api"}'
+        values: '0x5 3600x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: WebhookWorkerStuck
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: WebhookWorkerStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "Oldest due webhook delivery is 1h 0m 0s old"
+              description: "A due webhook delivery has been pending for over 15 minutes - the delivery worker is dead or wedged."
+              runbook: docs/MONITORING.md#webhookworkerstuck
+
+  - name: WebhookDeliveryFailures fires on >5 new failures in 15m
+    interval: 1m
+    input_series:
+      - series: 'pinpoint_webhook_delivery_failures_total{job="pinpoint-api"}'
+        values: '0x5 0+1x10 10x20'
+      - series: 'pinpoint_webhook_delivery_failures_total{job="slow"}'
+        values: '0+0.1x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: WebhookDeliveryFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: "8 webhook deliveries failed permanently in 15 minutes"
+              description: "Customer endpoints are rejecting or timing out on deliveries (or egress is blocked)."
+              runbook: docs/MONITORING.md#webhookdeliveryfailures
+      - eval_time: 3m
+        alertname: WebhookDeliveryFailures
+        exp_alerts: []
+
+  - name: QueueMetricsStale
+    interval: 1m
+    input_series:
+      # last success at t=60s, then never again
+      - series: 'pinpoint_queue_metrics_last_success_timestamp_seconds{job="pinpoint-api"}'
+        values: '60x40'
+      - series: 'pinpoint_queue_metrics_last_success_timestamp_seconds{job="fresh"}'
+        values: '60+60x40'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: QueueMetricsStale
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: QueueMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning, job: pinpoint-api}
+            exp_annotations:
+              summary: Queue metrics have not refreshed for 5 minutes
+              description: "The API's periodic SQL poll is failing; queue alerts are blind. Usually accompanies DatabaseUnavailable."
+              runbook: docs/MONITORING.md#queuemetricsstale
+
+  - name: PostgresConnectionsNearMax fires above 80% for 5m, silent at 50%
+    interval: 1m
+    input_series:
+      - series: 'pg_stat_database_numbackends{job="postgres", datname="pinpoint"}'
+        values: '30x20'
+      - series: 'pg_stat_database_numbackends{job="postgres", datname="postgres"}'
+        values: '55x20'
+      - series: 'pg_settings_max_connections{job="postgres"}'
+        values: '100x20'
+      - series: 'pg_stat_database_numbackends{job="low", datname="x"}'
+        values: '5x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PostgresConnectionsNearMax
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: PostgresConnectionsNearMax
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "PostgreSQL is using 90% of max_connections"
+              description: "Connection pool exhaustion is imminent; check DB_POOL_MAX across API replicas and for leaked connections."
+              runbook: docs/MONITORING.md#postgresconnectionsnearmax
+
+  - name: DiskSpaceLow fires at 90% used on / after 10m; tmpfs and a 50% disk are ignored
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node", mountpoint="/", device="/dev/sda1", fstype="ext4"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node", mountpoint="/", device="/dev/sda1", fstype="ext4"}'
+        values: '10x30'
+      - series: 'node_filesystem_size_bytes{job="node", mountpoint="/run", device="tmpfs", fstype="tmpfs"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node", mountpoint="/run", device="tmpfs", fstype="tmpfs"}'
+        values: '1x30'
+      - series: 'node_filesystem_size_bytes{job="node", mountpoint="/data", device="/dev/sdb", fstype="ext4"}'
+        values: '100x30'
+      - series: 'node_filesystem_avail_bytes{job="node", mountpoint="/data", device="/dev/sdb", fstype="ext4"}'
+        values: '50x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: DiskSpaceLow
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: DiskSpaceLow
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node, mountpoint: "/", device: /dev/sda1, fstype: ext4}
+            exp_annotations:
+              summary: "/ is 90% full"
+              description: "Filesystem / (/dev/sda1) is over 85% used."
+              runbook: docs/MONITORING.md#diskspacelow
+
+  - name: MemoryHigh fires at 95% used for 10m, silent at 50%
+    interval: 1m
+    input_series:
+      - series: 'node_memory_MemTotal_bytes{job="node", instance="a"}'
+        values: '100x30'
+      - series: 'node_memory_MemAvailable_bytes{job="node", instance="a"}'
+        values: '5x30'
+      - series: 'node_memory_MemTotal_bytes{job="node", instance="b"}'
+        values: '100x30'
+      - series: 'node_memory_MemAvailable_bytes{job="node", instance="b"}'
+        values: '50x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: MemoryHigh
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: MemoryHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node, instance: a}
+            exp_annotations:
+              summary: "Host memory is 95% used"
+              description: "Less than 10% of memory is available for 10 minutes; the OOM killer is next."
+              runbook: docs/MONITORING.md#memoryhigh
+
+  - name: CpuHigh fires when idle is ~2% for 15m
+    interval: 1m
+    input_series:
+      # idle grows 3 s per 60 s on one core -> 5% idle
+      - series: 'node_cpu_seconds_total{job="node", cpu="0", mode="idle"}'
+        values: '0+3x40'
+      - series: 'node_cpu_seconds_total{job="node", cpu="0", mode="user"}'
+        values: '0+57x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CpuHigh
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: CpuHigh
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Host CPU is 95% busy"
+              description: "CPU above 90% for 15 minutes."
+              runbook: docs/MONITORING.md#cpuhigh
+
+  - name: BackupStale fires after 26h, silent when fresh
+    interval: 10m
+    input_series:
+      # last success at t=0 (value 0); another host-less series updated every 10 min
+      - series: 'pinpoint_backup_last_success_timestamp_seconds{job="node", instance="old"}'
+        values: '0x200'
+      - series: 'pinpoint_backup_last_success_timestamp_seconds{job="node", instance="fresh"}'
+        values: '0+600x200'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: BackupStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: BackupStale
+        exp_alerts:
+          - exp_labels: {severity: critical, job: node, instance: old}
+            exp_annotations:
+              summary: "Last successful backup was 1d 3h 0m 0s ago"
+              description: "deploy/backup.sh has not succeeded for over 26 hours (daily cron + 2h slack)."
+              runbook: docs/MONITORING.md#backupstale
+
+  - name: BackupNeverRan fires when the metric is absent for 26h
+    interval: 10m
+    input_series:
+      - series: 'up{job="node"}'
+        values: '1x200'
+      # Prometheus itself started at t=0
+      - series: 'process_start_time_seconds{job="prometheus"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: BackupNeverRan
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: BackupNeverRan
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: No backup has ever been recorded
+              description: "pinpoint_backup_last_success_timestamp_seconds has not existed for 26 hours. Schedule deploy/backup.sh (cron) and check the textfile directory mount."
+              runbook: docs/MONITORING.md#backupneverran
+
+  - name: AlertDeliveryFailing fires when Alertmanager notifications keep failing
+    interval: 1m
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager", integration="email"}'
+        values: '0+1x30'
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager", integration="webhook"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: AlertDeliveryFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AlertDeliveryFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, integration: email}
+            exp_annotations:
+              summary: "Alertmanager cannot deliver email notifications"
+              description: "Alert delivery is failing - you may not be told about other problems. Check SMTP / webhook settings and `docker compose logs alertmanager`."
+              runbook: docs/MONITORING.md#alertdeliveryfailing
+
+  - name: BackupNeverRan is silent on a fresh Prometheus (started 1h ago) even with no backup metric
+    interval: 10m
+    input_series:
+      - series: 'process_start_time_seconds{job="prometheus"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: BackupNeverRan
+        exp_alerts: []
+
+  - name: BackupNeverRan is silent when backups are being recorded
+    interval: 10m
+    input_series:
+      - series: 'process_start_time_seconds{job="prometheus"}'
+        values: '0x200'
+      - series: 'pinpoint_backup_last_success_timestamp_seconds{job="node"}'
+        values: '0+600x200'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: BackupNeverRan
+        exp_alerts: []

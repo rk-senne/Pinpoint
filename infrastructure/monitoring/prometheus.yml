@@ -11,6 +11,12 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# The production alert rules, evaluated locally (no Alertmanager in the dev
+# stack: firing alerts are visible at http://localhost:9090/alerts and in the
+# Grafana dashboard). Rules for exporters that are not started here stay idle.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: pinpoint-api
     metrics_path: /metrics

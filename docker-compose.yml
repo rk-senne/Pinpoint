@@ -142,15 +142,17 @@ services:
   #   docker compose --profile monitoring up
   #
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.16.0
     profiles: [monitoring]
     volumes:
       - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Same alert rules as production (unit-tested in deploy/monitoring/tests).
+      - ./deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports:
       - "127.0.0.1:9090:9090"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.3.2
     profiles: [monitoring]
     depends_on:
       prometheus:
@@ -163,6 +165,8 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
 
 volumes:
   db_data:

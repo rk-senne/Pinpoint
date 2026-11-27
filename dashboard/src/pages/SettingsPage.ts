@@ -32,6 +32,8 @@ import type { Guideline, NotificationPreferences, User } from '@pinpoint/shared'
 
 import { mountAppLayout } from '../components/AppLayout';
 import { mountTeamManagement, type TeamManagementHandle } from '../components/TeamManagement';
+import { mountTwoFactorPanel } from '../components/TwoFactorPanel';
+import { installPrivacyTab, type PrivacyTabHandle } from '../components/PrivacySettings';
 import { createFormSkeleton } from '../components/Skeleton';
 import { showToast } from '../components/Toast';
 import { apiFetch as defaultApiFetch, fetchCurrentUser } from '../lib/api';
@@ -227,6 +229,13 @@ export function mountSettingsPage(
   // Teams state — lazy-mounted on first tab activation.
   let teamHandle: TeamManagementHandle | null = null;
 
+  // 2FA panel: mounted lazily the first time the Profile tab is shown.
+  const twoFactorContainer = contentRoot.querySelector<HTMLElement>('[data-role="two-factor-container"]');
+  let teardownTwoFactor: (() => void) | null = null;
+
+  // Privacy tab (data export / account + organisation erasure): adds its own tab button + section.
+  const privacyTab: PrivacyTabHandle | null = installPrivacyTab(contentRoot, { apiFetch });
+
   // Per-row toggle cleanups so re-renders do not leak listeners.
   let notificationCleanups: Array<() => void> = [];
 
@@ -243,6 +252,9 @@ export function mountSettingsPage(
     updateTabFades();
     if (tab === 'profile' && !profileLoaded) {
       void loadProfile();
+    }
+    if (tab === 'profile' && twoFactorContainer && teardownTwoFactor === null) {
+      teardownTwoFactor = mountTwoFactorPanel(twoFactorContainer, { apiFetch });
     }
     if (tab === 'notifications' && prefs === null) {
       void loadNotifications();
@@ -615,6 +627,9 @@ export function mountSettingsPage(
     guidelineNameInput.removeEventListener('input', onGuidelineNameInput);
     teamHandle?.dispose();
     teamHandle = null;
+    privacyTab?.dispose();
+    teardownTwoFactor?.();
+    teardownTwoFactor = null;
     teardownLayout();
     contentRoot.remove();
   };

@@ -47,6 +47,8 @@ import { createActivityRoutes, type ActivityRouteDeps } from './activity.routes.
 import { createBulkRoutes, type BulkRouteDeps } from './bulk.routes.js';
 import { createTriageRoutes, type TriageRouteDeps } from './triage.routes.js';
 import { createAuditLogRoutes, type AuditLogRouteDeps } from './auditLog.routes.js';
+import { createMfaRoutes, type MfaRouteDeps } from './mfa.routes.js';
+import { createPrivacyRoutes, type PrivacyRouteDeps } from './privacy.routes.js';
 import { serveApiDocs } from './apiDocs.js';
 import { guardViewerWrites } from './access.js';
 
@@ -105,6 +107,10 @@ export {
   type TriageRouteDeps,
   createAuditLogRoutes,
   type AuditLogRouteDeps,
+  createMfaRoutes,
+  type MfaRouteDeps,
+  createPrivacyRoutes,
+  type PrivacyRouteDeps,
   serveApiDocs,
 };
 
@@ -147,6 +153,10 @@ export interface InboundHttpDeps {
   bulkRoutes: Omit<BulkRouteDeps, 'authMiddleware'>;
   triageRoutes: Omit<TriageRouteDeps, 'authMiddleware'>;
   auditLogRoutes: Omit<AuditLogRouteDeps, 'authMiddleware'>;
+  /** TOTP 2FA management (`/api/v1/auth/mfa`). */
+  mfaRoutes?: Omit<MfaRouteDeps, 'authMiddleware'>;
+  /** Privacy / data-subject rights (`/api/v1/privacy`). */
+  privacyRoutes?: Omit<PrivacyRouteDeps, 'authMiddleware'>;
 }
 
 /**
@@ -245,6 +255,16 @@ export function mountInboundHttp(app: Express, deps: InboundHttpDeps): void {
     authMiddleware: tenantAuth,
   });
 
+  if (deps.mfaRoutes) {
+    // Before the system-scoped authRouter: authenticated, runs in the caller's tenant
+    // context (least privilege — it only touches the non-RLS identity tables).
+    app.use('/api/v1/auth/mfa', createMfaRoutes({ ...deps.mfaRoutes, authMiddleware }));
+  }
+  if (deps.privacyRoutes) {
+    // Plain auth, NOT tenantAuth: a viewer must be able to erase their own account.
+    const privacyRouter = createPrivacyRoutes({ ...deps.privacyRoutes, authMiddleware });
+    app.use('/api/v1/privacy', privacyRouter);
+  }
   app.use('/api/v1/auth', systemScope);
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/projects', projectsRouter);

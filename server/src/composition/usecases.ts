@@ -59,6 +59,7 @@ import { assertPublicUrl, safeFetch } from '../services/egressGuard.js';
 import {
   CreateUserNotification, ListUserNotifications, MarkNotificationRead,
 } from '../domain/notification/usecases/userNotifications.js';
+import { MfaService } from '../domain/auth/mfa/MfaService.js';
 import {
   NotificationTriggers,
 } from '../domain/notification/usecases/notificationTriggers.js';
@@ -118,6 +119,7 @@ import type { WebhookDispatchingEventBus } from '../adapters/outbound/socket/Web
 
 export interface UseCases {
   login: Login;
+  mfa: MfaService;
   registerUser: RegisterUser;
   refreshToken: RefreshToken;
   verifyEmail: VerifyEmail;
@@ -249,7 +251,14 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
       await trx('memberships').insert({ org_id: org.id, user_id: userId, role: 'owner', accepted_at: trx.fn.now() });
       return org.id as string;
     });
-  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo, provisionPersonalOrg });
+  const mfa = new MfaService({
+    mfaRepo: adapters.mfaRepo,
+    userRepo,
+    passwordHasher,
+    clock,
+    challengeSecret: config.jwt.secret,
+  });
+  const login = new Login({ userRepo, passwordHasher, tokenIssuer, membershipRepo, provisionPersonalOrg, mfa });
   const registerUser = new RegisterUser({
     userRepo,
     authTokenRepo,
@@ -485,6 +494,7 @@ export function buildUseCases(deps: BuildUseCasesDeps): UseCases {
 
   return {
     login,
+    mfa,
     registerUser,
     refreshToken,
     verifyEmail,

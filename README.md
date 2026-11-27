@@ -30,7 +30,8 @@ below.
 [Deployment](./docs/DEPLOYMENT.md) · [Integrations setup](./docs/INTEGRATIONS_SETUP.md) ·
 [Store submission](./docs/STORE_SUBMISSION.md) · [Security review](./docs/SECURITY_REVIEW.md) ·
 [SOC 2 readiness](./docs/SOC2_READINESS.md) (gap assessment, **not** a compliance claim) ·
-[Policy templates](./docs/compliance/README.md) · [Crash course](./docs/CRASH_COURSE.md) · [Contributing / engineering standard](./CONTRIBUTING.md)
+[Policy templates](./docs/compliance/README.md) ·
+[Legal pack](./docs/legal/README.md) (draft Terms, [Privacy Policy](./docs/legal/PRIVACY_POLICY.md), [DPA](./docs/legal/DATA_PROCESSING_AGREEMENT.md), [Sub-processors](./docs/legal/SUBPROCESSORS.md), [Cookies](./docs/legal/COOKIE_POLICY.md), [Retention](./docs/legal/DATA_RETENTION.md), [Breach response](./docs/legal/BREACH_RESPONSE.md) — **not legal advice; lawyer review required**) · [Crash course](./docs/CRASH_COURSE.md) · [Contributing / engineering standard](./CONTRIBUTING.md)
 
 ---
 

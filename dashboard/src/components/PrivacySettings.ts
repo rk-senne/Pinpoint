@@ -63,7 +63,7 @@ interface Field {
 
 function field(id: string, text: string, type = 'text', autocomplete = 'off'): Field {
   const input = el('input', { id, type, autocomplete, 'data-role': id });
-  input.style.cssText = INPUT.replace('display: block;', 'display: block;');
+  input.style.cssText = INPUT;
   const label = el('label', { for: id }, [text, input]);
   label.style.cssText = 'display: block; font-size: 13px; margin-bottom: 10px;';
   return { label, input };

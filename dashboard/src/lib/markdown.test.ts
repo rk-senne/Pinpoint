@@ -84,3 +84,12 @@ describe('renderMarkdown', () => {
     expect(html('')).toBe('');
   });
 });
+
+describe('renderMarkdown comment stripping', () => {
+  it('removes nested/overlapping HTML comments completely (no "<!--" debris)', () => {
+    const frag = renderMarkdown('Hello <!<!---->-- hidden --> world');
+    const text = frag.textContent ?? '';
+    expect(text).not.toContain('<!--');
+    expect(text).not.toContain('hidden');
+  });
+});

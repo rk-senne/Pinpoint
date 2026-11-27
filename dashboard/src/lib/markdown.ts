@@ -104,7 +104,15 @@ const LIST_RE = /^(\s*)([-*]|\d+\.)\s+(.*)$/;
 /** Render a whole markdown document to a fragment. */
 export function renderMarkdown(markdown: string): DocumentFragment {
   const out = document.createDocumentFragment();
-  const src = markdown.replace(/<!--[\s\S]*?-->/g, '').replace(/\r\n?/g, '\n');
+  // Strip HTML comments until none remain (a single pass can leave '<!--' behind,
+  // e.g. '<!<!---->--'). Output is DOM text nodes either way; this keeps the
+  // rendered text free of comment debris.
+  let src = markdown;
+  for (let prev = ''; prev !== src; ) {
+    prev = src;
+    src = src.replace(/<!--[\s\S]*?-->/g, '');
+  }
+  src = src.replace(/\r\n?/g, '\n');
   const lines = src.split('\n');
   const usedIds = new Map<string, number>();
   let i = 0;

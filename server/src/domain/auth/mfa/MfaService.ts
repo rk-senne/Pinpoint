@@ -11,7 +11,7 @@
 //   * 10 single-use recovery codes, stored as SHA-256 only (≥50 bits of entropy each)
 //   * the login step-up challenge is an HMAC-signed, 5-minute, purpose-bound token
 
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual, hkdfSync } from 'node:crypto';
 import { Conflict, Forbidden, Locked, NotFound, Unauthorized, Validation, err, ok } from '../../shared/DomainError.js';
 import type { DomainError, Result } from '../../shared/DomainError.js';
 import type { Clock } from '../../shared/ports/Clock.js';
@@ -54,7 +54,8 @@ export class MfaService {
   // ---- login challenge ---------------------------------------------------
 
   private challengeKey(): Buffer {
-    return createHmac('sha256', 'pinpoint:mfa-challenge:v1').update(this.deps.challengeSecret).digest();
+    // Purpose-bound subkey of the server secret (HKDF, RFC 5869) for signing challenges.
+    return Buffer.from(hkdfSync('sha256', this.deps.challengeSecret, 'pinpoint', 'mfa-challenge:v1', 32));
   }
 
   createChallenge(userId: string): string {

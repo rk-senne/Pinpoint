@@ -68,7 +68,7 @@ services:
     environment:
       <<: *api-env
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD is required}
-    command: ["npm", "run", "migrate"]
+    command: ["node", "scripts/migrate.cjs"]
     restart: "no"
 
   api:

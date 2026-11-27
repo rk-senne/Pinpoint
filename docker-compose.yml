@@ -49,7 +49,7 @@ services:
       # Creates the unprivileged `pinpoint_app` role the API connects as (RLS, PP-08).
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:-pinpoint-app-dev}
       NODE_ENV: development
-    command: ["npm", "run", "migrate"]
+    command: ["node", "scripts/migrate.cjs"]
     restart: "no"
 
   redis:

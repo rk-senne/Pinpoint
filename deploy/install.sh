@@ -66,11 +66,28 @@ check_os() {
   esac
 }
 
+# apt-get update that survives an unrelated broken third-party source (e.g. a
+# vendor repo returning 403): warn and continue; the install step below fails
+# loudly if a package we need really is unavailable.
+apt_update() {
+  if ! apt-get update -qq; then
+    warn "apt-get update reported errors (often an unrelated third-party source); continuing"
+  fi
+}
+
 install_prereqs() {
-  log "Installing base packages"
+  local pkg missing=()
+  for pkg in ca-certificates curl gnupg openssl git; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    ok "base packages already installed"
+    return
+  fi
+  log "Installing base packages: ${missing[*]}"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq ca-certificates curl gnupg openssl git >/dev/null
+  apt_update
+  apt-get install -y -qq "${missing[@]}" >/dev/null || die "could not install: ${missing[*]}"
 }
 
 install_docker() {
@@ -86,7 +103,7 @@ install_docker() {
   chmod a+r /etc/apt/keyrings/docker.asc
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
     >/etc/apt/sources.list.d/docker.list
-  apt-get update -qq
+  apt_update
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
   systemctl enable --now docker
   docker compose version >/dev/null || die "docker compose plugin is not working after install"

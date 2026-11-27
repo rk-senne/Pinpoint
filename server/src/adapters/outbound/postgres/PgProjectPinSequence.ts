@@ -15,6 +15,7 @@ import type { Knex } from 'knex';
 import type { ProjectPinSequence } from '../../../domain/annotation/ports/ProjectPinSequence.js';
 
 interface PinCounterRow {
+  id: string;
   pin_counter: number;
 }
 

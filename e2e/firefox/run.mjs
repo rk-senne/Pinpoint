@@ -287,8 +287,9 @@ async function main() {
     await step('options: Server URL validation + save', async () => {
       await driver.get(`${EXT_BASE}/options/options.html`);
       const server = await driver.findElement(By.css('#server-url'));
+      // The options page fills the field after an async storage read.
+      await poll(async () => Boolean(await server.getAttribute('value')), { what: 'server url prefilled' });
       const original = await server.getAttribute('value');
-      assert(original, 'server url prefilled');
       const set = async (v) => { await server.clear(); await server.sendKeys(v, Key.TAB); };
       await set('http://evil.example');
       eq(await driver.findElement(By.css('#server-url-status')).getText(), 'Enter an https:// URL or http://localhost.', 'rejects http://evil.example');

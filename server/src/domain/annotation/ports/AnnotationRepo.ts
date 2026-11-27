@@ -20,7 +20,8 @@ export interface ListAnnotationsFilter {
 
 export interface AnnotationRepo {
   /** Insert a fully-formed annotation; pin number must already be allocated. */
-  insert(input: NewAnnotation): Promise<Annotation>;
+  /** `tx`: run on the caller's open transaction (see `PageRepo.insert`). */
+  insert(input: NewAnnotation, tx?: unknown): Promise<Annotation>;
 
   /** Look up by primary key. Returns null when the row does not exist. */
   findById(id: string): Promise<Annotation | null>;

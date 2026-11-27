@@ -1,9 +1,9 @@
 // Postgres adapter for AnalyticsRepo (Phase 1.5 / task 4.8.1).
 //
-// Implements the in-memory roll-up that backs
-// `GET /api/projects/:id/analytics`. A future revision can swap this for
-// SQL aggregates that exploit the JSONB expression index added by
-// migration 20240210000000.
+// Backs `GET /api/v1/projects/:id/analytics`. The roll-up is a single SQL
+// `GROUP BY` (at most 4 x 3 x 3 x ~10 groups come back) instead of streaming
+// every annotation row into Node and counting there, so the cost no longer
+// grows with the number of annotations in the project on the wire / heap.
 
 import type { Knex } from 'knex';
 import type {
@@ -11,11 +11,12 @@ import type {
   AnalyticsRepo,
 } from '../../../domain/analytics/ports/AnalyticsRepo.js';
 
-interface AnalyticsAnnotationRow {
+interface AnalyticsGroupRow {
   severity: string;
   type: string;
   status: string;
-  environment: unknown;
+  browser: string | null;
+  n: number | string;
 }
 
 type BrowserKey = keyof AnalyticsBuckets['byBrowser'];
@@ -36,12 +37,20 @@ export class PgAnalyticsRepo implements AnalyticsRepo {
   constructor(private readonly db: Knex) {}
 
   async computeForProject(projectId: string): Promise<AnalyticsBuckets> {
-    const rows = await this.db<AnalyticsAnnotationRow>('annotations')
-      .select('severity', 'type', 'status', 'environment')
-      .where({ project_id: projectId });
+    // `jsonb_typeof` guard: only object environments carry a browserFamily;
+    // anything else (null, legacy scalar) falls into `unknown` (Req 16.5).
+    const result = await this.db.raw<{ rows: AnalyticsGroupRow[] }>(
+      `SELECT severity, type, status,
+              CASE WHEN jsonb_typeof(environment) = 'object' THEN environment->>'browserFamily' END AS browser,
+              count(*)::int AS n
+         FROM annotations
+        WHERE project_id = ?
+        GROUP BY 1, 2, 3, 4`,
+      [projectId],
+    );
 
     const buckets: AnalyticsBuckets = {
-      total: rows.length,
+      total: 0,
       bySeverity: { critical: 0, major: 0, minor: 0, informational: 0 },
       byType: { note: 0, suggestion: 0, guideline: 0 },
       byStatus: { active: 0, in_progress: 0, resolved: 0 },
@@ -58,46 +67,25 @@ export class PgAnalyticsRepo implements AnalyticsRepo {
       },
     };
 
-    for (const row of rows) {
-      this.mapRow(row, buckets);
+    for (const row of result.rows) {
+      const n = Number(row.n);
+      buckets.total += n;
+      if (row.severity in buckets.bySeverity) {
+        buckets.bySeverity[row.severity as keyof AnalyticsBuckets['bySeverity']] += n;
+      }
+      if (row.type in buckets.byType) {
+        buckets.byType[row.type as keyof AnalyticsBuckets['byType']] += n;
+      }
+      if (row.status in buckets.byStatus) {
+        buckets.byStatus[row.status as keyof AnalyticsBuckets['byStatus']] += n;
+      }
+      if (typeof row.browser === 'string' && (BROWSER_KEYS as readonly string[]).includes(row.browser)) {
+        buckets.byBrowser[row.browser as BrowserKey] += n;
+      } else {
+        buckets.byBrowser.unknown += n;
+      }
     }
 
     return buckets;
-  }
-
-  /**
-   * Increment the relevant bucket counters for a single annotation row.
-   * Kept as a private helper rather than a pure mapper so the closed-enum
-   * fallback to `unknown` (Req 16.5) remains explicit at the call site.
-   */
-  private mapRow(row: AnalyticsAnnotationRow, buckets: AnalyticsBuckets): void {
-    if (row.severity in buckets.bySeverity) {
-      buckets.bySeverity[row.severity as keyof AnalyticsBuckets['bySeverity']]++;
-    }
-    if (row.type in buckets.byType) {
-      buckets.byType[row.type as keyof AnalyticsBuckets['byType']]++;
-    }
-    if (row.status in buckets.byStatus) {
-      buckets.byStatus[row.status as keyof AnalyticsBuckets['byStatus']]++;
-    }
-
-    let env: unknown = row.environment;
-    if (typeof env === 'string') {
-      try {
-        env = JSON.parse(env);
-      } catch {
-        env = null;
-      }
-    }
-    const family =
-      env && typeof env === 'object' && 'browserFamily' in env
-        ? (env as { browserFamily?: unknown }).browserFamily
-        : undefined;
-
-    if (typeof family === 'string' && (BROWSER_KEYS as readonly string[]).includes(family)) {
-      buckets.byBrowser[family as BrowserKey]++;
-    } else {
-      buckets.byBrowser.unknown++;
-    }
   }
 }

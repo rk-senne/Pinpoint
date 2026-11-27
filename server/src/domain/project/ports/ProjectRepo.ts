@@ -21,7 +21,8 @@ export interface SearchProjectsInput {
 }
 
 export interface ProjectRepo {
-  insert(input: NewProject): Promise<Project>;
+  /** `tx`: run on the caller's open transaction (see `PageRepo.insert`). */
+  insert(input: NewProject, tx?: unknown): Promise<Project>;
   findById(id: string): Promise<Project | null>;
   /** Owner + team membership scoped list with optional search/status filter. */
   search(input: SearchProjectsInput): Promise<Project[]>;

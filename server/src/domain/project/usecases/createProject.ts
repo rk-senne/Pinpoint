@@ -104,15 +104,11 @@ export class CreateProject {
       newProject.teamId = input.teamId;
     }
 
-    const result = await runInTransaction(async () => {
-      const project = await projectRepo.insert(newProject);
+    const result = await runInTransaction(async (tx) => {
+      const project = await projectRepo.insert(newProject, tx);
       const pages: Page[] = [];
       for (const url of uniqueUrls) {
-        const page = await pageRepo.insert({
-          projectId: project.id,
-          url,
-          title: null,
-        });
+        const page = await pageRepo.insert({ projectId: project.id, url, title: null }, tx);
         pages.push(page);
       }
       return { project, pages };

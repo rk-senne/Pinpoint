@@ -60,6 +60,7 @@ export function createWidgetCors(
     // below (ACAO withheld → the browser blocks the response) and the route
     // independently rejects requests whose Origin isn't allowed.
     if (req.method === 'OPTIONS') {
+      // nosemgrep: javascript.express.security.cors-misconfiguration.cors-misconfiguration -- credential-free preflight; real request is gated by the per-key allow-list below
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Methods', ALLOW_METHODS);
       res.setHeader('Access-Control-Allow-Headers', ALLOW_HEADERS);
@@ -84,6 +85,7 @@ export function createWidgetCors(
 
     if (allowed) {
       // Reflect the specific origin — never a wildcard, never credentials.
+      // nosemgrep: javascript.express.security.cors-misconfiguration.cors-misconfiguration -- only reached when `allowed` (per-key allowed_origins match or an explicitly open widget key); no Allow-Credentials
       res.setHeader('Access-Control-Allow-Origin', origin);
     }
     // Let the route know so it can hard-reject a disallowed origin instead of

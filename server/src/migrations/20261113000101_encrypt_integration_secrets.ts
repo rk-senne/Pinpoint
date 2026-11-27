@@ -48,7 +48,7 @@ function encrypt(key: Buffer, plaintext: string): string {
 
 function decrypt(key: Buffer, envelope: string): string {
   const [, iv, ct, tag] = envelope.split('.');
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'base64'));
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(iv, 'base64'), { authTagLength: 16 });
   decipher.setAuthTag(Buffer.from(tag, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(ct, 'base64')), decipher.final()]).toString('utf8');
 }

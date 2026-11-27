@@ -178,6 +178,7 @@ export function installSubFrameRelay(
     };
 
     try {
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration -- parent origin is an arbitrary host page; payload is only a click rect (no secrets) and the receiver validates event.source
       parent!.postMessage(message, '*');
     } catch (err) {
       // postMessage shouldn't throw for same-origin targets, but if it

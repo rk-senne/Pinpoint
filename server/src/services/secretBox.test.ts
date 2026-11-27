@@ -63,6 +63,15 @@ describe('SecretBox', () => {
     expect(() => box.decrypt(parts.join('.'))).toThrow();
   });
 
+  // Semgrep gcm-no-tag-length: without `authTagLength` Node accepts a
+  // truncated tag (e.g. 4 bytes), which makes GCM forgeries ~2^32 guesses.
+  it('rejects a truncated auth tag (authTagLength is pinned to 16)', () => {
+    const envelope = box.encrypt('truncate-me');
+    const parts = envelope.split('.');
+    parts[3] = Buffer.from(parts[3], 'base64').subarray(0, 4).toString('base64');
+    expect(() => box.decrypt(parts.join('.'))).toThrow();
+  });
+
   it('cannot decrypt with a different key', () => {
     const envelope = box.encrypt('cross-key');
     const other = SecretBox.fromRawKey(crypto.randomBytes(32).toString('hex'));

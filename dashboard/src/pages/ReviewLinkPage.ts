@@ -159,6 +159,7 @@ export function mountReviewLinkPage(
   // Feedback relay from the opaque-origin frame (see header SECURITY note).
   let inFlight = false;
   const reply = (id: string, ok: boolean): void => {
+    // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration -- the sandboxed frame has an opaque ('null') origin, so no concrete targetOrigin can match; the payload is only {type,id,ok}
     frame.contentWindow?.postMessage({ type: REVIEW_FEEDBACK_RESULT_MSG, id, ok }, '*');
   };
   const onMessage = (event: MessageEvent): void => {

@@ -44,7 +44,7 @@ function formatComment(c: Comment): Record<string, unknown> {
 }
 
 export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
-  const { createComment, listComments, createUserNotification, authMiddleware, db } = deps;
+  const { createComment, createUserNotification, authMiddleware, db } = deps;
 
   const router = Router({ mergeParams: true });
   router.use(authMiddleware);
@@ -114,12 +114,11 @@ export function createCommentsRoutes(deps: CommentsRouteDeps): Router {
     const { page, pageSize } = parsed.success ? parsed.data : { page: 1, pageSize: 25 };
     const offset = (page - 1) * pageSize;
 
-    // Verify annotation exists via the use case's validation
-    const result = await listComments.execute({ annotationId, orgId: req.user!.orgId });
-    if (!result.ok) {
-      sendDomainError(res, result.error);
-      return;
-    }
+    // Existence + org + project access were already enforced by
+    // `requireAnnotationAccess` above. This route used to ALSO call
+    // `listComments.execute`, which loaded EVERY comment of the thread (then
+    // discarded them) just to re-verify the annotation: O(thread size) work and
+    // memory per page view on long threads. Only the requested page is read now.
 
     const [{ count: total }] = await db('comments')
       .where('annotation_id', annotationId)

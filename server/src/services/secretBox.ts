@@ -115,7 +115,7 @@ export class SecretBox {
     const iv = Buffer.from(ivB64, 'base64');
     const ciphertext = Buffer.from(ctB64, 'base64');
     const authTag = Buffer.from(tagB64, 'base64');
-    const decipher = crypto.createDecipheriv(ALGORITHM, this.key, iv);
+    const decipher = crypto.createDecipheriv(ALGORITHM, this.key, iv, { authTagLength: 16 });
     decipher.setAuthTag(authTag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     return plaintext.toString('utf8');

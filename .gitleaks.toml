@@ -1,0 +1,38 @@
+# gitleaks configuration — extends the upstream ruleset; every allowlist entry
+# carries a one-line justification. Never allowlist a whole directory of
+# production code: scope by rule + path (or exact value).
+title = "Pinpoint gitleaks config"
+
+[extend]
+useDefault = true
+
+# Test fixtures: fake passwords / fake key-shaped strings used to exercise
+# validation and console-redaction code. Not credentials.
+[[allowlists]]
+description = "Fake credentials in unit/integration test fixtures (passwords, pk_/sk_/whsec_ look-alikes used to test redaction)"
+targetRules = ["generic-api-key", "stripe-access-token"]
+paths = [
+  '''(^|/)[^/]+\.test\.ts$''',
+  '''(^|/)__tests__/''',
+]
+
+# `keyPrefix: env.S3_KEY_PREFIX || ...` is a config property name, not a key.
+[[allowlists]]
+description = "S3 object-key prefix setting (config, not a secret)"
+targetRules = ["generic-api-key"]
+paths = ['''^server/src/composition/(config|container)\.ts$''']
+
+# Documentation placeholders.
+[[allowlists]]
+description = "Public placeholder project key in widget README; prose in SOC 2 doc"
+targetRules = ["generic-api-key"]
+paths = ['''^widget/README\.md$''', '''^docs/SOC2_READINESS\.md$''']
+
+# Throwaway key for CI-only throwaway Postgres/test stacks. It protects no
+# data (CI databases are destroyed with the runner). Production requires its
+# own INTEGRATION_ENCRYPTION_KEY and the boot preflight rejects unset values.
+[[allowlists]]
+description = "CI-only INTEGRATION_ENCRYPTION_KEY for ephemeral test stacks"
+targetRules = ["generic-api-key"]
+paths = ['''^\.github/workflows/(ci|browsers)\.yml$''']
+regexes = ['''2846TWtaPCCFCQOoP1tkenD64GdiCiaffX4LgLadKJA=''']

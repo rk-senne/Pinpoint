@@ -26,6 +26,8 @@
 // import surface.
 
 import { attachWorkflowEngine } from '../services/workflowEngine.js';
+import { buildPrivacyRouteDeps } from './privacy.js';
+import { createTermsAcceptance } from '../middleware/termsAcceptance.js';
 import { createSlackWiring } from '../services/integrations/slackWiring.js';
 import { S3Client } from '@aws-sdk/client-s3';
 import { createRequire } from 'node:module';
@@ -33,7 +35,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import helmet from 'helmet';
-import { createMetrics } from '../infrastructure/metrics.js';
+import { createMetrics, startQueueMetrics, type QueueMetrics } from '../infrastructure/metrics.js';
 import { installTenantContext, runAsSystem, runWithStore, systemScope } from '../infrastructure/tenantContext.js';
 import rateLimit from 'express-rate-limit';
 import { Server as HttpServer, createServer } from 'http';
@@ -90,13 +92,13 @@ import {
 } from '../adapters/inbound/workers/webhookDeliveryWorker.js';
 
 // --- request-pipeline middleware ----------------------------------------
-import { authRateLimiter, loginRateLimiter } from '../middleware/authRateLimit.js';
+import { authRateLimiter, loginRateLimiter, mfaRateLimiter } from '../middleware/authRateLimit.js';
 import { createErrorHandler, uuidPathGuard } from './httpGuards.js';
 import { createCsrfMiddleware } from '../middleware/csrf.js';
 import { createAuditTrail } from '../middleware/auditTrail.js';
 import { createCsrfBinder } from '../middleware/sessionCookies.js';
 import { legacyApiCatchAll } from '../middleware/legacyApi.js';
-import { securityHeaders } from '../middleware/securityHeaders.js';
+import { securityHeaders, buildHelmetOptions } from '../middleware/securityHeaders.js';
 import { inputSanitizer } from '../middleware/inputSanitizer.js';
 import { requestId } from '../middleware/requestId.js';
 import { compress } from '../middleware/compress.js';
@@ -292,10 +294,7 @@ export function buildContainer(config: Config): Container {
   // Prometheus request metrics; `/metrics` itself is mounted below.
   const metrics = createMetrics({ token: config.metricsToken, collectDefaults: config.nodeEnv !== 'test' });
   app.use(metrics.middleware);
-  app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-  }));
+  app.use(helmet(buildHelmetOptions(config.cookieInsecure)));
   // Dedicated credential-free CORS for the public widget surface (A2).
   // Mounted AHEAD of the global credentialed CORS so the widget path is
   // governed only by per-key allowed_origins, never the dashboard policy.
@@ -391,7 +390,13 @@ export function buildContainer(config: Config): Container {
 
   // Strict per-IP+email limiter for auth-sensitive endpoints (Req 19.1).
   app.post('/api/v1/auth/login', loginRateLimiter);
+  // 2FA step-up: per-IP / per-challenge throttle here + per-user DB lockout in MfaService.
+  app.post('/api/v1/auth/login/mfa', mfaRateLimiter);
+  app.post('/api/v1/auth/mfa/*splat', mfaRateLimiter);
   app.post('/api/v1/auth/register', authRateLimiter);
+  // Registration must accept the Terms; stamps users.accepted_terms_at / terms_version.
+  // Tests only record it (most test callers register directly).
+  app.use('/api/v1/auth', createTermsAcceptance({ db, required: config.nodeEnv !== 'test' }));
   app.post('/api/v1/auth/reset-password', authRateLimiter);
   app.post('/api/v1/auth/resend-verification', authRateLimiter);
   app.post('/api/v1/shared/:linkId/verify', authRateLimiter);
@@ -414,6 +419,18 @@ export function buildContainer(config: Config): Container {
       logout: useCases.logout,
       cookieInsecure: config.cookieInsecure,
       csrfBinder,
+      mfa: useCases.mfa,
+    },
+    mfaRoutes: { mfa: useCases.mfa },
+    privacyRoutes: {
+      ...buildPrivacyRouteDeps({
+        db,
+        config,
+        s3Client,
+        passwordHasher: adapters.passwordHasher,
+        screenshotStore: adapters.screenshotStore,
+      }),
+      cookieInsecure: config.cookieInsecure,
     },
     projectsRoutes: {
       createProject: useCases.createProject,
@@ -799,6 +816,7 @@ export function buildContainer(config: Config): Container {
   let started = false;
   let stopped = false;
 
+  let queueMetrics: QueueMetrics | undefined;
   const start = async (): Promise<void> => {
     if (started) return;
     started = true;
@@ -839,11 +857,19 @@ export function buildContainer(config: Config): Container {
       integrationRefreshWorker.start();
       webhookDeliveryWorker.start();
     });
+    // Queue / DB gauges for the alert rules (deploy/monitoring/alerts.yml).
+    if (config.nodeEnv !== 'test') {
+      queueMetrics = startQueueMetrics(metrics.registry, {
+        db,
+        onError: (err) => logger.warn({ err }, 'queue metrics poll failed'),
+      });
+    }
   };
 
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    queueMetrics?.stop();
     await worker.stop();
     if (digestWorker) await digestWorker.stop();
     await integrationRefreshWorker.stop();

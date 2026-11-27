@@ -62,7 +62,7 @@ export async function ensureUser(opts: {
   const anon = await requestFactory.newContext({ baseURL: API_URL });
   try {
     await anon.post('/api/v1/auth/register', {
-      data: { email: opts.email, password, name: opts.name },
+      data: { email: opts.email, password, name: opts.name, acceptTerms: true },
     });
     sql(`update users set verified = true where email = '${opts.email.toLowerCase()}'`);
     const res = await anon.post('/api/v1/auth/login', { data: { email: opts.email, password } });

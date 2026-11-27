@@ -90,7 +90,7 @@ assert_migrate_ok() {
 }
 
 register_payload() {
-  jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p,name:"Smoke Test"}'
+  jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p,name:"Smoke Test",acceptTerms:true}'
 }
 login_payload() { jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p}'; }
 

@@ -10,7 +10,7 @@
 # origin — see dashboard/vite.config.ts.
 
 # ---------- Stage 1: builder ----------
-FROM node:20-alpine AS builder
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
 
 WORKDIR /app
 
@@ -30,12 +30,14 @@ RUN npm ci --workspace @pinpoint/shared --workspace @pinpoint/dashboard --includ
 
 COPY shared ./shared
 COPY dashboard ./dashboard
+# Legal pages are bundled from the markdown sources (?raw imports).
+COPY docs/legal ./docs/legal
 
 RUN npm run build --workspace @pinpoint/shared \
  && npm run build --workspace @pinpoint/dashboard
 
 # ---------- Stage 2: runtime ----------
-FROM node:20-alpine AS runtime
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
 
 ENV NODE_ENV=production
 
@@ -65,4 +67,11 @@ WORKDIR /app/dashboard
 
 EXPOSE 4173
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]
+# Patch OS packages and drop npm (runs `vite preview` directly); unprivileged.
+RUN apk upgrade --no-cache \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+ && chown -R node:node /app/dashboard
+USER node
+
+CMD ["node", "../node_modules/vite/bin/vite.js", "preview", "--host", "0.0.0.0", "--port", "4173"]

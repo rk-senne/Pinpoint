@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import { request } from '../__tests__/supertestClient.js';
-import { createMetrics, isPrivateAddress } from './metrics.js';
+import client from 'prom-client';
+import { createMetrics, isPrivateAddress, startQueueMetrics, type RawQueryRunner } from './metrics.js';
 
 function app(token?: string) {
   const m = createMetrics({ token, collectDefaults: false });
@@ -96,5 +97,63 @@ describe('metrics route labels for pre-route rejections', () => {
     expect(text).not.toContain('zzz-random-1');
     expect(text).not.toContain('attacker');
     expect(text).not.toContain('projectz');
+  });
+});
+
+describe('startQueueMetrics', () => {
+  type Row = Record<string, unknown>;
+  function fakeDb(state: { up: boolean; notif: Row[]; hooks: Row[] }): RawQueryRunner {
+    return {
+      raw: async (sql: string) => {
+        if (!state.up) throw new Error('connection refused');
+        if (sql.includes('FROM notifications')) return { rows: state.notif };
+        if (sql.includes('FROM webhook_deliveries')) return { rows: state.hooks };
+        return { rows: [{ '?column?': 1 }] };
+      },
+    };
+  }
+  const asSystem = <T>(fn: () => T): T => fn();
+
+  it('exports db_up, pending depth, oldest age and counts only NEW failures', async () => {
+    const state = {
+      up: true,
+      notif: [{ status: 'pending', n: 3, oldest_age: 120 }, { status: 'failed', n: 2, oldest_age: 9 }],
+      hooks: [{ status: 'pending', n: 1, oldest_age: 5 }],
+    };
+    const registry = new client.Registry();
+    const q = startQueueMetrics(registry, { db: fakeDb(state), asSystem, intervalMs: 3_600_000 });
+    await q.collect();
+    let text = await registry.metrics();
+    expect(text).toMatch(/^pinpoint_db_up 1$/m);
+    expect(text).toMatch(/^pinpoint_notifications_pending 3$/m);
+    expect(text).toMatch(/^pinpoint_notifications_oldest_pending_age_seconds 120$/m);
+    expect(text).toMatch(/^pinpoint_webhook_deliveries_pending 1$/m);
+    // The two pre-existing failed rows are the baseline, not new failures.
+    expect(text).toMatch(/^pinpoint_notification_failures_total 0$/m);
+    expect(text).toMatch(/^pinpoint_queue_metrics_last_success_timestamp_seconds [0-9.e+]+$/m);
+
+    state.notif = [{ status: 'failed', n: 5, oldest_age: 1 }];
+    state.hooks = [{ status: 'pending', n: 0, oldest_age: 0 }, { status: 'failed', n: 4, oldest_age: 1 }];
+    await q.collect();
+    text = await registry.metrics();
+    expect(text).toMatch(/^pinpoint_notifications_pending 0$/m);
+    expect(text).toMatch(/^pinpoint_notification_failures_total 3$/m);
+    // webhook failed rows appeared after a 0 baseline -> 4 new failures
+    expect(text).toMatch(/^pinpoint_webhook_delivery_failures_total 4$/m);
+    q.stop();
+  });
+
+  it('sets pinpoint_db_up to 0 and reports the error when the database is unreachable', async () => {
+    const state = { up: false, notif: [], hooks: [] };
+    const registry = new client.Registry();
+    const errors: unknown[] = [];
+    const q = startQueueMetrics(registry, { db: fakeDb(state), asSystem, intervalMs: 3_600_000, onError: (e) => errors.push(e) });
+    await q.collect();
+    expect(await registry.metrics()).toMatch(/^pinpoint_db_up 0$/m);
+    expect(errors.length).toBeGreaterThan(0);
+    state.up = true;
+    await q.collect();
+    expect(await registry.metrics()).toMatch(/^pinpoint_db_up 1$/m);
+    q.stop();
   });
 });

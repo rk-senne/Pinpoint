@@ -48,6 +48,10 @@ const ALLOWED_ATTRS: ReadonlySet<string> = new Set([
   'max',
   'step',
   'pattern',
+  // Form/IME hints (inert): password-manager + OTP autofill, `novalidate` on <form>.
+  'autocomplete',
+  'inputmode',
+  'novalidate',
   'alt',
   'width',
   'height',

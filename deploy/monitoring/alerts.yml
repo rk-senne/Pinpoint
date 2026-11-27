@@ -1,0 +1,265 @@
+# Pinpoint alert rules. Single source of truth for the production `monitoring`
+# profile AND the local dev profile. Every rule has a promtool unit test in
+# tests/alerts.test.yml (CI: .github/workflows/monitoring.yml) and a runbook
+# section in docs/MONITORING.md (the `runbook` annotation anchors into it).
+#
+# severity: critical = wakes a human, warning = look today, info = visible in
+# Alertmanager/Grafana only (e-mailed only when ALERT_NOTIFY_INFO=true).
+
+groups:
+  - name: pinpoint-availability
+    rules:
+      # Dead-man's switch: always firing. Alertmanager forwards it every few
+      # minutes to HEALTHCHECKS_WATCHDOG_URL (optional); if the pings stop,
+      # Healthchecks.io alerts - i.e. the monitoring stack itself is dead or
+      # the host is down. This is what lets the box alert about itself.
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: Always-firing heartbeat for the external dead-man's switch.
+          runbook: docs/MONITORING.md#watchdog
+
+      - alert: InstanceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) is not scrapable"
+          description: "Prometheus could not scrape {{ $labels.job }} at {{ $labels.instance }} for 2 minutes."
+          runbook: docs/MONITORING.md#instancedown
+
+      - alert: EdgeProbeFailed
+        expr: probe_success{job="blackbox-health"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health probe through Caddy failed ({{ $labels.instance }})"
+          description: "GET /api/v1/health through the TLS edge has failed for 3 minutes (Caddy, API or database)."
+          runbook: docs/MONITORING.md#edgeprobefailed
+
+      - alert: DatabaseUnavailable
+        expr: pinpoint_db_up == 0 or pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL is unreachable
+          description: "The API (pinpoint_db_up) or postgres_exporter (pg_up) cannot query PostgreSQL."
+          runbook: docs/MONITORING.md#databaseunavailable
+
+      - alert: CertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry{job="blackbox-tls"} - time()) < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+          description: "Caddy renews automatically ~30 days before expiry; under 14 days left means renewal is failing."
+          runbook: docs/MONITORING.md#certificateexpiringsoon
+
+  - name: pinpoint-api
+    rules:
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.02
+          and sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 2% of API requests fail with 5xx ({{ $value | humanizePercentage }})"
+          description: "5xx ratio over the last 5 minutes has been above 2% for 5 minutes (ignored below ~0.6 req/min)."
+          runbook: docs/MONITORING.md#apihigherrorrate
+
+      - alert: ApiHighLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency is {{ $value | humanizeDuration }}"
+          description: "95th percentile request latency has been above 1.5s for 10 minutes."
+          runbook: docs/MONITORING.md#apihighlatency
+
+      # Health/liveness polling (Docker healthcheck, blackbox) is excluded so
+      # only real traffic counts. Informational: a quiet site is not an outage.
+      - alert: ApiNoTraffic
+        expr: |
+          sum(increase(http_requests_total{route!~"/health.*|/api/v1/health.*"}[15m])) == 0
+          and on() (up{job="pinpoint-api"} == 1)
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: No API requests for 15 minutes
+          description: "The API is up but has served no real traffic for 15 minutes. Expected on a quiet install; suspicious if users are active (DNS, Caddy, CDN?)."
+          runbook: docs/MONITORING.md#apinotraffic
+
+      - alert: ApiRestarting
+        expr: changes(process_start_time_seconds{job="pinpoint-api"}[15m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: The API process restarted more than twice in 15 minutes
+          description: "Crash loop or OOM kill. Check `docker compose logs api` and `docker inspect` for OOMKilled."
+          runbook: docs/MONITORING.md#apirestarting
+
+  - name: pinpoint-queues
+    rules:
+      - alert: NotificationBacklog
+        expr: pinpoint_notifications_pending > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} notifications are waiting to be sent"
+          description: "More than 100 pending e-mail notifications for 15 minutes - SMTP is slow/failing or the worker is behind."
+          runbook: docs/MONITORING.md#notificationbacklog
+
+      - alert: NotificationWorkerStuck
+        expr: pinpoint_notifications_oldest_pending_age_seconds > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest due notification is {{ $value | humanizeDuration }} old"
+          description: "A due notification has been pending for over 15 minutes (the worker retries with backoff up to 32 min; a sustained value means the worker is dead or SMTP is down)."
+          runbook: docs/MONITORING.md#notificationworkerstuck
+
+      - alert: NotificationFailures
+        expr: increase(pinpoint_notification_failures_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} notification(s) permanently failed in the last hour"
+          description: "Notifications exhausted their retries (status=failed). Usually an SMTP credential or relay problem."
+          runbook: docs/MONITORING.md#notificationfailures
+
+      - alert: WebhookBacklog
+        expr: pinpoint_webhook_deliveries_pending > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} webhook deliveries are waiting to be sent"
+          description: "More than 100 pending outbound webhook deliveries for 15 minutes."
+          runbook: docs/MONITORING.md#webhookbacklog
+
+      - alert: WebhookWorkerStuck
+        expr: pinpoint_webhook_deliveries_oldest_pending_age_seconds > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest due webhook delivery is {{ $value | humanizeDuration }} old"
+          description: "A due webhook delivery has been pending for over 15 minutes - the delivery worker is dead or wedged."
+          runbook: docs/MONITORING.md#webhookworkerstuck
+
+      - alert: WebhookDeliveryFailures
+        expr: increase(pinpoint_webhook_delivery_failures_total[15m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} webhook deliveries failed permanently in 15 minutes"
+          description: "Customer endpoints are rejecting or timing out on deliveries (or egress is blocked)."
+          runbook: docs/MONITORING.md#webhookdeliveryfailures
+
+      - alert: QueueMetricsStale
+        expr: time() - pinpoint_queue_metrics_last_success_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Queue metrics have not refreshed for 5 minutes
+          description: "The API's periodic SQL poll is failing; queue alerts are blind. Usually accompanies DatabaseUnavailable."
+          runbook: docs/MONITORING.md#queuemetricsstale
+
+  - name: pinpoint-postgres
+    rules:
+      - alert: PostgresConnectionsNearMax
+        expr: sum(pg_stat_database_numbackends) / max(pg_settings_max_connections) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL is using {{ $value | humanizePercentage }} of max_connections"
+          description: "Connection pool exhaustion is imminent; check DB_POOL_MAX across API replicas and for leaked connections."
+          runbook: docs/MONITORING.md#postgresconnectionsnearmax
+
+  - name: pinpoint-host
+    rules:
+      - alert: DiskSpaceLow
+        expr: |
+          (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"}
+             / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|fuse.*"}) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+          description: "Filesystem {{ $labels.mountpoint }} ({{ $labels.device }}) is over 85% used."
+          runbook: docs/MONITORING.md#diskspacelow
+
+      - alert: MemoryHigh
+        expr: 1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host memory is {{ $value | humanizePercentage }} used"
+          description: "Less than 10% of memory is available for 10 minutes; the OOM killer is next."
+          runbook: docs/MONITORING.md#memoryhigh
+
+      - alert: CpuHigh
+        expr: 1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host CPU is {{ $value | humanizePercentage }} busy"
+          description: "CPU above 90% for 15 minutes."
+          runbook: docs/MONITORING.md#cpuhigh
+
+  - name: pinpoint-backups
+    rules:
+      - alert: BackupStale
+        expr: time() - pinpoint_backup_last_success_timestamp_seconds > 26 * 3600
+        labels:
+          severity: critical
+        annotations:
+          summary: "Last successful backup was {{ $value | humanizeDuration }} ago"
+          description: "deploy/backup.sh has not succeeded for over 26 hours (daily cron + 2h slack)."
+          runbook: docs/MONITORING.md#backupstale
+
+      # No backup metric at all for 26h: backup.sh never ran (cron missing) or
+      # the textfile mount is wrong. Gated on Prometheus having been running for
+      # 26h itself, otherwise every fresh install / Prometheus restart would
+      # fire immediately (absent_over_time is also true on an empty TSDB).
+      - alert: BackupNeverRan
+        expr: |
+          absent_over_time(pinpoint_backup_last_success_timestamp_seconds[26h])
+          and on() (time() - process_start_time_seconds{job="prometheus"} > 26 * 3600)
+        labels:
+          severity: critical
+        annotations:
+          summary: No backup has ever been recorded
+          description: "pinpoint_backup_last_success_timestamp_seconds has not existed for 26 hours. Schedule deploy/backup.sh (cron) and check the textfile directory mount."
+          runbook: docs/MONITORING.md#backupneverran
+
+  - name: pinpoint-monitoring-self
+    rules:
+      - alert: AlertDeliveryFailing
+        expr: sum by (integration) (rate(alertmanager_notifications_failed_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager cannot deliver {{ $labels.integration }} notifications"
+          description: "Alert delivery is failing - you may not be told about other problems. Check SMTP / webhook settings and `docker compose logs alertmanager`."
+          runbook: docs/MONITORING.md#alertdeliveryfailing

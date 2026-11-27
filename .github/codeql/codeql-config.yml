@@ -1,0 +1,12 @@
+name: pinpoint
+# Scan what ships. Tests, e2e/load harnesses and generated output contain
+# intentional fixtures (fake tokens, local file reads sent to a local API).
+paths-ignore:
+  - '**/*.test.ts'
+  - '**/*.spec.ts'
+  - '**/__tests__/**'
+  - e2e/**
+  - loadtest/**
+  - scripts/**
+  - '**/dist/**'
+  - coverage/**

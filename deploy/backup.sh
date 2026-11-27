@@ -12,6 +12,13 @@
 #   BACKUP_INCLUDE_ENV=1   also copy deploy/.env.production (mode 600) - it holds
 #                          INTEGRATION_ENCRYPTION_KEY, without which stored
 #                          integration tokens are unreadable
+#   HEALTHCHECKS_URL       optional Healthchecks.io ping URL (env or deploy/.env.production):
+#                          pinged at start, on success and on failure (/fail), so a missed or
+#                          failed run alerts you from OUTSIDE the box (docs/MONITORING.md)
+#   PINPOINT_TEXTFILE_DIR  where the node_exporter textfile metric is written
+#                          (default: deploy/monitoring/textfile, mounted by the
+#                          `monitoring` compose profile). Gives the BackupStale alert
+#                          its pinpoint_backup_last_success_timestamp_seconds.
 #
 # Cron (daily 02:30):
 #   30 2 * * * /opt/pinpoint/deploy/backup.sh >> /var/log/pinpoint-backup.log 2>&1
@@ -35,8 +42,47 @@ mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 STAMP="$(date +%Y-%m-%d-%H%M%S)"
 partials=()
-cleanup() { [ "${#partials[@]}" -eq 0 ] || rm -f "${partials[@]}"; }
+
+# Optional heartbeat (Healthchecks.io free tier). Never fails the backup itself.
+HC_URL="${HEALTHCHECKS_URL:-$(env_get HEALTHCHECKS_URL)}"
+hc_ping() { # hc_ping [/start|/fail]
+  [ -n "$HC_URL" ] || return 0
+  curl -fsS -m 10 --retry 3 -o /dev/null "${HC_URL%/}$1" 2>/dev/null || warn "could not ping Healthchecks ($1)"
+}
+
+cleanup() {
+  local rc=$?
+  [ "${#partials[@]}" -eq 0 ] || rm -f "${partials[@]}"
+  if [ "$rc" -ne 0 ]; then hc_ping /fail; fi
+  return 0
+}
 trap cleanup EXIT
+hc_ping /start
+
+# write_metrics BYTES: atomically publish the node_exporter textfile metrics.
+# World-readable on purpose: node_exporter runs as an unprivileged user.
+write_metrics() {
+  local dir="${PINPOINT_TEXTFILE_DIR:-$DEPLOY_DIR/monitoring/textfile}" tmp
+  mkdir -p "$dir" || { warn "cannot create $dir - skipping backup metric"; return 0; }
+  chmod 755 "$dir" 2>/dev/null || true
+  tmp="$dir/.pinpoint_backup.prom.$$"
+  {
+    echo "# HELP pinpoint_backup_last_success_timestamp_seconds Unix time of the last successful deploy/backup.sh run."
+    echo "# TYPE pinpoint_backup_last_success_timestamp_seconds gauge"
+    echo "pinpoint_backup_last_success_timestamp_seconds $(date +%s)"
+    echo "# HELP pinpoint_backup_last_size_bytes Size of the files written by the last successful backup."
+    echo "# TYPE pinpoint_backup_last_size_bytes gauge"
+    echo "pinpoint_backup_last_size_bytes $1"
+  } >"$tmp"
+  if chmod 644 "$tmp" && mv "$tmp" "$dir/pinpoint_backup.prom"; then :; else
+    rm -f "$tmp"
+    warn "could not write the backup metric in $dir"
+  fi
+}
+
+# file_size FILE: size in bytes (GNU and BSD stat).
+file_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1"; }
+bytes_total=0
 
 log "Dumping Postgres"
 dump="$BACKUP_DIR/pinpoint-$STAMP.dump"
@@ -46,6 +92,7 @@ compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$
 [ -s "$dump.partial" ] || die "pg_dump produced an empty file"
 mv "$dump.partial" "$dump"
 ok "$dump"
+bytes_total=$((bytes_total + $(file_size "$dump")))
 
 driver="$(env_get STORAGE_DRIVER)"
 if [ "$driver" = s3 ] || { [ -z "$driver" ] && { [ -n "$(env_get S3_ENDPOINT)" ] || [ -n "$(env_get S3_ACCESS_KEY_ID)" ]; }; }; then
@@ -58,6 +105,7 @@ else
   [ -s "$shots.partial" ] || die "screenshot archive is empty"
   mv "$shots.partial" "$shots"
   ok "$shots"
+  bytes_total=$((bytes_total + $(file_size "$shots")))
 fi
 
 if [ "${BACKUP_INCLUDE_ENV:-0}" = 1 ]; then
@@ -72,4 +120,6 @@ if [ "$RETENTION" -gt 0 ]; then
     \( -name 'pinpoint-*.dump' -o -name 'pinpoint-screenshots-*.tar.gz' -o -name 'env-*.production' \) \
     -mtime "+$RETENTION" -print -delete
 fi
+write_metrics "$bytes_total"
+hc_ping ""
 ok "backup complete"

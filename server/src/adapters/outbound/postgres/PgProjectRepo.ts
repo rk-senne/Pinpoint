@@ -40,7 +40,7 @@ interface MemberJoinRow {
 export class PgProjectRepo implements ProjectRepo {
   constructor(private readonly db: Knex) {}
 
-  async insert(input: NewProject): Promise<Project> {
+  async insert(input: NewProject, tx?: unknown): Promise<Project> {
     const row: Record<string, unknown> = {
       name: input.name,
       urls: input.urls,
@@ -50,7 +50,7 @@ export class PgProjectRepo implements ProjectRepo {
     if (input.orgId) row.org_id = input.orgId;
     if (input.teamId) row.team_id = input.teamId;
 
-    const [created] = await this.db<ProjectRow>('projects')
+    const [created] = await ((tx as Knex | undefined) ?? this.db)<ProjectRow>('projects')
       .insert(row)
       .returning(['id', 'name', 'urls', 'status', 'owner_id', 'team_id', 'created_at', 'updated_at']);
     return this.mapRow(created);

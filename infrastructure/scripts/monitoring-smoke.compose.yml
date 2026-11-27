@@ -1,0 +1,22 @@
+# Test-only override for infrastructure/scripts/monitoring-smoke.sh: adds a
+# throw-away SMTP sink and points ONLY Alertmanager at it, so the smoke test can
+# prove an alert is delivered as e-mail. Never used outside CI.
+services:
+  mailpit:
+    image: axllent/mailpit:v1.34.0
+    profiles: [monitoring]
+    restart: "no"
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  alertmanager:
+    depends_on:
+      - mailpit
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      ALERT_SMTP_REQUIRE_TLS: "false"
+      ALERT_EMAIL_FROM: alerts@pinpoint.test
+      ALERT_EMAIL_TO: ops@pinpoint.test

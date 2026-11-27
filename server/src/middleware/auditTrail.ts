@@ -139,6 +139,17 @@ export const AUDIT_RULES: Rule[] = [
     method: 'POST',
     re: /^\/auth\/login\/?$/,
     async build({ req, status, body, deps }) {
+      if (status === 200 && obj(body).mfaRequired === true) {
+        // Password accepted, second factor still pending: not a session yet.
+        const known = await userByEmail(deps.db, obj(req.body).email);
+        return {
+          action: 'auth.login_mfa_challenged',
+          resourceType: 'session',
+          actorId: known?.id ?? null,
+          resourceId: known?.id,
+          orgId: known?.orgId ?? null,
+        };
+      }
       if (status === 200) {
         const user = obj(obj(body).user);
         const rawToken = obj(body).token;
@@ -170,6 +181,56 @@ export const AUDIT_RULES: Rule[] = [
       }
       return null;
     },
+  },
+  {
+    method: 'POST',
+    re: /^\/auth\/login\/mfa\/?$/,
+    async build({ req, status, body, deps }) {
+      const actor = (req as Request & { auditActorId?: string }).auditActorId;
+      if (status === 200) {
+        const user = obj(obj(body).user);
+        const rawToken = obj(body).token;
+        let orgId: string | null = null;
+        try {
+          orgId = typeof rawToken === 'string' ? deps.tokenIssuer.verify(rawToken).orgId : null;
+        } catch {
+          /* leave null */
+        }
+        return {
+          action: 'auth.login_succeeded',
+          resourceType: 'session',
+          actorId: str(user.id) ?? null,
+          resourceId: str(user.id),
+          orgId,
+          metadata: { mfa: str(obj(body).mfaMethod) ?? 'totp' },
+        };
+      }
+      if (!actor || ![401, 423].includes(status)) return null;
+      const m = await deps.db('memberships').where({ user_id: actor }).orderBy('created_at', 'asc').first('org_id');
+      return {
+        action: 'auth.mfa_failed',
+        resourceType: 'session',
+        actorId: actor,
+        resourceId: actor,
+        orgId: (m?.org_id as string | undefined) ?? null,
+        metadata: { reason: errorCode(body) ?? `http_${status}` },
+      };
+    },
+  },
+  {
+    method: 'POST',
+    re: /^\/auth\/mfa\/verify\/?$/,
+    build: ({ req, status }) => (ok(status) ? { action: 'auth.mfa_enabled', resourceType: 'user', resourceId: req.user?.userId, ...principal(req) } : null),
+  },
+  {
+    method: 'POST',
+    re: /^\/auth\/mfa\/disable\/?$/,
+    build: ({ req, status }) => (ok(status) ? { action: 'auth.mfa_disabled', resourceType: 'user', resourceId: req.user?.userId, ...principal(req) } : null),
+  },
+  {
+    method: 'POST',
+    re: /^\/auth\/mfa\/recovery-codes\/?$/,
+    build: ({ req, status }) => (ok(status) ? { action: 'auth.mfa_recovery_codes_regenerated', resourceType: 'user', resourceId: req.user?.userId, ...principal(req) } : null),
   },
   {
     method: 'POST',

@@ -37,6 +37,13 @@ interface FeedbackPayload {
 const FEEDBACK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm0 15.2L18.8 16H4V4h16v13.2zM7 9h2v2H7V9zm4 0h2v2h-2V9zm4 0h2v2h-2V9z"/></svg>`;
 
 /** Exact path the API serves the bundle from (widgetAsset.routes.ts). */
+/**
+ * Notice shown in the feedback form (GDPR Art. 13 / POPIA s.18): what is sent
+ * and to whom. The widget itself sets no cookies and uses no browser storage.
+ */
+export const PRIVACY_NOTICE =
+  'Your message, the page address, your browser and screen details, any page errors, and your email (if you add one) are sent to the owner of this website so they can respond. Pinpoint processes them on the site owner’s behalf. Ask the site owner for their privacy policy.';
+
 export const WIDGET_SCRIPT_PATH = '/widget/pinpoint-widget.js';
 
 /**
@@ -350,6 +357,13 @@ class PinpointWidget {
     emailInput.setAttribute('placeholder', 'your@email.com');
     emailGroup.append(emailLabel, emailInput);
 
+    // Privacy notice (GDPR Art. 13 / POPIA s.18 — shown at the point of collection).
+    const notice = document.createElement('p');
+    notice.className = 'pinpoint-privacy-notice';
+    notice.id = 'pinpoint-privacy-notice';
+    notice.textContent = PRIVACY_NOTICE;
+    emailInput.setAttribute('aria-describedby', 'pinpoint-privacy-notice');
+
     // Actions
     const actions = document.createElement('div');
     actions.className = 'pinpoint-actions';
@@ -365,7 +379,7 @@ class PinpointWidget {
     submit.textContent = 'Submit';
     actions.append(cancel, submit);
 
-    form.append(descGroup, sevGroup, emailGroup, actions);
+    form.append(descGroup, sevGroup, emailGroup, notice, actions);
     frag.appendChild(form);
     return frag;
   }

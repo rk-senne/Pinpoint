@@ -1843,12 +1843,19 @@ function renderAvatar(label: string, avatarUrl: string | null): HTMLElement {
     img.alt = label;
     img.setAttribute('title', label);
     img.style.cssText = `${common} object-fit: cover;`;
+    img.referrerPolicy = 'no-referrer';
+    // Blocked by CSP (host not in PINPOINT_IMG_ORIGINS) or broken: show initials.
+    img.addEventListener('error', () => img.replaceWith(initialsAvatar(label, initials, common)), { once: true });
     return img;
   }
+  return initialsAvatar(label, initials, common);
+}
+
+function initialsAvatar(label: string, initials: string, style: string): HTMLElement {
   const span = document.createElement('span');
   span.setAttribute('aria-label', label);
   span.setAttribute('title', label);
-  span.style.cssText = common;
+  span.style.cssText = style;
   span.textContent = initials;
   return span;
 }

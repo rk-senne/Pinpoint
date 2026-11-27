@@ -1,0 +1,74 @@
+# Monitoring & alerting verification ($0 stack: Prometheus, Alertmanager, Grafana,
+# exporters; see docs/MONITORING.md).
+#
+#   monitoring-config  static: promtool check config/rules, promtool unit tests for
+#                      EVERY alert rule, amtool check-config over an env matrix,
+#                      blackbox --config.check, dashboard JSON, pinned images, shellcheck.
+#   monitoring-smoke   boots deploy/docker-compose.prod.yml WITH the monitoring profile
+#                      on the runner and proves: all targets up, rules loaded, Watchdog,
+#                      Grafana provisioned, a real backup.sh metric, and a synthetic
+#                      outage (stop the api) that fires InstanceDown, reaches
+#                      Alertmanager and lands as an e-mail.
+name: monitoring
+
+on:
+  # No path filter: these are required checks on main, and a filtered-out
+  # required check would never report and block the PR.
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  config:
+    name: monitoring-config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate monitoring configuration
+        run: bash deploy/monitoring/check.sh
+
+      - name: shellcheck (monitoring scripts, backup, installer)
+        run: |
+          shellcheck -x -s bash deploy/backup.sh deploy/install.sh deploy/monitoring/check.sh \
+            infrastructure/scripts/monitoring-smoke.sh
+          shellcheck -s sh deploy/monitoring/render-alertmanager.sh \
+            deploy/monitoring/alertmanager-entrypoint.sh deploy/monitoring/blackbox-entrypoint.sh
+
+  smoke:
+    name: monitoring-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Tool versions
+        run: |
+          docker version
+          docker compose version
+          jq --version
+          openssl version
+
+      - name: Monitoring smoke (prod stack + monitoring profile)
+        env:
+          SMOKE_LOG_DIR: ${{ runner.temp }}/monitoring-smoke-logs
+        run: bash infrastructure/scripts/monitoring-smoke.sh
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: monitoring-smoke-logs
+          path: ${{ runner.temp }}/monitoring-smoke-logs
+          if-no-files-found: ignore
+          retention-days: 7

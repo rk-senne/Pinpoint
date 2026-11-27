@@ -68,7 +68,7 @@ services:
     environment:
       <<: *api-env
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD is required}
-    command: ["npm", "run", "migrate"]
+    command: ["node", "scripts/migrate.cjs"]
     restart: "no"
 
   api:
@@ -166,9 +166,14 @@ services:
       # `vite preview` also proxies /api etc. to the API; Caddy routes those
       # paths straight to `api`, so this is only a safety net.
       API_PROXY_TARGET: http://api:3001
+      # Extra https origins images may load from (CSP img-src): S3/CDN
+      # screenshots and approved avatar/logo hosts. See docs/DEPLOYMENT.md.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      PINPOINT_IMG_ORIGINS: ${PINPOINT_IMG_ORIGINS:-}
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     restart: unless-stopped
     depends_on:
       - api
@@ -186,24 +191,137 @@ services:
       - caddy_config:/config
 
   # --- Optional observability: docker compose ... --profile monitoring up -d
-  # Not published on any host port; reach it with an SSH tunnel
-  # (ssh -L 9090:localhost:9090 ...) or `docker compose exec`.
+  # $0 stack (docs/MONITORING.md): Prometheus + Alertmanager + Grafana, plus
+  # node / postgres / redis exporters and a blackbox prober (TLS expiry and an
+  # end-to-end health probe through Caddy). Nothing here publishes a host port
+  # except Grafana on 127.0.0.1:3000 (reach it with an SSH tunnel:
+  #   ssh -L 3000:127.0.0.1:3000 user@host   ->  http://localhost:3000 ).
+  # All images are pinned to exact versions. Config lives in deploy/monitoring/.
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus:v3.16.0
     profiles: [monitoring]
     restart: unless-stopped
     depends_on:
       - api
     volumes:
-      - ./prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
+    tmpfs:
+      - /tmp
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN is required}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         printf '%s' "$$METRICS_TOKEN" > /tmp/metrics_token
-        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d} \
+          --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/render-alertmanager.sh:/opt/alertmanager/render-alertmanager.sh:ro
+      - ./monitoring/alertmanager-entrypoint.sh:/opt/alertmanager/alertmanager-entrypoint.sh:ro
+      - alertmanager_data:/alertmanager
+    tmpfs:
+      - /tmp
+    environment:
+      # E-mail goes through the SMTP relay the API already uses.
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-${ACME_EMAIL}}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-${SMTP_FROM:-no-reply@${DOMAIN}}}
+      ALERT_SMTP_REQUIRE_TLS: ${ALERT_SMTP_REQUIRE_TLS:-true}
+      ALERT_NOTIFY_INFO: ${ALERT_NOTIFY_INFO:-false}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Optional extra channels (all unset = e-mail only).
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_NTFY_URL: ${ALERT_NTFY_URL:-}
+      ALERT_DISCORD_WEBHOOK_URL: ${ALERT_DISCORD_WEBHOOK_URL:-}
+      ALERT_SLACK_WEBHOOK_URL: ${ALERT_SLACK_WEBHOOK_URL:-}
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:-}
+      # Dead-man's switch: a Healthchecks.io check that must be pinged every few minutes.
+      HEALTHCHECKS_WATCHDOG_URL: ${HEALTHCHECKS_WATCHDOG_URL:-}
+    entrypoint: ["/bin/sh", "/opt/alertmanager/alertmanager-entrypoint.sh"]
+
+  node-exporter:
+    image: prom/node-exporter:v1.13.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+      # backup.sh writes pinpoint_backup_*.prom here (deploy/backup.sh).
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /:/host:ro,rslave
+      - ${PINPOINT_TEXTFILE_DIR:-./monitoring/textfile}:/textfile:ro
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.21.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The unprivileged app role is enough for pg_stat_database / max_connections.
+      DATA_SOURCE_NAME: postgresql://pinpoint_app:${DB_APP_PASSWORD:?DB_APP_PASSWORD is required}@db:5432/${DB_NAME:-pinpoint}?sslmode=disable
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.99.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+
+  blackbox:
+    image: prom/blackbox-exporter:v0.29.1
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    environment:
+      DOMAIN: ${DOMAIN}
+      BLACKBOX_TEMPLATE: /opt/blackbox/blackbox.tmpl.yml
+    volumes:
+      - ./monitoring/blackbox.tmpl.yml:/opt/blackbox/blackbox.tmpl.yml:ro
+      - ./monitoring/blackbox-entrypoint.sh:/opt/blackbox/blackbox-entrypoint.sh:ro
+    tmpfs:
+      - /tmp
+    entrypoint: ["/bin/sh", "/opt/blackbox/blackbox-entrypoint.sh"]
+
+  grafana:
+    image: grafana/grafana:13.3.2
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Defaults to a derived-from-secrets value so a forgotten setting is never "admin".
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-${METRICS_TOKEN}}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000/
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
 
 volumes:
   db_data:
@@ -211,3 +329,5 @@ volumes:
   caddy_data:
   caddy_config:
   prometheus_data:
+  alertmanager_data:
+  grafana_data:

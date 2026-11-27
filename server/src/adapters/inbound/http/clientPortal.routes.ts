@@ -209,8 +209,8 @@ export function createClientPortalRoutes(deps: ClientPortalRouteDeps): Router {
         to: email,
         subject: `Your access link for ${String(portal.title ?? 'the client portal')}`,
         body:
-          `<p>Use the link below to view feedback on <strong>${title}</strong>. ` +
-          `It expires in 24 hours.</p><p><a href="${escapeHtml(link)}">Open the portal</a></p>` +
+          `<p>Use the link below to view feedback on <strong>${title}</strong>. ` + // nosemgrep: javascript.express.security.injection.raw-html-format.raw-html-format -- `title` is escapeHtml()'d above
+          `It expires in 24 hours.</p><p><a href="${escapeHtml(link)}">Open the portal</a></p>` + // nosemgrep: javascript.express.security.injection.raw-html-format.raw-html-format -- link is escapeHtml()'d
           `<p>If you did not request this, you can ignore this email.</p>`,
       });
     } catch {

@@ -56,7 +56,7 @@ export async function register(
   name: string,
 ) {
   return request.post(`${API_BASE_URL}/api/v1/auth/register`, {
-    data: { email, password, name },
+    data: { email, password, name, acceptTerms: true },
   });
 }
 

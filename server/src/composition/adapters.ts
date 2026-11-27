@@ -31,6 +31,7 @@ import { PgApiKeyRepo } from '../adapters/outbound/postgres/PgApiKeyRepo.js';
 import { PgIntegrationRepo } from '../adapters/outbound/postgres/PgIntegrationRepo.js';
 import type { ScreenshotStore } from '../domain/annotation/ports/ScreenshotStore.js';
 import { SecretBox } from '../services/secretBox.js';
+import { PgMfaRepo } from '../adapters/outbound/postgres/PgMfaRepo.js';
 
 // --- Other outbound adapters -----------------------------------------------
 import {
@@ -58,6 +59,7 @@ export type AppScreenshotStore = ScreenshotStore & {
 
 export interface Adapters {
   userRepo: PgUserRepo;
+  mfaRepo: PgMfaRepo;
   projectRepo: PgProjectRepo;
   pageRepo: PgPageRepo;
   annotationRepo: PgAnnotationRepo;
@@ -101,6 +103,7 @@ export function buildAdapters(
 ): Adapters {
   // ---- Postgres repositories ------------------------------------------
   const userRepo = new PgUserRepo(db);
+  const mfaRepo = new PgMfaRepo(db, SecretBox.fromRawKey(config.integrationEncryptionKey));
   const projectRepo = new PgProjectRepo(db);
   const pageRepo = new PgPageRepo(db);
   const annotationRepo = new PgAnnotationRepo(db);
@@ -182,6 +185,7 @@ export function buildAdapters(
 
   return {
     userRepo,
+    mfaRepo,
     projectRepo,
     pageRepo,
     annotationRepo,

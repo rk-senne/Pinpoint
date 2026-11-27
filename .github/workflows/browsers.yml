@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '24'
   # Pinned tool versions (see e2e/firefox/README.md). Firefox and geckodriver
   # are official upstream release artifacts, verified against a pinned SHA-256.
   SELENIUM_VERSION: 4.53.0

@@ -1,0 +1,9 @@
+# Compose override for load tests: lifts the per-IP / per-tenant rate limits (a single
+# load generator would otherwise just measure the limiter) and nothing else.
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d --build api
+services:
+  api:
+    environment:
+      API_RATE_LIMIT_MAX: "100000000"
+      AUTH_RATE_LIMIT_IP_MAX: "100000"
+      TENANT_RATE_LIMIT_MAX: "100000000"

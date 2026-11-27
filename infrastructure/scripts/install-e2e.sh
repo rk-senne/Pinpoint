@@ -191,7 +191,7 @@ api_login_token() {
 create_data() {
   step "register -> verify (DB) -> login (Secure __Host-fl_session)"
   [ "$(http_code -X POST "$BASE/api/v1/auth/register" -H 'Content-Type: application/json' \
-    -d "$(jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p,name:"Install E2E"}')")" = 201 ] ||
+    -d "$(jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p,name:"Install E2E",acceptTerms:true}')")" = 201 ] ||
     fail "register did not return 201"
   okay "register 201"
   # No mail sink on a real install: mark verified in Postgres (the documented manual step).

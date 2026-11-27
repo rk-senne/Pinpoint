@@ -137,6 +137,9 @@ export function mountPortalGuestPage(node: HTMLElement, params: Record<string, s
     document.title = info.title;
     if (info.brandColor) root.style.setProperty('--portal-brand', info.brandColor);
     if (info.logoUrl) {
+      logoEl.referrerPolicy = 'no-referrer';
+      // Not an allowed image origin (CSP) or broken: hide rather than show a broken icon.
+      logoEl.addEventListener('error', () => { logoEl.hidden = true; }, { once: true });
       logoEl.src = info.logoUrl;
       logoEl.hidden = false;
     }

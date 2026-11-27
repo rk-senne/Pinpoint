@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import Pinpoint, { resolveApiOrigin } from './index';
+import Pinpoint, { PRIVACY_NOTICE, resolveApiOrigin } from './index';
 
 let realAttachShadow: typeof Element.prototype.attachShadow;
 let openRoots: WeakMap<Element, ShadowRoot>;
@@ -61,6 +61,20 @@ describe('widget — mount + form', () => {
     expect(root.querySelector('#pinpoint-form')).not.toBeNull();
     expect(root.querySelector('#pinpoint-description')).not.toBeNull();
     expect(root.querySelectorAll('#pinpoint-severity option').length).toBe(4);
+  });
+
+  it('shows the privacy notice at the point of collection, linked to the email field', () => {
+    Pinpoint.init({ projectKey: 'pk_widget_test', apiUrl: 'https://api.test' });
+    const root = hostRoot();
+    root.querySelector<HTMLButtonElement>('.pinpoint-trigger')!.click();
+
+    const notice = root.querySelector('#pinpoint-privacy-notice')!;
+    expect(notice.textContent).toBe(PRIVACY_NOTICE);
+    expect(PRIVACY_NOTICE).toMatch(/email/i);
+    expect(PRIVACY_NOTICE).toMatch(/on the site owner’s behalf/);
+    expect(root.querySelector('#pinpoint-email')!.getAttribute('aria-describedby')).toBe('pinpoint-privacy-notice');
+    // Plain text only: no markup, no links injected.
+    expect(notice.children.length).toBe(0);
   });
 });
 

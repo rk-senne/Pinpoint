@@ -62,6 +62,7 @@ export function createHeatmapRoutes(deps: HeatmapRouteDeps): Router {
       pageIds,
     });
 
+    // nosemgrep: javascript.lang.security.audit.sqli.node-knex-sqli.node-knex-sqli -- `sql` comes from buildHeatmapAggregateSql(): every value is a positional `?` binding; only placeholder counts are interpolated (see heatmap.utils.test.ts)
     const result = await db.raw(sql, bindings);
     const rows: HeatmapAggregateRow[] = result.rows ?? [];
     const cells = mapAggregateRows(rows);

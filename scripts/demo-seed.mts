@@ -247,7 +247,7 @@ async function ensureUser(db: pg.Client, who: { email: string; name: string }): 
   const exists = (await db.query(`select 1 from users where email = $1`, [who.email])).rowCount;
   if (!exists) {
     // 201 on success; the user is created unverified.
-    expectOk(await http('POST', '/api/v1/auth/register', null, { email: who.email, password: DEMO_PASSWORD, name: who.name }), `register ${who.email}`);
+    expectOk(await http('POST', '/api/v1/auth/register', null, { email: who.email, password: DEMO_PASSWORD, name: who.name, acceptTerms: true }), `register ${who.email}`);
   }
   await db.query(`update users set verified = true where email = $1`, [who.email]);
   const login = await http('POST', '/api/v1/auth/login', null, { email: who.email, password: DEMO_PASSWORD });

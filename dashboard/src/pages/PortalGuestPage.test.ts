@@ -93,6 +93,18 @@ describe('PortalGuestPage', () => {
     teardown();
   });
 
+  it('hides the logo instead of a broken image when it cannot load (e.g. blocked by CSP)', async () => {
+    stub({ feedback: json({ feedback: [] }) });
+    const { root, teardown } = mountAt('/portal/acme?token=abc123');
+    await flush();
+    const logo = q<HTMLImageElement>(root, '[data-slot="logo"]');
+    expect(logo.hidden).toBe(false);
+    expect(logo.referrerPolicy).toBe('no-referrer');
+    logo.dispatchEvent(new Event('error'));
+    expect(logo.hidden).toBe(true);
+    teardown();
+  });
+
   it('removes the token from the address bar but keeps other query params', async () => {
     stub();
     const { teardown } = mountAt('/portal/acme?token=secret&keep=1');

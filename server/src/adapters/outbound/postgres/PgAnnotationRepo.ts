@@ -64,7 +64,8 @@ interface AnnotationRow {
 export class PgAnnotationRepo implements AnnotationRepo {
   constructor(private readonly db: Knex) {}
 
-  async insert(input: NewAnnotation): Promise<Annotation> {
+  async insert(input: NewAnnotation, tx?: unknown): Promise<Annotation> {
+    const conn = (tx as Knex | undefined) ?? this.db;
     const row: Record<string, unknown> = {
       project_id: input.projectId,
       page_id: input.pageId,
@@ -79,7 +80,7 @@ export class PgAnnotationRepo implements AnnotationRepo {
     };
     // Guest/widget annotations carry no orgId: inherit the project's, so the row
     // is visible to its tenant under RLS (PP-08) instead of being orphaned.
-    row.org_id = input.orgId ?? this.db.raw('(select org_id from projects where id = ?)', [input.projectId]);
+    row.org_id = input.orgId ?? conn.raw('(select org_id from projects where id = ?)', [input.projectId]);
 
     if (input.guidelineId !== undefined) row.guideline_id = input.guidelineId;
     if (input.assigneeId !== undefined) row.assignee_id = input.assigneeId;
@@ -108,7 +109,7 @@ export class PgAnnotationRepo implements AnnotationRepo {
     if (input.guestName !== undefined) row.guest_name = input.guestName;
     if (input.guestEmail !== undefined) row.guest_email = input.guestEmail;
 
-    const [created] = await this.db<AnnotationRow>('annotations')
+    const [created] = await conn<AnnotationRow>('annotations')
       .insert(row)
       .returning('*');
     return this.mapRow(created);

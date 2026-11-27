@@ -18,6 +18,9 @@
 #   SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASSWORD SMTP_FROM   optional mail settings
 #   PINPOINT_BUILD=1  build images from source instead of pulling
 #   PINPOINT_SKIP_UFW=1, PINPOINT_FORCE=1 (allow non-Ubuntu / other versions)
+#   PINPOINT_MONITORING=1  also enable the free monitoring stack (Prometheus, Alertmanager,
+#                          Grafana + exporters; see docs/MONITORING.md): generates the Grafana
+#                          admin password and sets COMPOSE_PROFILES=monitoring in the env file
 set -euo pipefail
 
 # shellcheck source=deploy/lib.sh
@@ -188,6 +191,21 @@ create_env_file() {
   ok "wrote $ENV_FILE (mode 600)"
 }
 
+# enable_monitoring: opt-in ($0, self-hosted). Idempotent; never replaces an existing value.
+enable_monitoring() {
+  [ "${PINPOINT_MONITORING:-0}" = 1 ] || return 0
+  log "Enabling the monitoring profile (Prometheus, Alertmanager, Grafana)"
+  [ -n "$(env_get GRAFANA_ADMIN_PASSWORD)" ] || env_set GRAFANA_ADMIN_PASSWORD "$(openssl rand -hex 16)"
+  [ -n "$(env_get ALERT_EMAIL_TO)" ] || env_set ALERT_EMAIL_TO "$(env_get ACME_EMAIL)"
+  local profiles
+  profiles="$(env_get COMPOSE_PROFILES)"
+  case ",$profiles," in
+    *,monitoring,*) ;;
+    *) env_set COMPOSE_PROFILES "${profiles:+$profiles,}monitoring" ;;
+  esac
+  ok "monitoring enabled; Grafana is on 127.0.0.1:3000 (SSH tunnel) - see docs/MONITORING.md"
+}
+
 main() {
   SMTP_UNCONFIGURED=0
   require_root "$@"
@@ -196,6 +214,7 @@ main() {
   install_docker
   configure_ufw
   create_env_file
+  enable_monitoring
 
   local domain
   domain="$(env_get DOMAIN)"
@@ -241,8 +260,10 @@ EOT
   2. Daily backups (Postgres + screenshots), kept 14 days in $REPO_ROOT/backups:
        ( crontab -l 2>/dev/null; echo '30 2 * * * $DEPLOY_DIR/backup.sh >> /var/log/pinpoint-backup.log 2>&1' ) | crontab -
      Copy the backups directory off this server.
-  3. Upgrade later with: $DEPLOY_DIR/upgrade.sh
-  4. Screenshots are stored on this server (Docker volume 'screenshots'); no S3
+  3. Free monitoring + alerts (set up an external uptime check and a backup heartbeat):
+     docs/MONITORING.md  (enable the stack with PINPOINT_MONITORING=1 and re-run this script)
+  4. Upgrade later with: $DEPLOY_DIR/upgrade.sh
+  5. Screenshots are stored on this server (Docker volume 'screenshots'); no S3
      account is needed. See docs/DEPLOYMENT.md to use S3-compatible storage instead.
 EOT
 }

@@ -20,7 +20,7 @@ import type { DomainError, Result } from '../../shared/DomainError.js';
 import type { PasswordHasher } from '../ports/PasswordHasher.js';
 import type { TokenIssuer } from '../ports/TokenIssuer.js';
 import type { MembershipRepo } from '../ports/MembershipRepo.js';
-import type { UserRepo } from '../../user/ports/UserRepo.js';
+import type { UserRepo, UserWithSecret } from '../../user/ports/UserRepo.js';
 import type { User } from '../../user/User.js';
 
 export interface LoginInput {
@@ -36,6 +36,17 @@ export interface LoginOutput {
   csrfToken: string;
 }
 
+/** Step-one result for an account with TOTP enabled: no session yet, only a short-lived challenge. */
+export interface LoginMfaChallenge {
+  mfaRequired: true;
+  mfaToken: string;
+}
+
+export interface LoginMfaPort {
+  isEnabled(userId: string): Promise<boolean>;
+  createChallenge(userId: string): string;
+}
+
 export interface LoginDeps {
   userRepo: UserRepo;
   passwordHasher: PasswordHasher;
@@ -49,6 +60,8 @@ export interface LoginDeps {
    * wiring keeps its "no membership → Unauthorized" behaviour.
    */
   provisionPersonalOrg?: (userId: string, userName: string) => Promise<string>;
+  /** TOTP step-up. When set, accounts with 2FA enabled get a challenge instead of a session. */
+  mfa?: LoginMfaPort;
 }
 
 export class Login {
@@ -67,10 +80,33 @@ export class Login {
     return this.dummyHash;
   }
 
+  /**
+   * Session-issuing login. Safe by default: an account with 2FA enabled is
+   * REFUSED here (`MFA_REQUIRED`) — callers that support the step-up flow use
+   * `begin()` + `completeMfa()` instead, so no call site can skip the factor.
+   */
   async execute(
     input: LoginInput,
   ): Promise<Result<LoginOutput, DomainError>> {
-    const { userRepo, passwordHasher, tokenIssuer, membershipRepo } = this.deps;
+    const r = await this.begin(input);
+    if (!r.ok) return r;
+    if ('mfaRequired' in r.value) {
+      return err(new Unauthorized('Two-factor authentication is required.', 'MFA_REQUIRED'));
+    }
+    return ok(r.value);
+  }
+
+  /** Step two of an MFA login: the caller has already verified the second factor for `userId`. */
+  async completeMfa(userId: string): Promise<Result<LoginOutput, DomainError>> {
+    const record = await this.deps.userRepo.findByIdWithSecret(userId);
+    if (!record || record.verified === false) return err(new Unauthorized('Invalid email or password.'));
+    return this.issueSession(record);
+  }
+
+  async begin(
+    input: LoginInput,
+  ): Promise<Result<LoginOutput | LoginMfaChallenge, DomainError>> {
+    const { userRepo, passwordHasher } = this.deps;
 
     if (
       typeof input.email !== 'string' ||
@@ -108,6 +144,14 @@ export class Login {
       );
     }
 
+    if (this.deps.mfa && (await this.deps.mfa.isEnabled(record.id))) {
+      return ok({ mfaRequired: true as const, mfaToken: this.deps.mfa.createChallenge(record.id) });
+    }
+    return this.issueSession(record);
+  }
+
+  private async issueSession(record: UserWithSecret): Promise<Result<LoginOutput, DomainError>> {
+    const { tokenIssuer, membershipRepo } = this.deps;
     let membership = await membershipRepo.findDefaultForUser(record.id);
     if (!membership && this.deps.provisionPersonalOrg) {
       await this.deps.provisionPersonalOrg(record.id, record.name);

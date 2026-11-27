@@ -12,7 +12,12 @@
 
 	# Strict-Transport-Security only; the dashboard sets its own CSP and the
 	# API sets its own headers.
-	header Strict-Transport-Security "max-age=31536000"
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Don't advertise the proxy software/version.
+		-Server
+		-Via
+	}
 
 	# Everything the browser expects on the *same origin* goes to the API.
 	# /metrics and /health are intentionally NOT routed publicly.

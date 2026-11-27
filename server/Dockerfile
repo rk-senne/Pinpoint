@@ -9,7 +9,7 @@
 # is shared by the `api` and `migrate` services in docker-compose.yml.
 
 # ---------- Stage 1: builder ----------
-FROM node:20-alpine AS builder
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ RUN npm run build --workspace @pinpoint/shared \
  && npm run build --workspace @pinpoint/widget
 
 # ---------- Stage 2: runtime ----------
-FROM node:20-alpine AS runtime
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
 
 ENV NODE_ENV=production
 
@@ -68,10 +68,17 @@ COPY --from=builder /app/widget/dist ./widget/dist
 # `knex migrate:latest --knexfile knexfile.ts` (run by the `migrate`
 # service) loads the TS knexfile and TS migration files at runtime.
 COPY server/knexfile.ts ./server/knexfile.ts
+COPY server/scripts/migrate.cjs ./server/scripts/migrate.cjs
 # server/tsconfig.json `extends: ../tsconfig.json`; ts-node needs both.
 COPY tsconfig.json ./tsconfig.json
 COPY server/tsconfig.json ./server/tsconfig.json
 COPY server/src/migrations ./server/src/migrations
+
+# Patch base-image OS packages; drop npm/npx/corepack (the runtime only runs
+# `node`; npm's bundled dependencies carry their own CVEs).
+RUN apk upgrade --no-cache \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+      /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 WORKDIR /app/server
 

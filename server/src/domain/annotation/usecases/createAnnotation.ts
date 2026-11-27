@@ -203,40 +203,42 @@ async function insertWithPin(
   const trimmedBody = input.body.trim();
 
   const created = await runInTransaction(async (tx) => {
-    let page = await pageRepo.findByProjectAndUrl(input.projectId, input.pageUrl);
+    let page = await pageRepo.findByProjectAndUrl(input.projectId, input.pageUrl, tx);
     if (!page) {
-      page = await pageRepo.insert({
-        projectId: input.projectId,
-        url: input.pageUrl,
-        title: null,
-      });
+      page = await pageRepo.insert(
+        { projectId: input.projectId, url: input.pageUrl, title: null },
+        tx,
+      );
     }
 
     const pinNumber = await pinSequence.next(input.projectId, tx);
 
-    const inserted = await annotationRepo.insert({
-      projectId: input.projectId,
-      pageId: page.id,
-      type: input.type,
-      severity: input.severity,
-      status: 'active',
-      body: trimmedBody,
-      authorId: input.authorId,
-      target: input.target,
-      environment: input.environment,
-      pinNumber,
-      orgId: input.orgId,
-      guidelineId: input.guidelineId,
-      capturedConsole: input.capturedConsole,
-      capturedNetwork: input.capturedNetwork,
-      consoleLogs: input.consoleLogs,
-      jsErrors: input.jsErrors,
-      sessionReplay: input.sessionReplay,
-      clientRequestId: input.clientRequestId,
-      ...(input.guest
-        ? { isGuest: true, guestName: input.guest.name, guestEmail: input.guest.email }
-        : {}),
-    });
+    const inserted = await annotationRepo.insert(
+      {
+        projectId: input.projectId,
+        pageId: page.id,
+        type: input.type,
+        severity: input.severity,
+        status: 'active',
+        body: trimmedBody,
+        authorId: input.authorId,
+        target: input.target,
+        environment: input.environment,
+        pinNumber,
+        orgId: input.orgId,
+        guidelineId: input.guidelineId,
+        capturedConsole: input.capturedConsole,
+        capturedNetwork: input.capturedNetwork,
+        consoleLogs: input.consoleLogs,
+        jsErrors: input.jsErrors,
+        sessionReplay: input.sessionReplay,
+        clientRequestId: input.clientRequestId,
+        ...(input.guest
+          ? { isGuest: true, guestName: input.guest.name, guestEmail: input.guest.email }
+          : {}),
+      },
+      tx,
+    );
 
     return { annotation: inserted, pageUrl: page.url };
   });

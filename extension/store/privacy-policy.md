@@ -1,8 +1,10 @@
 # Pinpoint Privacy Policy
 
-_Last updated: 2025-05-17_
+_Last updated: {{EFFECTIVE_DATE}}_
 
-Pinpoint is a collaborative annotation tool. This policy describes what data the Pinpoint browser extension collects, what it transmits, and how to control it.
+Pinpoint is a collaborative annotation tool. This policy describes what data the Pinpoint browser extension collects, what it transmits, and how to control it. It summarises the extension; the full [Privacy Policy]({{SERVICE_URL}}/legal/privacy) (also covering the dashboard, widget and your rights under GDPR, UK GDPR, POPIA and CCPA), the [Terms of Service]({{SERVICE_URL}}/legal/terms), the [Cookie Policy]({{SERVICE_URL}}/legal/cookies) and the [Sub-processors]({{SERVICE_URL}}/legal/subprocessors) list are published at {{SERVICE_URL}}/legal/privacy.
+
+**Who is responsible.** For your account, {{COMPANY_NAME}} ({{COMPANY_ADDRESS}}) is the controller / responsible party. For the annotations you create, the team (organisation) whose Pinpoint server the extension is connected to is the controller and {{COMPANY_NAME}} acts as its processor / operator. If your team runs its own Pinpoint server, that team is responsible and {{COMPANY_NAME}} receives nothing.
 
 ## What the extension sends to the API
 
@@ -27,7 +29,7 @@ The first time you open the extension on a new host, a disclosure modal lists ex
 
 ## Where data is stored
 
-Annotations and their attachments are stored on the Pinpoint API server your team operates. Screenshots are written to object storage (S3 or compatible) under a key scoped to your project. Authentication tokens are stored locally in the browser's extension storage (`chrome.storage.local`; `browser.storage.local` in Firefox and Safari) and never sent to any host other than the configured API origin.
+Annotations and their attachments are stored on the Pinpoint API server your team operates. Screenshots are written to object storage (local disk on the server, or S3-compatible storage) under a key scoped to your project. Authentication tokens are stored locally in the browser's extension storage (`chrome.storage.local`; `browser.storage.local` in Firefox and Safari) and never sent to any host other than the configured API origin.
 
 The **Server URL** (the Pinpoint API/dashboard origin the extension talks to) is configurable on the options page and stored locally in the browser's extension storage (`chrome.storage.local`; `browser.storage.local` in Firefox and Safari). It defaults to the origin baked into the build. The extension sends your annotation data and auth token only to this configured origin.
 
@@ -41,7 +43,8 @@ The annotation overlay runs as a content script inside the web page you are revi
 - **Per-host capture toggles** on the options page let you disable screenshots, console logs, or network logs for any specific host.
 - **Server URL** on the options page lets you point the extension at your own deployment. Saving a new URL asks for your permission to reach that origin.
 - **Allow-list management** is controlled by your team's owner in the dashboard. Hosts not on the allow-list will not load the extension's content script automatically.
-- **Account deletion**: contact support@pinpoint.example to request deletion of your account and all associated annotations.
+- **Export and deletion**: in the Pinpoint dashboard open **Settings → Privacy** to download a copy of your data or delete your account. Deleting your account removes your profile, sign-in and notifications; annotations and comments you wrote in a team that continues to exist stay in that team's project history, attributed to "Deleted user" (team admins can delete them). To have specific content removed, ask the team's admins or write to {{CONTACT_EMAIL}}.
+- **Complaints**: contact us first at {{CONTACT_EMAIL}} (Information Officer: {{INFORMATION_OFFICER}}). You may also complain to the South African Information Regulator (POPIAComplaints@inforegulator.org.za), your EU/UK data-protection authority, or the California Attorney General.
 
 ## Permissions explained
 
@@ -54,4 +57,4 @@ The annotation overlay runs as a content script inside the web page you are revi
 
 ## Contact
 
-Questions or requests: support@pinpoint.example.
+Questions or requests: {{CONTACT_EMAIL}}.

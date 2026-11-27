@@ -11,7 +11,7 @@ Template — not adopted until filled and approved. No compliance claim.
 |---|---|---|
 | API application log | `pino` JSON: request id (UUID, `X-Request-Id`), method, path, status, latency; errors; secrets redacted | Docker log driver default has **no size/age cap** — configure (§3) |
 | Audit log (`audit_logs`, `GET /api/v1/org/audit-log`) | Auth events (login success/fail, logout, resets, e-mail change, session revocation, org switch), exports, share links, portals, boards, integrations, webhooks, invitations, team changes, API keys, member changes, org settings, project deletion; with IP, user agent, request id | Append-only via DB trigger; a DB superuser can disable it. **Not audited:** logins rejected by the rate limiter (429), board update/delete, workflow-rule and SLA mutations |
-| Metrics (`/metrics`, token-gated) | `http_requests_total`, `http_request_duration_seconds`, Node process metrics | Prometheus via the `monitoring` profile (`deploy/prometheus.prod.yml`) |
+| Metrics (`/metrics`, token-gated) | `http_requests_total`, `http_request_duration_seconds`, Node process metrics | Prometheus via the `monitoring` profile (`deploy/monitoring/prometheus.yml`) |
 | Health | `/health`, `/health/ready`, `/health/live` | Used by Docker healthchecks |
 | Host | SSH/auth logs (journald/auth.log), `ufw` | Not shipped anywhere by default |
 | Backups | `/var/log/pinpoint-backup.log` | Alert on staleness ([05](05-business-continuity-backup-dr.md)) |

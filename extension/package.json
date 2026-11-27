@@ -19,12 +19,12 @@
   "dependencies": {
     "@pinpoint/shared": "*",
     "@webcomponents/custom-elements": "1.6.0",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "4.8.4"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.4.0",
-    "@types/chrome": "^0.0.268",
-    "fast-check": "^4.1.1",
-    "vite": "^6.0.0"
+    "@crxjs/vite-plugin": "2.7.1",
+    "@types/chrome": "0.0.268",
+    "fast-check": "4.10.2",
+    "vite": "6.4.6"
   }
 }

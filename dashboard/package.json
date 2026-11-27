@@ -14,10 +14,10 @@
   },
   "dependencies": {
     "@pinpoint/shared": "*",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "4.8.4"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "vite": "^6.0.0"
+    "typescript": "5.9.3",
+    "vite": "6.4.6"
   }
 }

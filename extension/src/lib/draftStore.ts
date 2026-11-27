@@ -72,6 +72,9 @@ function getSessionArea(): chrome.storage.StorageArea | null {
  * corrupt slots coerce to an empty map so a malformed session value
  * does not break the calling popover.
  */
+/** Keys that would rewrite an object's prototype if used as a draft URL. */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 async function readDrafts(): Promise<Record<string, PopoverDraft>> {
   const storage = getSessionArea();
   if (!storage) return {};
@@ -83,8 +86,9 @@ async function readDrafts(): Promise<Record<string, PopoverDraft>> {
   }
   const raw = result?.[STORAGE_KEY_DRAFTS];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const out: Record<string, PopoverDraft> = {};
+  const out: Record<string, PopoverDraft> = Object.create(null) as Record<string, PopoverDraft>;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (UNSAFE_KEYS.has(k)) continue;
     if (
       v &&
       typeof v === 'object' &&
@@ -114,7 +118,7 @@ export async function saveDraft(
   url: string,
   draft: PopoverDraft,
 ): Promise<void> {
-  if (typeof url !== 'string' || url.length === 0) return;
+  if (typeof url !== 'string' || url.length === 0 || UNSAFE_KEYS.has(url)) return;
   const storage = getSessionArea();
   if (!storage) return;
   const drafts = await readDrafts();
@@ -136,10 +140,9 @@ export async function saveDraft(
  * prefill the popover when it reopens on the same URL.
  */
 export async function loadDraft(url: string): Promise<PopoverDraft | null> {
-  if (typeof url !== 'string' || url.length === 0) return null;
+  if (typeof url !== 'string' || url.length === 0 || UNSAFE_KEYS.has(url)) return null;
   const drafts = await readDrafts();
-  const found = drafts[url];
-  return found ?? null;
+  return Object.prototype.hasOwnProperty.call(drafts, url) ? drafts[url]! : null;
 }
 
 /**

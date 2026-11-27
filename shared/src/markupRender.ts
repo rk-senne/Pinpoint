@@ -17,6 +17,12 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  * (`<`, `>`, `&`, single quote, double quote). Numbers / arrays handled
  * by callers.
  */
+/** Finite number for an SVG numeric attribute; anything else becomes 0. */
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function escAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -34,9 +40,9 @@ function escAttr(value: string): string {
  */
 function pointsToPathD(points: ReadonlyArray<{ x: number; y: number }>): string {
   if (points.length === 0) return '';
-  let d = `M ${points[0].x} ${points[0].y}`;
+  let d = `M ${num(points[0].x)} ${num(points[0].y)}`;
   for (let i = 1; i < points.length; i++) {
-    d += ` L ${points[i].x} ${points[i].y}`;
+    d += ` L ${num(points[i].x)} ${num(points[i].y)}`;
   }
   return d;
 }
@@ -48,22 +54,22 @@ function pointsToPathD(points: ReadonlyArray<{ x: number; y: number }>): string 
 export function shapeToSvgString(shape: MarkupShape): string {
   if (shape.type === 'rect') {
     return (
-      `<rect x="${shape.x}" y="${shape.y}" width="${shape.width}" height="${shape.height}" ` +
-      `fill="none" stroke="${escAttr(shape.color)}" stroke-width="${shape.strokeWidth}" ` +
+      `<rect x="${num(shape.x)}" y="${num(shape.y)}" width="${num(shape.width)}" height="${num(shape.height)}" ` +
+      `fill="none" stroke="${escAttr(shape.color)}" stroke-width="${num(shape.strokeWidth)}" ` +
       `data-shape="rect" />`
     );
   }
   if (shape.type === 'arrow') {
     return (
-      `<line x1="${shape.x1}" y1="${shape.y1}" x2="${shape.x2}" y2="${shape.y2}" ` +
-      `stroke="${escAttr(shape.color)}" stroke-width="${shape.strokeWidth}" ` +
+      `<line x1="${num(shape.x1)}" y1="${num(shape.y1)}" x2="${num(shape.x2)}" y2="${num(shape.y2)}" ` +
+      `stroke="${escAttr(shape.color)}" stroke-width="${num(shape.strokeWidth)}" ` +
       `marker-end="url(#fl-markup-arrowhead)" data-shape="arrow" />`
     );
   }
   if (shape.type === 'stroke') {
     return (
       `<path d="${pointsToPathD(shape.points)}" fill="none" ` +
-      `stroke="${escAttr(shape.color)}" stroke-width="${shape.strokeWidth}" ` +
+      `stroke="${escAttr(shape.color)}" stroke-width="${num(shape.strokeWidth)}" ` +
       `stroke-linecap="round" stroke-linejoin="round" data-shape="stroke" />`
     );
   }
@@ -74,7 +80,7 @@ export function shapeToSvgString(shape: MarkupShape): string {
   // viewer-side outline matches the stand-in painted by
   // `<fl-markup-editor>` during editing.
   return (
-    `<rect x="${shape.x}" y="${shape.y}" width="${shape.width}" height="${shape.height}" ` +
+    `<rect x="${num(shape.x)}" y="${num(shape.y)}" width="${num(shape.width)}" height="${num(shape.height)}" ` +
     `fill="rgba(0, 0, 0, 0.05)" stroke="#1a1a1a" stroke-dasharray="4 2" stroke-width="1" ` +
     `data-shape="pixelate" />`
   );

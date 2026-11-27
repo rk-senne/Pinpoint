@@ -73,10 +73,23 @@ function handleSessionLost(apiPath: string, status: number): boolean {
  * send credentials on every call so the session cookie travels with
  * the request and the API server identifies the user.
  */
+/**
+ * API paths are relative to API_BASE. Refuse anything that could leave the
+ * API origin (absolute/protocol-relative URLs, backslashes, `..` segments),
+ * so a value that reaches `path` from the URL or the server can never turn a
+ * credentialed request into a cross-origin one.
+ */
+export function assertApiPath(path: string): void {
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\') || /(^|\/)\.\.(\/|$|\?)/.test(path) || /^[a-z][a-z0-9+.-]*:/i.test(path)) {
+    throw new Error(`Refusing non-API path: ${String(path).slice(0, 80)}`);
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  assertApiPath(path);
   const method = (options.method ?? 'GET').toUpperCase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -125,6 +138,7 @@ export async function apiFetchBlob(
   path: string,
   options: RequestInit = {},
 ): Promise<{ blob: Blob; filename: string | null }> {
+  assertApiPath(path);
   const method = (options.method ?? 'GET').toUpperCase();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

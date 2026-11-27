@@ -39,3 +39,24 @@ describe('hasPngSignature', () => {
     expect(hasPngSignature(Buffer.alloc(0))).toBe(false);
   });
 });
+
+describe('inputSanitizer prototype-pollution guard', () => {
+  it('drops __proto__ / constructor / prototype keys from JSON bodies', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(inputSanitizer);
+    let seen: unknown;
+    app.post('/x', (req, res) => {
+      seen = req.body;
+      res.json({ ok: true });
+    });
+    const { request } = await import('../__tests__/supertestClient.js');
+    await request(app)
+      .post('/x')
+      .set('Content-Type', 'application/json')
+      .send('{"a":1,"__proto__":{"polluted":true},"nested":{"constructor":{"prototype":{"x":1}},"b":2}}');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(seen).toEqual({ a: 1, nested: { b: 2 } });
+    expect(Object.getPrototypeOf(seen)).toBe(Object.prototype);
+  });
+});

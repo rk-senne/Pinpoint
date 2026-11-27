@@ -27,6 +27,7 @@
 //     yet (so a missing `dist/` surfaces as an actionable error, not a crash).
 
 import { Router, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -63,7 +64,10 @@ export function createWidgetAssetRoutes(deps: WidgetAssetRouteDeps = {}): Router
   const readFileImpl = deps.readFileImpl ?? readFile;
   const bundlePath = join(distDir, WIDGET_BUNDLE_FILENAME);
 
-  router.get(`/${WIDGET_BUNDLE_FILENAME}`, async (_req: Request, res: Response) => {
+  // Public, unauthenticated file read: throttle per IP (generous; the bundle
+  // is cached by browsers/CDNs, so legitimate traffic is tiny).
+  const assetLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });
+  router.get(`/${WIDGET_BUNDLE_FILENAME}`, assetLimiter, async (_req: Request, res: Response) => {
     let source: Buffer | string;
     try {
       source = await readFileImpl(bundlePath);

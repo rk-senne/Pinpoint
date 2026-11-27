@@ -97,7 +97,7 @@ export class PinpointClient {
 
   constructor(config: PinpointClientConfig) {
     assertValidConfig(config.apiUrl, config.apiKey);
-    this.apiUrl = config.apiUrl.replace(/\/+$/, '');
+    this.apiUrl = trimTrailingSlashes(config.apiUrl);
     this.apiKey = config.apiKey;
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
@@ -223,4 +223,11 @@ function buildQuery(params: Record<string, string | number | undefined>): string
   }
   const qs = sp.toString();
   return qs ? `?${qs}` : '';
+}
+
+/** Strip trailing '/' in linear time (a /\/+$/ regex backtracks on long runs). */
+export function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end--;
+  return url.slice(0, end);
 }

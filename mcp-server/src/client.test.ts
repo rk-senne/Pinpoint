@@ -196,3 +196,15 @@ describe('PinpointClient', () => {
     await expect(c.updateFeedbackStatus({ id: 'f', status: 'active' })).resolves.toBeUndefined();
   });
 });
+
+describe('trimTrailingSlashes', () => {
+  it('strips any number of trailing slashes in linear time', async () => {
+    const { trimTrailingSlashes } = await import('./client.js');
+    expect(trimTrailingSlashes('https://a.example///')).toBe('https://a.example');
+    expect(trimTrailingSlashes('https://a.example')).toBe('https://a.example');
+    const long = 'https://a.example' + '/'.repeat(200_000) + 'x';
+    const t0 = Date.now();
+    expect(trimTrailingSlashes(long)).toBe(long);
+    expect(Date.now() - t0).toBeLessThan(100);
+  });
+});

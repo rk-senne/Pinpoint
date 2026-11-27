@@ -331,3 +331,12 @@ describe('when chrome.storage exists but session is missing', () => {
     await expect(loadDraft('https://x.test/p')).resolves.toBeNull();
   });
 });
+
+describe('draftStore prototype-pollution guard', () => {
+  it('ignores __proto__ / constructor as a draft key and never pollutes Object.prototype', async () => {
+    await saveDraft('__proto__', { body: 'x', severity: 'major', type: 'note' } as never);
+    await saveDraft('constructor', { body: 'y', severity: 'major', type: 'note' } as never);
+    expect(({} as Record<string, unknown>).body).toBeUndefined();
+    expect(await loadDraft('__proto__')).toBeNull();
+  });
+});

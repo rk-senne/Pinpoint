@@ -10,12 +10,20 @@ const MAX_BODY_SIZE = 1_048_576; // 1MB (JSON bodies)
 const SCREENSHOT_ROUTE = /^\/api\/v1\/annotations\/[^/]+\/screenshot\/?$/;
 const MAX_SCREENSHOT_REQUEST_SIZE = 12 * 1024 * 1024;
 
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function sanitize(obj: unknown): unknown {
   if (typeof obj === 'string') return obj.replace(/\0/g, '').trim();
   if (Array.isArray(obj)) return obj.map(sanitize);
   if (obj !== null && typeof obj === 'object') {
+    // '__proto__' / 'constructor' / 'prototype' would rewire the result
+    // (prototype pollution): skip them, and define own properties instead of
+    // assigning so no key can ever reach a setter on Object.prototype.
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = sanitize(v);
+    for (const [k, v] of Object.entries(obj)) {
+      if (UNSAFE_KEYS.has(k)) continue;
+      Object.defineProperty(out, k, { value: sanitize(v), enumerable: true, writable: true, configurable: true });
+    }
     return out;
   }
   return obj;

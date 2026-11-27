@@ -132,7 +132,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$FX_TOOLS/bin" "$FX_LOG_DIR"
-          (cd "$FX_TOOLS" && npm init -y >/dev/null && npm i -E --no-audit --no-fund "selenium-webdriver@${SELENIUM_VERSION}")
+          # Integrity-locked (e2e/firefox/tools/package-lock.json), not a floating install.
+          cp e2e/firefox/tools/package.json e2e/firefox/tools/package-lock.json "$FX_TOOLS/"
+          (cd "$FX_TOOLS" && npm ci --no-audit --no-fund --ignore-scripts)
           dl="$RUNNER_TEMP/dl"; mkdir -p "$dl"
           curl -fsSL --retry 3 -o "$dl/geckodriver.tar.gz" \
             "https://github.com/mozilla/geckodriver/releases/download/v${GECKODRIVER_VERSION}/geckodriver-v${GECKODRIVER_VERSION}-linux64.tar.gz"

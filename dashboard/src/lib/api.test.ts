@@ -226,3 +226,17 @@ describe('apiFetch', () => {
     });
   });
 });
+
+describe('assertApiPath', () => {
+  it('accepts API-relative paths with query strings', async () => {
+    const { assertApiPath } = await import('./api');
+    for (const p of ['/projects', '/projects/abc?page=2&pageSize=100', '/annotations/1/screenshot?redirect=1']) expect(() => assertApiPath(p)).not.toThrow();
+  });
+
+  it('refuses anything that could leave the API origin', async () => {
+    const { assertApiPath } = await import('./api');
+    for (const p of ['https://evil.example/x', '//evil.example/x', 'projects', '/../auth', '/a/../../b', '/a\\b', 'javascript:alert(1)']) {
+      expect(() => assertApiPath(p), p).toThrow(/non-API path/);
+    }
+  });
+});

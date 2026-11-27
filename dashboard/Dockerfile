@@ -10,7 +10,7 @@
 # origin — see dashboard/vite.config.ts.
 
 # ---------- Stage 1: builder ----------
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS builder
 
 WORKDIR /app
 
@@ -37,7 +37,7 @@ RUN npm run build --workspace @pinpoint/shared \
  && npm run build --workspace @pinpoint/dashboard
 
 # ---------- Stage 2: runtime ----------
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runtime
 
 ENV NODE_ENV=production
 

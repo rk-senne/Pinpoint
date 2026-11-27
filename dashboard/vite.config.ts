@@ -25,14 +25,28 @@ export const DASHBOARD_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
+  // Avatars, portal logos and S3-hosted screenshots are user/operator supplied
+  // https URLs; data:/blob: are local previews. No http: images.
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' ws: wss:",
+  // REST and Socket.IO are same-origin behind Caddy ('self' covers ws(s) to
+  // the same host in every current browser). No arbitrary socket hosts.
+  "connect-src 'self'",
   "frame-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "upgrade-insecure-requests",
 ].join('; ');
+
+/** Browser features the dashboard never needs (OWASP HTTP Headers cheat sheet). */
+export const DASHBOARD_PERMISSIONS_POLICY = [
+  'accelerometer=()', 'autoplay=()', 'camera=()', 'display-capture=()', 'geolocation=()',
+  'gyroscope=()', 'magnetometer=()', 'microphone=()', 'midi=()', 'payment=()', 'usb=()',
+  'interest-cohort=()', 'browsing-topics=()',
+].join(', ');
 
 /** `/review/:linkId/frame` is proxied to the API and must stay framable. */
 const REVIEW_FRAME_PATH = /^\/review\/[^/]+\/frame\/?$/;
@@ -49,12 +63,16 @@ export function dashboardSecurityHeaders(pathname: string): Record<string, strin
   const common = {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': DASHBOARD_PERMISSIONS_POLICY,
+    'Cross-Origin-Resource-Policy': 'same-origin',
   };
   if (REVIEW_FRAME_PATH.test(pathname)) return common;
   return {
     ...common,
     'Content-Security-Policy': DASHBOARD_CSP,
     'X-Frame-Options': 'DENY',
+    // Isolates the dashboard's browsing context from cross-origin openers.
+    'Cross-Origin-Opener-Policy': 'same-origin',
   };
 }
 

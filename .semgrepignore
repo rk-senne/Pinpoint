@@ -1,0 +1,15 @@
+# Semgrep ignore (supplements .gitignore). Each entry has a reason.
+
+# Build output / third-party / generated code — not our source.
+node_modules/
+dist/
+dist-firefox/
+coverage/
+*.tsbuildinfo
+
+# Test files contain intentionally fake secrets (hard-coded JWT test keys,
+# google-token-shaped strings used to exercise SecretBox/redaction) and
+# wildcard postMessage targets for jsdom. Secrets in tests are covered by
+# gitleaks (with a scoped allowlist); production code is NOT ignored.
+*.test.ts
+__tests__/

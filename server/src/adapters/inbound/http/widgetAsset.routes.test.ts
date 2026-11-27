@@ -79,3 +79,15 @@ describe('resolveWidgetDistDir', () => {
     }
   });
 });
+
+describe('widget asset rate limit', () => {
+  it('answers 429 after the per-IP budget instead of reading the file unboundedly', async () => {
+    const readFileImpl = vi.fn().mockResolvedValue(Buffer.from('/*w*/', 'utf8'));
+    const app = express();
+    app.use('/widget', createWidgetAssetRoutes({ widgetDistDir: '/fake/dist', readFileImpl }));
+    let last = 0;
+    for (let i = 0; i < 301; i++) last = (await request(app).get(`/widget/${WIDGET_BUNDLE_FILENAME}`)).status;
+    expect(last).toBe(429);
+    expect(readFileImpl.mock.calls.length).toBeLessThanOrEqual(300);
+  }, 30_000);
+});

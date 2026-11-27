@@ -76,7 +76,7 @@ export interface AuthRateLimitOptions {
   /** Per-IP ceiling per minute (default 20). */
   ipLimit?: number;
   /** Per-(IP,email) ceiling per minute (default 5). */
-  ipEmailLimit?: number;
+  ipEmailLimit?: number | (() => number);
   /** Per-email ceiling per 15 minutes across all IPs (default 30). */
   emailLimit?: number;
   /** When true, 2xx/3xx responses don't consume the per-email budget (login). */
@@ -104,7 +104,7 @@ export function createAuthRateLimiter(
   const perIpEmail = rateLimit({
     ...base,
     windowMs: 60 * 1000, // 1 minute (Req 19.1)
-    limit: opts.ipEmailLimit ?? 5, // Req 19.1
+    limit: typeof opts.ipEmailLimit === 'function' ? opts.ipEmailLimit : (opts.ipEmailLimit ?? 5), // Req 19.1
     keyGenerator: (req: Request): string => `${ipOf(req)}:${emailOf(req)}`,
   });
 
@@ -132,6 +132,17 @@ export function createAuthRateLimiter(
 
 /** Auth-surface limiter: login/register/reset/resend/shared-link verify. */
 export const authRateLimiter = createAuthRateLimiter();
+
+/**
+ * 2FA surface (`/auth/login/mfa`, `/auth/mfa/*`): its own stores so MFA traffic
+ * cannot starve (or be starved by) login/register. Requests carry no email, so
+ * the budget is per IP: 10/min (the per-user lockout in MfaService is the real
+ * brute-force control; this bounds a single address spraying many challenges).
+ */
+export const mfaRateLimiter = createAuthRateLimiter({
+  // MFA_RATE_LIMIT_MAX (read per request) lets E2E / integration runs from one machine raise it.
+  ipEmailLimit: () => Number(process.env.MFA_RATE_LIMIT_MAX) || 10,
+});
 
 /** Login variant: successful sign-ins don't burn the per-email budget. */
 export const loginRateLimiter = createAuthRateLimiter({ skipSuccessfulForEmail: true });

@@ -30,6 +30,8 @@ import type { RequestPasswordReset } from '../../../domain/auth/usecases/request
 import type { CompletePasswordReset } from '../../../domain/auth/usecases/completePasswordReset.js';
 import type { ResendVerification } from '../../../domain/auth/usecases/resendVerification.js';
 import type { Logout } from '../../../domain/auth/usecases/logout.js';
+import type { MfaService } from '../../../domain/auth/mfa/MfaService.js';
+import { Unauthorized } from '../../../domain/shared/DomainError.js';
 import { sendDomainError, sendZodFailure, paramString } from './errors.js';
 
 export interface AuthRouteDeps {
@@ -55,6 +57,8 @@ export interface AuthRouteDeps {
    * root passes `process.env.NODE_ENV === 'test'` here.
    */
   cookieInsecure?: boolean;
+  /** TOTP step-up (`POST /login/mfa`). When absent the endpoint answers 404 and accounts never get a challenge. */
+  mfa?: MfaService;
   /** PP-15: binds the CSRF token to the issued session. Without it a random nonce is used. */
   csrfBinder?: CsrfBinder;
 }
@@ -71,6 +75,12 @@ const RegisterBodySchema = z.object({
 const LoginBodySchema = z.object({
   email: z.string().min(1, 'Email is required.').max(254),
   password: z.string().min(1, 'Password is required.').max(256),
+});
+
+const LoginMfaBodySchema = z.object({
+  mfaToken: z.string().min(1).max(512),
+  // 6-digit TOTP or an XXXXX-XXXXX recovery code.
+  code: z.string().min(1).max(32),
 });
 
 const ResetRequestBodySchema = z.object({
@@ -128,7 +138,50 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       sendZodFailure(res, 'Invalid login payload.', parsed.error.flatten());
       return;
     }
-    const result = await login.execute(parsed.data);
+    const result = await login.begin(parsed.data);
+    if (!result.ok) {
+      sendDomainError(res, result.error);
+      return;
+    }
+    if ('mfaRequired' in result.value) {
+      // Password was correct but a second factor is required: no cookies, no user.
+      res.status(200).json({ mfaRequired: true, mfaToken: result.value.mfaToken });
+      return;
+    }
+    const { user, token } = result.value;
+    const csrfToken = csrfBinder ? csrfBinder.mintForToken(token) : result.value.csrfToken;
+    res.setHeader('Set-Cookie', [
+      buildSessionCookie(token, cookieInsecure),
+      buildCsrfCookie(csrfToken, cookieInsecure),
+    ]);
+    res.status(200).json({ user, token, csrfToken });
+  });
+
+  // POST /login/mfa -------------------------------------------------------
+  // Step two for accounts with TOTP enabled. The challenge from /login proves
+  // the password step; the code (TOTP or recovery) proves the second factor.
+  router.post('/login/mfa', async (req: Request, res: Response) => {
+    if (!deps.mfa) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found.' } });
+      return;
+    }
+    const parsed = LoginMfaBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendZodFailure(res, 'Invalid login payload.', parsed.error.flatten());
+      return;
+    }
+    const userId = deps.mfa.verifyChallenge(parsed.data.mfaToken);
+    if (!userId) {
+      sendDomainError(res, new Unauthorized('The sign-in session expired. Sign in again.', 'MFA_CHALLENGE_INVALID'));
+      return;
+    }
+    (req as Request & { auditActorId?: string }).auditActorId = userId;
+    const second = await deps.mfa.verifySecondFactor(userId, parsed.data.code);
+    if (!second.ok) {
+      sendDomainError(res, second.error);
+      return;
+    }
+    const result = await login.completeMfa(userId);
     if (!result.ok) {
       sendDomainError(res, result.error);
       return;
@@ -139,7 +192,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Router {
       buildSessionCookie(token, cookieInsecure),
       buildCsrfCookie(csrfToken, cookieInsecure),
     ]);
-    res.status(200).json({ user, token, csrfToken });
+    res.status(200).json({ user, token, csrfToken, mfaMethod: second.value.method });
   });
 
   // POST /verify-email/:token --------------------------------------------

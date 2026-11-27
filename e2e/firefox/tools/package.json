@@ -1,0 +1,6 @@
+{
+  "name": "pinpoint-firefox-harness-tools",
+  "private": true,
+  "description": "Pinned, integrity-locked tools for the real-Firefox harness (installed in CI with npm ci).",
+  "dependencies": { "selenium-webdriver": "4.53.0" }
+}

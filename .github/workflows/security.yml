@@ -59,9 +59,11 @@ jobs:
       - name: Semgrep CE (OSS rules)
         env:
           SEMGREP_SEND_METRICS: 'off'
+        # Official image pinned by digest (a hash-pinned install, unlike a bare pip install).
         run: |
-          python3 -m pip install --quiet "semgrep==${SEMGREP_VERSION}"
-          semgrep scan --metrics=off --error \
+          docker run --rm -e SEMGREP_SEND_METRICS=off -v "$PWD:/src" -w /src \
+            "semgrep/semgrep:${SEMGREP_VERSION}@sha256:0c8dfa7aa1ca8c50233ec9110e8cd88d139dedd603d56507493f74c6f4b3e062" \
+            semgrep scan --metrics=off --error \
             --config p/javascript --config p/typescript --config p/nodejs \
             --config p/expressjs --config p/owasp-top-ten --config p/secrets \
             server/src dashboard/src widget/src extension/src shared/src mcp-server/src scripts

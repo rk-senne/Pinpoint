@@ -30,6 +30,8 @@ RUN npm ci --workspace @pinpoint/shared --workspace @pinpoint/dashboard --includ
 
 COPY shared ./shared
 COPY dashboard ./dashboard
+# Legal pages are bundled from the markdown sources (?raw imports).
+COPY docs/legal ./docs/legal
 
 RUN npm run build --workspace @pinpoint/shared \
  && npm run build --workspace @pinpoint/dashboard
@@ -64,5 +66,9 @@ COPY dashboard/tsconfig.json ./dashboard/tsconfig.json
 WORKDIR /app/dashboard
 
 EXPOSE 4173
+
+# Unprivileged runtime: vite preview only reads the built bundle.
+RUN chown -R node:node /app/dashboard
+USER node
 
 CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]

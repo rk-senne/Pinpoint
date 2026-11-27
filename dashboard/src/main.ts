@@ -91,6 +91,8 @@ defineRoute('/integrations', lazyRoute(() => import('./pages/IntegrationsPage').
 defineRoute('/portals', lazyRoute(() => import('./pages/ClientPortalPage').then((m) => m.mountClientPortalPage)));
 defineRoute('/portal/:slug', lazyRoute(() => import('./pages/PortalGuestPage').then((m) => m.mountPortalGuestPage)));
 defineRoute('/invitations/accept', lazyRoute(() => import('./pages/AcceptInvitationPage').then((m) => m.mountAcceptInvitationPage)));
+defineRoute('/legal', lazyRoute(() => import('./pages/LegalPage').then((m) => m.mountLegalPage)));
+defineRoute('/legal/:doc', lazyRoute(() => import('./pages/LegalPage').then((m) => m.mountLegalPage)));
 setFallback(mountNotFoundPage);
 start(root);
 

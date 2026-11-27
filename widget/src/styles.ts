@@ -139,6 +139,13 @@ export function getStyles(theme: WidgetTheme): string {
       font-weight: 400;
     }
 
+    .pinpoint-privacy-notice {
+      margin: 0 0 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #6b7280;
+    }
+
     .pinpoint-form-group textarea,
     .pinpoint-form-group input,
     .pinpoint-form-group select {

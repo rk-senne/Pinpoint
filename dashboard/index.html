@@ -57,6 +57,12 @@
           <aside data-slot="sidebar" role="navigation" aria-label="Main navigation" style="width: 260px; border-right: 1px solid var(--pp-border); background: var(--pp-bg-secondary); overflow-y: auto;"></aside>
           <main data-slot="content" id="main-content" role="main" style="flex: 1; padding: 16px 24px; overflow-y: auto;"></main>
         </div>
+        <footer data-role="legal-footer" style="display: flex; flex-wrap: wrap; gap: 4px 16px; justify-content: center; padding: 8px 20px; border-top: 1px solid var(--pp-border); background: var(--pp-bg-primary); font-size: 12px;">
+          <a data-route href="/legal/terms" style="color: var(--pp-text-secondary);">Terms</a>
+          <a data-route href="/legal/privacy" style="color: var(--pp-text-secondary);">Privacy</a>
+          <a data-route href="/legal/cookies" style="color: var(--pp-text-secondary);">Cookies</a>
+          <a data-route href="/legal/subprocessors" style="color: var(--pp-text-secondary);">Sub-processors</a>
+        </footer>
       </div>
     </template>
 
@@ -368,6 +374,38 @@
             />
           </div>
 
+          <div
+            data-slot="mfaField"
+            class="fl-auth-page__field"
+            hidden
+            style="margin-bottom: 24px;"
+          >
+            <label
+              for="fl-auth-code"
+              style="display: block; margin-bottom: 4px; font-size: 14px;"
+            >Authentication code</label>
+            <input
+              id="fl-auth-code"
+              name="code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="32"
+              aria-describedby="fl-auth-code-hint"
+              style="
+                width: 100%;
+                padding: 8px;
+                border-radius: 4px;
+                border: 1px solid var(--pp-input-border);
+                box-sizing: border-box;
+              "
+            />
+            <p
+              id="fl-auth-code-hint"
+              style="margin: 4px 0 0; font-size: 12px; color: var(--pp-text-tertiary);"
+            >Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+          </div>
+
           <button
             type="submit"
             data-slot="submitBtn"
@@ -409,6 +447,15 @@
             style="text-align: center; margin: 0; font-size: 14px;"
           >
             <a href="/reset-password" data-route style="color: var(--pp-link-alt);">Forgot password?</a>
+          </p>
+          <p
+            data-role="legal-footer"
+            style="text-align: center; margin: 16px 0 0; font-size: 12px;"
+          >
+            <a href="/legal/terms" data-route style="color: var(--pp-text-secondary);">Terms</a> ·
+            <a href="/legal/privacy" data-route style="color: var(--pp-text-secondary);">Privacy</a> ·
+            <a href="/legal/cookies" data-route style="color: var(--pp-text-secondary);">Cookies</a> ·
+            <a href="/legal/subprocessors" data-route style="color: var(--pp-text-secondary);">Sub-processors</a>
           </p>
         </form>
       </div>
@@ -1342,6 +1389,7 @@
               style="padding: 8px 20px; background: var(--pp-accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;"
             >Save</button>
           </form>
+          <div data-role="two-factor-container"></div>
         </section>
 
         <!-- Notifications tab. -->

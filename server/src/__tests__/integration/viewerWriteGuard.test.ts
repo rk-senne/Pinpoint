@@ -35,6 +35,14 @@ const NOT_VIEWER_GUARDED = new Set<string>([
   'POST /api/v1/widget/feedback', // widget key, not a session
   // self-service: only touches the caller's own account / session
   'PUT /api/v1/users/me',
+  // 2FA is per-account security, never tenant data (viewers must be able to protect their account)
+  'POST /api/v1/auth/login/mfa',
+  'POST /api/v1/auth/mfa/enroll',
+  'POST /api/v1/auth/mfa/verify',
+  'POST /api/v1/auth/mfa/disable',
+  'POST /api/v1/auth/mfa/recovery-codes',
+  'POST /api/v1/auth/mfa/*splat', // rate-limiter mount for the routes above, not a handler
+  'DELETE /api/v1/privacy/account', // a viewer may erase their own account
   'PUT /api/v1/users/me/notifications',
   'PUT /api/v1/notifications/preferences',
   'POST /api/v1/notifications/read-all',

@@ -79,6 +79,9 @@ render() { # render NAME VAR=value...  -> $TMP/NAME/alertmanager.yml
   local name="$1"
   shift
   env -i PATH="$PATH" ALERTMANAGER_OUT_DIR="$TMP/$name" "$@" sh "$MON/render-alertmanager.sh" 2>/dev/null
+  # render-alertmanager.sh writes 0600/0700 (secrets) on purpose; these are
+  # throwaway test renders, so let the amtool container (non-root) read them.
+  chmod -R a+rX "$TMP/$name"
   amtool check-config "$TMP/$name/alertmanager.yml"
 }
 render email-only ALERT_EMAIL_TO=ops@example.com SMTP_HOST=smtp.example.com

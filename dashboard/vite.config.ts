@@ -25,9 +25,9 @@ export const DASHBOARD_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  // Avatars, portal logos and S3-hosted screenshots are user/operator supplied
-  // https URLs; data:/blob: are local previews. No http: images.
-  "img-src 'self' data: blob: https:",
+  // Same-origin images (local-disk screenshots) and local previews only by
+  // default; extra https origins (S3/CDN, avatar hosts) via imageOrigins().
+  "img-src 'self' data: blob:",
   // REST and Socket.IO are same-origin behind Caddy ('self' covers ws(s) to
   // the same host in every current browser). No arbitrary socket hosts.
   "connect-src 'self'",
@@ -59,7 +59,39 @@ const REVIEW_FRAME_PATH = /^\/review\/[^/]+\/frame\/?$/;
  * dashboard from framing it. (A static `preview.headers` map cannot express
  * that exemption, hence the plugin.)
  */
-export function dashboardSecurityHeaders(pathname: string): Record<string, string> {
+/**
+ * Extra https origins images may load from: the S3/CDN screenshot host and
+ * operator-approved avatar/logo hosts (PINPOINT_IMG_ORIGINS, comma-separated).
+ * Anything else falls back to initials (avatars) or is hidden (logos), which
+ * also stops third-party image hosts from tracking dashboard users.
+ */
+export function imageOrigins(env: Record<string, string | undefined>): string[] {
+  const raw = [env.S3_PUBLIC_BASE_URL, env.S3_ENDPOINT, ...(env.PINPOINT_IMG_ORIGINS ?? '').split(',')];
+  const out = new Set<string>();
+  for (const v of raw) {
+    const t = (v ?? '').trim();
+    if (!t) continue;
+    try {
+      const u = new URL(t);
+      if (u.protocol === 'https:' && !u.username && !u.password) out.add(u.origin);
+    } catch {
+      /* ignore invalid entries */
+    }
+  }
+  return [...out].sort();
+}
+
+/** The dashboard CSP with the configured image origins appended to img-src. */
+export function buildDashboardCsp(env: Record<string, string | undefined> = {}): string {
+  const extra = imageOrigins(env);
+  if (extra.length === 0) return DASHBOARD_CSP;
+  return DASHBOARD_CSP.replace("img-src 'self' data: blob:", `img-src 'self' data: blob: ${extra.join(' ')}`);
+}
+
+export function dashboardSecurityHeaders(
+  pathname: string,
+  env: Record<string, string | undefined> = {},
+): Record<string, string> {
   const common = {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -69,7 +101,7 @@ export function dashboardSecurityHeaders(pathname: string): Record<string, strin
   if (REVIEW_FRAME_PATH.test(pathname)) return common;
   return {
     ...common,
-    'Content-Security-Policy': DASHBOARD_CSP,
+    'Content-Security-Policy': buildDashboardCsp(env),
     'X-Frame-Options': 'DENY',
     // Isolates the dashboard's browsing context from cross-origin openers.
     'Cross-Origin-Opener-Policy': 'same-origin',
@@ -83,7 +115,7 @@ const previewSecurityHeaders = (): Plugin => ({
   configurePreviewServer(server) {
     server.middlewares.use((req, res, next) => {
       const pathname = (req.url ?? '/').split('?', 1)[0] ?? '/';
-      for (const [k, v] of Object.entries(dashboardSecurityHeaders(pathname))) {
+      for (const [k, v] of Object.entries(dashboardSecurityHeaders(pathname, process.env))) {
         res.setHeader(k, v);
       }
       next();

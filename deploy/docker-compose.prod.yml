@@ -166,9 +166,14 @@ services:
       # `vite preview` also proxies /api etc. to the API; Caddy routes those
       # paths straight to `api`, so this is only a safety net.
       API_PROXY_TARGET: http://api:3001
+      # Extra https origins images may load from (CSP img-src): S3/CDN
+      # screenshots and approved avatar/logo hosts. See docs/DEPLOYMENT.md.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      PINPOINT_IMG_ORIGINS: ${PINPOINT_IMG_ORIGINS:-}
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     restart: unless-stopped
     depends_on:
       - api

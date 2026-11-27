@@ -716,6 +716,7 @@ that is unset or empty falls back to the default.
 | `S3_BUCKET` | `pinpoint` | server | Bucket for screenshots (`s3` driver). |
 | `S3_REGION` | `us-east-1` (the SDK's `AWS_REGION` is also honoured) | server | Bucket region (`auto` for Cloudflare R2). |
 | `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_BASE_URL` | unset / `false` / unset | server | S3-compatible storage (MinIO, etc.) options. Use `S3_FORCE_PATH_STYLE=true` with MinIO. The bucket is expected to be **private**: `GET /api/v1/annotations/:id/screenshot` returns a short-lived (15 min) presigned URL that the browser can load directly, so `S3_ENDPOINT` must be reachable from the user's browser. Set `S3_PUBLIC_BASE_URL` (CDN / public bucket) to get plain `<base>/<key>` URLs instead. |
+| `PINPOINT_IMG_ORIGINS` | unset | dashboard (preview server) | Comma-separated extra **https** origins the dashboard CSP allows images from (e.g. avatar hosts). `S3_ENDPOINT` / `S3_PUBLIC_BASE_URL` origins are added automatically. Other external avatars fall back to initials and portal logos are hidden, so third-party image hosts never see dashboard users. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | unset | server | Credentials for the bucket (the standard AWS SDK provider chain; for MinIO use its root/service-account key). Without resolvable credentials screenshot uploads fail with 503 `UNAVAILABLE`. |
 | `S3_KEY_PREFIX` | `annotations/screenshots` | server | Object key prefix. |
 

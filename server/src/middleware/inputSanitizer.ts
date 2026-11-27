@@ -16,11 +16,13 @@ function sanitize(obj: unknown): unknown {
   if (typeof obj === 'string') return obj.replace(/\0/g, '').trim();
   if (Array.isArray(obj)) return obj.map(sanitize);
   if (obj !== null && typeof obj === 'object') {
+    // '__proto__' / 'constructor' / 'prototype' would rewire the result
+    // (prototype pollution): skip them, and define own properties instead of
+    // assigning so no key can ever reach a setter on Object.prototype.
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
-      // '__proto__' / 'constructor' / 'prototype' would rewire `out` (prototype pollution).
       if (UNSAFE_KEYS.has(k)) continue;
-      out[k] = sanitize(v);
+      Object.defineProperty(out, k, { value: sanitize(v), enumerable: true, writable: true, configurable: true });
     }
     return out;
   }

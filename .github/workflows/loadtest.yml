@@ -1,0 +1,128 @@
+name: Load test
+
+# Smoke (~2 min of k6 traffic) on every PR to main and every push to main; the full
+# suite (baseline, reads, writes, burst, widget, stress ramp, realtime fan-out, soak)
+# on demand. Everything runs on the GitHub runner against the Compose dev stack
+# (API + Postgres + Redis + Mailpit); no paid services and no hosted k6 cloud.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'smoke (~2 min) or full (~25 min: baseline, reads, writes, burst, widget, stress, realtime, soak)'
+        type: choice
+        options: [smoke, full]
+        default: smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loadtest-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Official release tarball + its published sha256 (k6-<ver>-checksums.txt on the release page).
+  K6_VERSION: v1.8.3
+  K6_SHA256: c4f9525c6fbd544a27e9bd72edbb318627ecdb16a4b9cd0ffd8b6ea1006bd8a3
+  COMPOSE: docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml
+  # Compose dev defaults (docker-compose.yml): same secret the API container uses, DB owner on loopback.
+  JWT_SECRET: dev-secret-change-in-production
+  DB_HOST: 127.0.0.1
+  DB_PORT: '5432'
+  DB_NAME: pinpoint
+  DB_USER: postgres
+  DB_PASSWORD: postgres
+
+jobs:
+  loadtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The seeder uses Node's native TypeScript type stripping (>= 22.18).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.18'
+          cache: npm
+
+      - name: Install k6 (official release tarball, sha256 verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o k6.tgz "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz"
+          echo "${K6_SHA256}  k6.tgz" | sha256sum -c -
+          tar -xzf k6.tgz --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          sudo install -m 0755 k6 /usr/local/bin/k6
+          k6 version
+
+      - run: npm ci
+
+      - name: Start the Compose stack (db, migrations, redis, mailpit, api)
+        run: |
+          set -euo pipefail
+          $COMPOSE up -d --build api
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:3001/health >/dev/null 2>&1; then echo "API healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "API did not become healthy" >&2
+          $COMPOSE logs --no-color api | tail -50
+          exit 1
+
+      - name: Seed the load-test dataset
+        # Smoke: 10 % of the annotation/comment rows keeps seeding to a few seconds.
+        run: |
+          set -euo pipefail
+          SCALE="1"
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'full' }}" != "true" ]; then SCALE="0.1"; fi
+          node loadtest/seed.mts "--scale=${SCALE}"
+
+      - name: k6 smoke (lenient CI thresholds)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.suite == 'full') }}
+        env:
+          # A shared 2-vCPU runner running API + Postgres + Redis + k6 is far slower than the dev box.
+          READ_P95_MS: '1500'
+          WRITE_P95_MS: '2500'
+          MAX_ERROR_RATE: '0.02'
+        run: k6 run --quiet loadtest/scenarios/smoke.js
+
+      - name: Full suite
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'full' }}
+        env:
+          READ_P95_MS: '1000'
+          WRITE_P95_MS: '1500'
+          MAX_ERROR_RATE: '0.02'
+        run: |
+          set -uo pipefail
+          rc=0
+          k6 run --quiet --env DURATION=3m loadtest/scenarios/mixed.js || rc=1
+          k6 run --quiet --env DURATION=2m --env THINK_SECONDS=1 loadtest/scenarios/reads.js || rc=1
+          k6 run --quiet --env DURATION=2m --env THINK_SECONDS=1 loadtest/scenarios/writes.js || rc=1
+          k6 run --quiet --env DURATION=20s loadtest/scenarios/burst.js || rc=1
+          k6 run --quiet --env DURATION=1m loadtest/scenarios/widget.js || rc=1
+          # Stress finds the breaking point; it reports, it does not gate.
+          k6 run --quiet --env STEPS=25,50,100,200,400,800 --env STEP_DURATION=20s loadtest/scenarios/stress.js || true
+          node loadtest/realtime.mjs || rc=1
+          # Soak: 10 min at 25 req/s with API memory sampled from /metrics.
+          node loadtest/soak-monitor.mjs & mon=$!
+          k6 run --quiet --env RPS=25 --env DURATION=10m loadtest/scenarios/soak.js || rc=1
+          wait "$mon" || rc=1
+          exit "$rc"
+
+      - name: API logs (on failure)
+        if: failure()
+        run: $COMPOSE logs --no-color api | tail -200
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: loadtest-results
+          path: loadtest/results/
+          if-no-files-found: ignore
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE down -v

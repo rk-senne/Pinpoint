@@ -8,6 +8,13 @@ branch. Everything in **Expected** is checked in review using the PR template.
 
 1. Branch from `main`, open a pull request. Direct pushes to `main` and
    force-pushes are blocked for everyone, admins included.
+
+`main` branch protection (applied 27 Nov 2026): pull request required; all 13
+checks below required; branch must be up to date (`strict`); conversations
+resolved; force-push and deletion blocked; enforced for admins. Required
+approvals are **0** while there is a single maintainer (GitHub does not let an
+author approve their own PR). **Raise it to 1** when a second maintainer joins:
+Settings → Branches → `main` → *Require approvals*.
 2. All required checks must be green, and the branch must be up to date with
    `main`.
 3. Merge. A push to `main` publishes the Docker images to GHCR (`<sha>` and

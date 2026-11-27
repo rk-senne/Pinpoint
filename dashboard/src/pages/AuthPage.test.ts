@@ -53,6 +53,10 @@ const AUTH_PAGE_TEMPLATE_HTML = `
         <label for="fl-auth-password">Password</label>
         <input id="fl-auth-password" name="password" type="password" required />
       </div>
+      <div data-slot="mfaField" hidden>
+        <label for="fl-auth-code">Authentication code</label>
+        <input id="fl-auth-code" name="code" type="text" />
+      </div>
       <button type="submit" data-slot="submitBtn"></button>
       <p>
         <span data-slot="switchPrompt"></span>
@@ -245,6 +249,8 @@ describe('mountAuthPage', () => {
     $byName(root, 'name').value = 'Alice';
     $byName(root, 'email').value = 'alice@example.test';
     $byName(root, 'password').value = 'password123';
+    // The terms checkbox is required (GDPR Art. 7 / POPIA s.11 proof of acceptance).
+    (root.querySelector('input[name="acceptTerms"]') as HTMLInputElement).checked = true;
 
     $form(root).dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
 
@@ -258,6 +264,7 @@ describe('mountAuthPage', () => {
       email: 'alice@example.test',
       password: 'password123',
       name: 'Alice',
+      acceptTerms: true,
     });
 
     // Registration never signs the user in (verify-first, no enumeration):
@@ -359,6 +366,122 @@ describe('mountAuthPage', () => {
     // restored before the navigation runs (the loading signal flips back
     // in the `finally`).
     expect(submitBtn.textContent).toBe('Log In');
+  });
+
+  describe('two-factor step-up', () => {
+    const submit = (root: HTMLElement): void => {
+      $form(root).dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    };
+    const settle = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    it('a mfaRequired answer swaps the credential fields for the code field and issues NO session', async () => {
+      const root = makeRoot();
+      const fetchSpy = vi.fn(() => Promise.resolve(jsonResponse({ mfaRequired: true, mfaToken: 'challenge-1' })));
+      vi.stubGlobal('fetch', fetchSpy);
+      mountAuthPage(root);
+      $byName(root, 'email').value = 'alice@example.test';
+      $byName(root, 'password').value = 'password123';
+      submit(root);
+      await settle();
+
+      expect($bySlot(root, 'title').textContent).toBe('Two-factor authentication');
+      expect($bySlot(root, 'mfaField').hasAttribute('hidden')).toBe(false);
+      expect($byName(root, 'email').closest('div')!.hidden).toBe(true);
+      expect($byName(root, 'password').closest('div')!.hidden).toBe(true);
+      expect($byName(root, 'password').value).toBe(''); // password is not kept around
+      expect(getToken()).toBeNull();
+      expect(authStore.isAuthenticated.get()).toBe(false);
+      expect(location.pathname).toBe('/auth');
+    });
+
+    it('posts the challenge + code to /auth/login/mfa and signs in on success', async () => {
+      const root = makeRoot();
+      const fetchSpy = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ mfaRequired: true, mfaToken: 'challenge-1' }))
+        .mockResolvedValueOnce(jsonResponse({ user: sampleUser, token: 'jwt-after-mfa', csrfToken: 'csrf-1' }));
+      vi.stubGlobal('fetch', fetchSpy);
+      mountAuthPage(root);
+      $byName(root, 'email').value = 'alice@example.test';
+      $byName(root, 'password').value = 'password123';
+      submit(root);
+      await settle();
+
+      $byName(root, 'code').value = ' 123456 ';
+      submit(root);
+      await settle();
+
+      const [url, init] = fetchSpy.mock.calls[1] as unknown as [string, RequestInit];
+      expect(url).toBe('/api/v1/auth/login/mfa');
+      expect(JSON.parse(init.body as string)).toEqual({ mfaToken: 'challenge-1', code: '123456' });
+      expect(getToken()).toBe('jwt-after-mfa');
+      expect(authStore.currentUser.get()).toEqual(sampleUser);
+      expect(location.pathname).toBe('/');
+    });
+
+    it('a wrong code shows the error, clears the field and stays on the code step', async () => {
+      const root = makeRoot();
+      const fetchSpy = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ mfaRequired: true, mfaToken: 'challenge-1' }))
+        .mockResolvedValueOnce(jsonResponse({ error: { code: 'INVALID_MFA_CODE', message: 'Invalid authentication code.' } }, { status: 401 }));
+      vi.stubGlobal('fetch', fetchSpy);
+      mountAuthPage(root);
+      $byName(root, 'email').value = 'alice@example.test';
+      $byName(root, 'password').value = 'password123';
+      submit(root);
+      await settle();
+      $byName(root, 'code').value = '000000';
+      submit(root);
+      await settle();
+
+      expect($bySlot(root, 'error').textContent).toBe('Invalid authentication code.');
+      expect($byName(root, 'code').value).toBe('');
+      expect($bySlot(root, 'title').textContent).toBe('Two-factor authentication');
+      expect(getToken()).toBeNull();
+    });
+
+    it('an expired challenge returns to the password step', async () => {
+      const root = makeRoot();
+      const fetchSpy = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ mfaRequired: true, mfaToken: 'challenge-1' }))
+        .mockResolvedValueOnce(jsonResponse({ error: { code: 'MFA_CHALLENGE_INVALID', message: 'The sign-in session expired. Sign in again.' } }, { status: 401 }));
+      vi.stubGlobal('fetch', fetchSpy);
+      mountAuthPage(root);
+      $byName(root, 'email').value = 'alice@example.test';
+      $byName(root, 'password').value = 'password123';
+      submit(root);
+      await settle();
+      $byName(root, 'code').value = '123456';
+      submit(root);
+      await settle();
+
+      expect($bySlot(root, 'title').textContent).toBe('Log In');
+      expect($bySlot(root, 'mfaField').hasAttribute('hidden')).toBe(true);
+      expect($bySlot(root, 'error').textContent).toContain('expired');
+    });
+
+    it('an empty code never reaches the network; "Back to log in" abandons the challenge', async () => {
+      const root = makeRoot();
+      const fetchSpy = vi.fn().mockResolvedValueOnce(jsonResponse({ mfaRequired: true, mfaToken: 'challenge-1' }));
+      vi.stubGlobal('fetch', fetchSpy);
+      mountAuthPage(root);
+      $byName(root, 'email').value = 'alice@example.test';
+      $byName(root, 'password').value = 'password123';
+      submit(root);
+      await settle();
+      submit(root);
+      await settle();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect($bySlot(root, 'error').textContent).toBe('Enter your authentication code.');
+
+      expect($bySlot(root, 'switchBtn').textContent).toBe('Back to log in');
+      ($bySlot(root, 'switchBtn') as HTMLButtonElement).click();
+      expect($bySlot(root, 'title').textContent).toBe('Log In');
+      expect($bySlot(root, 'mfaField').hasAttribute('hidden')).toBe(true);
+      expect($byName(root, 'email').closest('div')!.hidden).toBe(false);
+    });
   });
 
   it('teardown removes the rendered DOM and stops handling events', () => {

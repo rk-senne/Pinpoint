@@ -22,13 +22,20 @@
 import { signal } from '@pinpoint/shared';
 import type { User } from '@pinpoint/shared';
 
-import { apiFetch } from '../lib/api';
+import { ApiError, apiFetch } from '../lib/api';
 import { setCsrfToken, setToken } from '../lib/auth';
 import { attr, bindEvents, cloneTemplate, mount, requireSlot, text } from '../lib/render';
 import { navigate } from '../lib/router';
 import { setCurrentUser } from '../lib/stores';
+import { mountTermsConsent } from '../components/TermsConsent';
 
-type AuthMode = 'login' | 'register';
+type AuthMode = 'login' | 'register' | 'mfa';
+
+/** Step-one answer for an account with 2FA on: no session yet, only a short-lived challenge. */
+interface MfaChallengeResponse {
+  mfaRequired: true;
+  mfaToken: string;
+}
 
 interface AuthResponse {
   user: User;
@@ -79,13 +86,34 @@ export function mountAuthPage(
   const submitBtn = requireSlot(pageRoot, 'submitBtn') as HTMLButtonElement;
   const switchPrompt = requireSlot(pageRoot, 'switchPrompt');
   const switchBtn = requireSlot(pageRoot, 'switchBtn');
+  const mfaField = requireSlot(pageRoot, 'mfaField');
+  const codeInput = requireInput(pageRoot, 'code');
+  const emailField = (emailInput.closest('.fl-auth-page__field') ?? emailInput.parentElement) as HTMLElement;
+  const passwordField = (passwordInput.closest('.fl-auth-page__field') ?? passwordInput.parentElement) as HTMLElement;
+  const forgotRow = pageRoot.querySelector<HTMLElement>('[data-slot="forgotRow"]');
+  /** Challenge from step one; memory only, never persisted. */
+  let mfaToken = '';
+  // Required "I agree to the Terms and Privacy Policy" checkbox (register mode only).
+  const termsConsent = mountTermsConsent(submitBtn);
 
   // ---- Render helpers -----------------------------------------------------
   function renderModeChrome(m: AuthMode): void {
-    text(titleEl, m === 'login' ? 'Log In' : 'Register');
-    text(switchPrompt, m === 'login' ? "Don't have an account? " : 'Already have an account? ');
-    text(switchBtn, m === 'login' ? 'Register' : 'Log In');
+    text(titleEl, m === 'login' ? 'Log In' : m === 'register' ? 'Register' : 'Two-factor authentication');
+    text(
+      switchPrompt,
+      m === 'login' ? "Don't have an account? " : m === 'register' ? 'Already have an account? ' : '',
+    );
+    text(switchBtn, m === 'login' ? 'Register' : m === 'register' ? 'Log In' : 'Back to log in');
 
+    // Step two replaces the credential fields with the code field.
+    const inMfa = m === 'mfa';
+    emailField.hidden = inMfa;
+    passwordField.hidden = inMfa;
+    mfaField.hidden = !inMfa;
+    if (forgotRow) forgotRow.hidden = inMfa;
+    if (inMfa) codeInput.focus();
+
+    termsConsent.setVisible(m === 'register');
     if (m === 'register') {
       nameField.removeAttribute('hidden');
       attr(nameInput, 'required', '');
@@ -100,7 +128,7 @@ export function mountAuthPage(
     submitBtn.disabled = isLoading;
     text(
       submitBtn,
-      isLoading ? 'Please wait…' : m === 'login' ? 'Log In' : 'Register',
+      isLoading ? 'Please wait…' : m === 'register' ? 'Register' : m === 'mfa' ? 'Verify' : 'Log In',
     );
   }
 
@@ -145,6 +173,8 @@ export function mountAuthPage(
     toggleMode: (e) => {
       e.preventDefault();
       mode.set(mode.get() === 'login' ? 'register' : 'login');
+      mfaToken = '';
+      codeInput.value = '';
       errorMessage.set('');
     },
   });
@@ -158,20 +188,40 @@ export function mountAuthPage(
     const name = nameInput.value.trim();
     const m = mode.get();
 
+    if (m === 'mfa') {
+      await handleMfaSubmit();
+      return;
+    }
+
     if (!email || !password || (m === 'register' && !name)) {
       errorMessage.set('Please fill in all fields.');
       return;
     }
 
+    if (m === 'register' && !termsConsent.isChecked()) {
+      termsConsent.setError('You must agree to the Terms of Service and Privacy Policy to register.');
+      return;
+    }
+    termsConsent.setError(null);
+
     loading.set(true);
     try {
       const path = m === 'login' ? '/auth/login' : '/auth/register';
-      const body = m === 'login' ? { email, password } : { email, password, name };
+      const body = m === 'login' ? { email, password } : { email, password, name, acceptTerms: true };
 
-      const data = await apiFetch<AuthResponse>(path, {
+      const data = await apiFetch<AuthResponse | MfaChallengeResponse>(path, {
         method: 'POST',
         body: JSON.stringify(body),
       });
+
+      if ('mfaRequired' in data) {
+        // Password accepted; the server wants a second factor before it issues a session.
+        mfaToken = data.mfaToken;
+        passwordInput.value = '';
+        codeInput.value = '';
+        mode.set('mfa');
+        return;
+      }
 
       if (m === 'register') {
         // Registration never signs the user in: the account must be
@@ -184,16 +234,7 @@ export function mountAuthPage(
         return;
       }
 
-      setToken(data.token);
-      // Capture the CSRF token mirrored in the login response into the
-      // module-level slot read by `apiFetch` (Task 7.4, Req 18.4). The
-      // store no longer mirrors the token because no consumer needed
-      // reactive subscription to its raw value.
-      if (data.csrfToken) {
-        setCsrfToken(data.csrfToken);
-      }
-      setCurrentUser(data.user);
-      navigate('/');
+      completeSignIn(data);
     } catch (err) {
       errorMessage.set(
         err instanceof Error ? err.message : 'An unexpected error occurred.',
@@ -201,6 +242,45 @@ export function mountAuthPage(
     } finally {
       loading.set(false);
     }
+  }
+
+  async function handleMfaSubmit(): Promise<void> {
+    const code = codeInput.value.trim();
+    if (!code) {
+      errorMessage.set('Enter your authentication code.');
+      return;
+    }
+    loading.set(true);
+    try {
+      const data = await apiFetch<AuthResponse>('/auth/login/mfa', {
+        method: 'POST',
+        body: JSON.stringify({ mfaToken, code }),
+      });
+      completeSignIn(data);
+    } catch (err) {
+      codeInput.value = '';
+      if (err instanceof ApiError && err.code === 'MFA_CHALLENGE_INVALID') {
+        // The 5-minute challenge expired: start over from the password step.
+        mfaToken = '';
+        mode.set('login');
+      }
+      errorMessage.set(err instanceof Error ? err.message : 'An unexpected error occurred.');
+    } finally {
+      loading.set(false);
+    }
+  }
+
+  function completeSignIn(data: AuthResponse): void {
+    setToken(data.token);
+    // Capture the CSRF token mirrored in the login response into the
+    // module-level slot read by `apiFetch` (Task 7.4, Req 18.4). The
+    // store no longer mirrors the token because no consumer needed
+    // reactive subscription to its raw value.
+    if (data.csrfToken) {
+      setCsrfToken(data.csrfToken);
+    }
+    setCurrentUser(data.user);
+    navigate('/');
   }
 
   mount(rootEl, fragment);

@@ -530,6 +530,11 @@ test.describe('anonymous flows', () => {
     await page.locator('input[name="name"]').fill('Sam Rivera');
     await page.locator('input[name="email"]').fill(`sam.${uniqueSuffix()}@acmestudio.dev`);
     await page.locator('input[name="password"]').fill('Sunr1se-Studio-Demo!');
+    // The Terms checkbox is required (never pre-ticked): submitting without it is refused in the UI.
+    await page.getByRole('button', { name: 'Register' }).click();
+    await expect(page.locator('#fl-auth-terms-error')).toBeVisible();
+    await expect(page.getByText(/check your email/i)).toHaveCount(0);
+    await page.locator('#fl-auth-terms').check();
     await page.getByRole('button', { name: 'Register' }).click();
     await expect(page.getByText(/check your email/i)).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(/\/auth/);

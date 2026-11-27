@@ -18,7 +18,7 @@ DB="${DB_NAME:-pinpoint}"
 LOWER_EMAIL=$(printf '%s' "$EMAIL" | tr '[:upper:]' '[:lower:]')
 
 payload() { jq -nc --arg e "$EMAIL" --arg p "$PASSWORD" --arg n "$1" \
-  '{email:$e,password:$p} + (if $n == "" then {} else {name:$n} end)'; }
+  '{email:$e,password:$p,acceptTerms:true} + (if $n == "" then {} else {name:$n} end)'; }
 # SQL arrives on stdin: psql only interpolates :'var' there, not with -c.
 sql() { "$PSQL" -v ON_ERROR_STOP=1 -v "email=$LOWER_EMAIL" -At -d "$DB"; }
 

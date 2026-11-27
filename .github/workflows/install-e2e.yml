@@ -4,20 +4,10 @@
 name: install-e2e
 
 on:
+  # No path filter: these are required checks on main, and a filtered-out
+  # required check would never report and block the PR.
   pull_request:
     branches: [main]
-    paths:
-      - 'deploy/**'
-      - 'server/**'
-      - 'dashboard/**'
-      - 'shared/**'
-      - 'widget/**'
-      - '**/Dockerfile'
-      - '.dockerignore'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'infrastructure/scripts/install-e2e.sh'
-      - '.github/workflows/install-e2e.yml'
   push:
     branches: [main]
   workflow_dispatch:

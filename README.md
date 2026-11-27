@@ -30,7 +30,7 @@ below.
 [Deployment](./docs/DEPLOYMENT.md) · [Integrations setup](./docs/INTEGRATIONS_SETUP.md) ·
 [Store submission](./docs/STORE_SUBMISSION.md) · [Security review](./docs/SECURITY_REVIEW.md) ·
 [SOC 2 readiness](./docs/SOC2_READINESS.md) (gap assessment, **not** a compliance claim) ·
-[Policy templates](./docs/compliance/README.md) · [Crash course](./docs/CRASH_COURSE.md)
+[Policy templates](./docs/compliance/README.md) · [Crash course](./docs/CRASH_COURSE.md) · [Contributing / engineering standard](./CONTRIBUTING.md)
 
 ---
 

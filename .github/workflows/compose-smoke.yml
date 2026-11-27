@@ -4,36 +4,12 @@
 name: compose-smoke
 
 on:
+  # No path filter: these are required checks on main, and a filtered-out
+  # required check would never report and block the PR.
   pull_request:
     branches: [main]
-    paths:
-      - 'docker-compose.yml'
-      - 'deploy/**'
-      - '**/Dockerfile'
-      - '.dockerignore'
-      - 'infrastructure/scripts/compose-smoke.sh'
-      - '.github/workflows/compose-smoke.yml'
-      - 'server/**'
-      - 'dashboard/**'
-      - 'widget/**'
-      - 'shared/**'
-      - 'package.json'
-      - 'package-lock.json'
   push:
     branches: [main]
-    paths:
-      - 'docker-compose.yml'
-      - 'deploy/**'
-      - '**/Dockerfile'
-      - '.dockerignore'
-      - 'infrastructure/scripts/compose-smoke.sh'
-      - '.github/workflows/compose-smoke.yml'
-      - 'server/**'
-      - 'dashboard/**'
-      - 'widget/**'
-      - 'shared/**'
-      - 'package.json'
-      - 'package-lock.json'
   workflow_dispatch:
 
 permissions:

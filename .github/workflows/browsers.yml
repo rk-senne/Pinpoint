@@ -10,16 +10,12 @@ name: Browsers
 # trailing comment is the tag they were resolved from).
 
 on:
-  push:
-    branches: [main]
+  # No path filter: these are required checks on main, and a filtered-out
+  # required check would never report and block the PR.
   pull_request:
     branches: [main]
-    paths:
-      - 'extension/**'
-      - 'e2e/firefox/**'
-      - 'shared/**'
-      - 'server/**'
-      - '.github/workflows/browsers.yml'
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

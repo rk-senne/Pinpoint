@@ -16,6 +16,9 @@ AM_IMAGE="prom/alertmanager:v0.35.1"
 BB_IMAGE="prom/blackbox-exporter:v0.29.1"
 PATH="$HOME/.pinpoint-dev/bin:$PATH"
 TMP="$(mktemp -d)"
+# Rendered configs are read by non-root users inside the tool containers.
+chmod 755 "$TMP"
+umask 022
 trap 'rm -rf "$TMP"' EXIT
 
 step() { printf '\n==> %s\n' "$*"; }

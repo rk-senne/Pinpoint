@@ -26,9 +26,9 @@ docker_run() { # docker_run IMAGE ENTRYPOINT args...
   shift 2
   docker run --rm --entrypoint "$ep" -v "$ROOT:$ROOT:ro" -v "$TMP:$TMP" -w "$ROOT" "$image" "$@"
 }
-promtool() { if command -v promtool >/dev/null; then command promtool "$@"; else docker_run "$PROM_IMAGE" promtool "$@"; fi; }
-amtool() { if command -v amtool >/dev/null; then command amtool "$@"; else docker_run "$AM_IMAGE" amtool "$@"; fi; }
-blackbox() { if command -v blackbox_exporter >/dev/null; then command blackbox_exporter "$@"; else docker_run "$BB_IMAGE" /bin/blackbox_exporter "$@"; fi; }
+promtool() { if type -P promtool >/dev/null; then command promtool "$@"; else docker_run "$PROM_IMAGE" promtool "$@"; fi; }
+amtool() { if type -P amtool >/dev/null; then command amtool "$@"; else docker_run "$AM_IMAGE" amtool "$@"; fi; }
+blackbox() { if type -P blackbox_exporter >/dev/null; then command blackbox_exporter "$@"; else docker_run "$BB_IMAGE" /bin/blackbox_exporter "$@"; fi; }
 
 step "promtool check rules"
 promtool check rules "$MON/alerts.yml"

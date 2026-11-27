@@ -14,6 +14,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPORT_DIR="$ROOT/zap-report"
 TMP="$(mktemp -d)"
 ZAP_IMAGE="zaproxy/zap-stable:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af"
+# Java (ZAP) sends no TLS SNI for single-label names like "localhost", so
+# Caddy cannot pick a certificate. *.localhost gets an internal cert and SNI.
+HOST=pinpoint.localhost
 COMPOSE=(docker compose -f "$ROOT/deploy/docker-compose.prod.yml" --env-file "$TMP/.env.production")
 
 fail() {
@@ -36,7 +39,7 @@ trap cleanup EXIT
 f="$TMP/.env.production"
 cp "$ROOT/deploy/.env.production.example" "$f"
 set_var() { sed -i.bak "s|^$1=.*|$1=$2|" "$f"; }
-set_var DOMAIN localhost
+set_var DOMAIN "$HOST"
 set_var JWT_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
 set_var OAUTH_STATE_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
 set_var INTEGRATION_ENCRYPTION_KEY "$(openssl rand -base64 32 | tr -d '\n')"
@@ -57,11 +60,11 @@ chmod 600 "$f"
 echo "==> booting the production stack"
 "${COMPOSE[@]}" up -d --build
 end=$((SECONDS + 300))
-until curl -fsSk --max-time 5 https://localhost/api/v1/health >/dev/null 2>&1; do
+until curl -fsSk --max-time 5 --resolve "$HOST:443:127.0.0.1" "https://$HOST/api/v1/health" >/dev/null 2>&1; do
   [ "$SECONDS" -lt "$end" ] || fail "stack did not become healthy"
   sleep 3
 done
-echo "ok   https://localhost is healthy"
+echo "ok   https://$HOST is healthy"
 
 mkdir -p "$REPORT_DIR"
 chmod 777 "$REPORT_DIR"
@@ -71,8 +74,8 @@ echo "==> ZAP baseline scan"
 # -I: don't fail on WARN by itself; we decide below from the JSON report so
 # every accepted alert must be listed in zap-rules.tsv with a reason.
 set +e
-docker run --rm --network host -v "$REPORT_DIR:/zap/wrk:rw" -t "$ZAP_IMAGE" \
-  zap-baseline.py -t https://localhost/ -c rules.tsv -m 3 -I -j \
+docker run --rm --network host --add-host "$HOST:127.0.0.1" -v "$REPORT_DIR:/zap/wrk:rw" -t "$ZAP_IMAGE" \
+  zap-baseline.py -t "https://$HOST/" -c rules.tsv -m 3 -I -j \
   -J report.json -r report.html -w report.md \
   -z "-config connection.sslAcceptAll=true"
 zap_rc=$?

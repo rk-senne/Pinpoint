@@ -14,6 +14,10 @@ updates:
       # support yet; needs a flat-config migration (tracked separately).
       - dependency-name: 'eslint'
         update-types: ['version-update:semver-major']
+      # TypeScript 7 (native compiler) is outside typescript-eslint's supported
+      # range (<6.1); revisit when typescript-eslint supports it.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
     schedule:
       interval: weekly
       day: monday

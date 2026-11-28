@@ -18,6 +18,13 @@ import type {
   PinPositionerStorageChangeListener,
 } from './PinPositioner';
 
+/** Expected transform as this DOM serializes it (jsdom >= 31 writes `0` as `0px`, like browsers). */
+function t3d(x: string, y: string): string {
+  const probe = document.createElement('div');
+  probe.style.transform = `translate3d(${x}, ${y}, 0)`;
+  return probe.style.transform;
+}
+
 /** Helper: create an element with a stubbed bounding rect, attached to the body. */
 function makeTarget(rect: {
   left: number;
@@ -98,7 +105,7 @@ describe('PinPositioner', () => {
       positioner.register('a1', pin, target);
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(78px, 178px, 0)');
+      expect(pin.style.transform).toBe(t3d('78px', '178px'));
       expect(pin.dataset.fallback).toBeUndefined();
     });
 
@@ -114,7 +121,7 @@ describe('PinPositioner', () => {
       positioner.register('a1', pin, target);
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(54px, 79px, 0)');
+      expect(pin.style.transform).toBe(t3d('54px', '79px'));
     });
 
     it('reflects layout changes on the registered target on the next tick', () => {
@@ -126,7 +133,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
 
       // Simulate a layout change — element moves
       target.getBoundingClientRect = () =>
@@ -146,7 +153,7 @@ describe('PinPositioner', () => {
       document.dispatchEvent(new Event('scroll'));
       flushRaf();
 
-      expect(pin.style.transform).toBe('translate3d(178px, 278px, 0)');
+      expect(pin.style.transform).toBe(t3d('178px', '278px'));
     });
 
     it('coalesces multiple events into a single rAF tick', () => {
@@ -164,7 +171,7 @@ describe('PinPositioner', () => {
       // register + 2 resizes + 1 scroll → 1 rAF call
       expect(raf).toHaveBeenCalledTimes(1);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
     });
   });
 
@@ -173,14 +180,14 @@ describe('PinPositioner', () => {
       const { positioner, flushRaf } = makePositioner();
 
       const pin = document.createElement('div');
-      pin.style.transform = 'translate3d(0px, 0px, 0)'; // pre-existing fallback position
+      pin.style.transform = t3d('0px', '0px'); // pre-existing fallback position
 
       positioner.register('a1', pin, null);
       flushRaf();
 
       expect(pin.dataset.fallback).toBe('true');
       // Caller's stored-coords fallback position is preserved
-      expect(pin.style.transform).toBe('translate3d(0px, 0px, 0)');
+      expect(pin.style.transform).toBe(t3d('0px', '0px'));
     });
 
     it('marks data-fallback when the target is detached from the DOM', () => {
@@ -208,7 +215,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBeUndefined();
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
     });
   });
 
@@ -224,7 +231,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBe('true');
-      expect(pin.style.transform).toBe('translate3d(123px, 456px, 0)');
+      expect(pin.style.transform).toBe(t3d('123px', '456px'));
     });
 
     it('writes transform from stored pageX/pageY when the target is detached and fallback is provided', () => {
@@ -236,7 +243,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBe('true');
-      expect(pin.style.transform).toBe('translate3d(10px, 20px, 0)');
+      expect(pin.style.transform).toBe(t3d('10px', '20px'));
     });
 
     it('prefers the resolved element over the stored fallback when both are available (Req 14.6)', () => {
@@ -250,7 +257,7 @@ describe('PinPositioner', () => {
       flushRaf();
 
       expect(pin.dataset.fallback).toBeUndefined();
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
     });
 
     it('switches between fallback transform and resolved transform when the target connects/disconnects', () => {
@@ -260,7 +267,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target, { pageX: 1, pageY: 2 });
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
+      expect(pin.style.transform).toBe(t3d('28px', '38px'));
       expect(pin.dataset.fallback).toBeUndefined();
 
       // Detach the target → next tick falls back to stored coords
@@ -268,7 +275,7 @@ describe('PinPositioner', () => {
       positioner.flush();
 
       expect(pin.dataset.fallback).toBe('true');
-      expect(pin.style.transform).toBe('translate3d(1px, 2px, 0)');
+      expect(pin.style.transform).toBe(t3d('1px', '2px'));
     });
   });
 
@@ -321,7 +328,7 @@ describe('PinPositioner', () => {
       const pin = document.createElement('div');
       positioner.register('a1', pin, target);
       flushRaf();
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
 
       positioner.unregister('a1');
 
@@ -340,7 +347,7 @@ describe('PinPositioner', () => {
         }) as DOMRect;
       positioner.flush();
 
-      expect(pin.style.transform).toBe('translate3d(4px, 4px, 0)');
+      expect(pin.style.transform).toBe(t3d('4px', '4px'));
     });
 
     it('dispose() disconnects observers, removes listeners, and stops scheduling', () => {
@@ -744,7 +751,7 @@ describe('PinPositioner per-host opt-out (Req 51.3 / task 43.2)', () => {
     positioner.register('a1', pin, target);
 
     // Initial placement happened synchronously via `flush()`, no rAF needed.
-    expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
+    expect(pin.style.transform).toBe(t3d('28px', '38px'));
     expect(raf).not.toHaveBeenCalled();
 
     // Layout event must NOT schedule a tick on an opted-out host.
@@ -766,7 +773,7 @@ describe('PinPositioner per-host opt-out (Req 51.3 / task 43.2)', () => {
         toJSON: () => ({}),
       }) as DOMRect;
     document.dispatchEvent(new Event('scroll'));
-    expect(pin.style.transform).toBe('translate3d(28px, 38px, 0)');
+    expect(pin.style.transform).toBe(t3d('28px', '38px'));
   });
 
   it('starts the layout observers when the host is NOT opted out', async () => {

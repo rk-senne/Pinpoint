@@ -18,6 +18,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { HoverOutline } from './HoverOutline';
 
+/** Expected transform as this DOM serializes it (jsdom >= 31 writes `0` as `0px`, like browsers). */
+function t3d(x: string, y: string): string {
+  const probe = document.createElement('div');
+  probe.style.transform = `translate3d(${x}, ${y}, 0)`;
+  return probe.style.transform;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -179,7 +186,7 @@ describe('HoverOutline', () => {
       flush();
 
       expect(outline.element.style.display).toBe('block');
-      expect(outline.element.style.transform).toBe('translate3d(100px, 200px, 0)');
+      expect(outline.element.style.transform).toBe(t3d('100px', '200px'));
       expect(outline.element.style.width).toBe('300px');
       expect(outline.element.style.height).toBe('50px');
       restore();
@@ -207,7 +214,7 @@ describe('HoverOutline', () => {
 
       flush();
       // Final tick uses the *latest* event's coords.
-      expect(outline.element.style.transform).toBe('translate3d(1px, 2px, 0)');
+      expect(outline.element.style.transform).toBe(t3d('1px', '2px'));
       restore();
     });
 
@@ -230,11 +237,11 @@ describe('HoverOutline', () => {
       raf.mockClear();
       pointerMoveAt(1, 1);
       flush();
-      expect(outline.element.style.transform).toBe('translate3d(1px, 1px, 0)');
+      expect(outline.element.style.transform).toBe(t3d('1px', '1px'));
 
       pointerMoveAt(9, 9);
       flush();
-      expect(outline.element.style.transform).toBe('translate3d(9px, 9px, 0)');
+      expect(outline.element.style.transform).toBe(t3d('9px', '9px'));
       expect(raf).toHaveBeenCalledTimes(2);
       restore();
     });
@@ -307,7 +314,7 @@ describe('HoverOutline', () => {
       flush();
 
       expect(outline.element.style.display).toBe('block');
-      expect(outline.element.style.transform).toBe('translate3d(7px, 8px, 0)');
+      expect(outline.element.style.transform).toBe(t3d('7px', '8px'));
       restore();
     });
   });

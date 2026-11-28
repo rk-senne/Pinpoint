@@ -8,6 +8,8 @@ updates:
       # release with the fix ships (> 1.65.x).
       - dependency-name: '@playwright/test'
         versions: ['1.65.x']
+      - dependency-name: 'playwright-core'
+        versions: ['1.65.x']
     schedule:
       interval: weekly
       day: monday

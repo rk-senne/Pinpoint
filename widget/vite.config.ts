@@ -11,11 +11,11 @@ export default defineConfig({
     },
     outDir: 'dist',
     emptyOutDir: true,
-    // Vite's built-in esbuild minifier — no optional `terser` dependency.
+    // Vite 8's built-in Oxc minifier — no optional esbuild/terser dependency.
     // Console calls are intentionally NOT dropped: the widget's console
     // capture (Mission C2) passes through to the host console, and the
     // init-time misconfiguration errors are meant for integrators.
-    minify: 'esbuild',
+    minify: 'oxc',
     rollupOptions: {
       output: {
         extend: true,

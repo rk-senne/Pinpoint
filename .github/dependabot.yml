@@ -2,6 +2,14 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    ignore:
+      # 1.65.x crashes Firefox content processes during axe scans
+      # (microsoft/playwright#43967, Mozilla bug 2090055). Allow again once a
+      # release with the fix ships (> 1.65.x).
+      - dependency-name: '@playwright/test'
+        versions: ['1.65.x']
+      - dependency-name: 'playwright-core'
+        versions: ['1.65.x']
     schedule:
       interval: weekly
       day: monday
